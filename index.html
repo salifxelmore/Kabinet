@@ -1,1082 +1,337 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KabiNet - ERP pour Cabinets de Conseil</title>
-    <meta name="description" content="KabiNet - Solution de gestion complète pour cabinets de conseil, audit et services professionnels">
-    <meta name="theme-color" content="#2563eb">
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='100' y2='100'%3E%3Cstop offset='0' stop-color='%232563eb'/%3E%3Cstop offset='100' stop-color='%230891b2'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='22' fill='url(%23g)'/%3E%3Ctext x='50' y='68' text-anchor='middle' font-size='55' font-weight='bold' fill='white'%3EK%3C/text%3E%3C/svg%3E">
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>tailwind.config={theme:{extend:{colors:{primary:{50:'#eff6ff',100:'#dbeafe',200:'#bfdbfe',300:'#93c5fd',400:'#60a5fa',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',800:'#1e40af',900:'#1e3a8a'},secondary:{50:'#ecfeff',100:'#cffafe',200:'#a5f3fc',300:'#67e8f9',400:'#22d3ee',500:'#06b6d4',600:'#0891b2',700:'#0e7490',800:'#155e75',900:'#164e63'}}}}}</script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-        *{box-sizing:border-box;margin:0;padding:0}
-        body{font-family:'Inter',system-ui,sans-serif;background:#f8fafc;color:#1e293b}
-        .gradient-primary{background:linear-gradient(135deg,#2563eb,#0891b2)}
-        .gradient-light{background:linear-gradient(135deg,#eff6ff,#ecfeff)}
-        @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
-        .animate-fade-in{animation:fadeIn 0.3s ease-out forwards}
-        .animate-float{animation:float 3s ease-in-out infinite}
-        .loader{border:3px solid #e2e8f0;border-top:3px solid #2563eb;border-radius:50%;width:24px;height:24px;animation:spin 1s linear infinite}
-        @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-        ::-webkit-scrollbar{width:8px;height:8px}
-        ::-webkit-scrollbar-track{background:#f1f5f9}
-        ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px}
-        ::-webkit-scrollbar-thumb:hover{background:#94a3b8}
-        .card{background:white;border-radius:16px;box-shadow:0 1px 3px rgba(0,0,0,0.1),0 1px 2px rgba(0,0,0,0.06)}
-        .card-hover{transition:all 0.2s ease}.card-hover:hover{transform:translateY(-2px);box-shadow:0 10px 25px rgba(0,0,0,0.1)}
-        input:focus,select:focus,textarea:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,0.1)}
-        .nav-item{transition:all 0.2s ease}.nav-item:hover{background:#f1f5f9}
-        .nav-item.active{background:#eff6ff;color:#2563eb;border-right:3px solid #2563eb}
-        .btn{transition:all 0.2s ease}.btn:hover{transform:translateY(-1px)}
-        .stat-card{transition:all 0.2s ease}.stat-card:hover{transform:translateY(-4px);box-shadow:0 12px 24px rgba(0,0,0,0.1)}
-        .table-row:hover{background:#f8fafc}
-        .sidebar{transition:transform 0.3s ease}
-        @media(max-width:1024px){.sidebar{position:fixed;z-index:50;transform:translateX(-100%)}.sidebar.open{transform:translateX(0)}}
-    </style>
-</head>
-<body>
-<div id="root"></div>
-<script type="text/babel">
-const{useState,useEffect,useRef,useMemo,useCallback,createContext,useContext}=React;
-
-// ===== CONFIGURATION SUPABASE =====
-const SUPABASE_URL='https://uttiaboublcmwuzvdjxz.supabase.co';
-const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0dGlhYm91YmxjbXd1enZkanh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc5ODg0MTMsImV4cCI6MjA4MzU2NDQxM30.67uuDVwa3uAclqDfxOOzcFi3K6KT4VW2OHytqEoa5Lo';
-const supabase=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
-
-// ===== SUPER ADMINS =====
-const SUPER_ADMINS=['sawadgsalif@gmail.com','admin@kabinet.sn'];
-const WHATSAPP_CONTACT='+221781234567';
-
-// ===== PLANS D'ABONNEMENT =====
-const PLANS={
-    trial:{nom:'Essai Gratuit',prix:0,duree:'14 jours',icon:'🎁',color:'slate',limites:{collaborateurs:5,clients:10,projets:5},features:['5 collaborateurs','10 clients','5 projets','Timesheet basique','Support email']},
-    standard:{nom:'Standard',prix:25000,duree:'mois',icon:'⭐',color:'blue',limites:{collaborateurs:20,clients:50,projets:25},features:['20 collaborateurs','50 clients','25 projets','Facturation complète','Rapports avancés','Support prioritaire']},
-    premium:{nom:'Premium',prix:75000,duree:'mois',icon:'👑',color:'amber',limites:{collaborateurs:999,clients:999,projets:999},features:['Collaborateurs illimités','Clients illimités','Projets illimités','API & Intégrations','Support dédié','Formation incluse']}
-};
-
-// ===== UTILITAIRES =====
-const cn=(...classes)=>classes.filter(Boolean).join(' ');
-const fmt=(n,dec=0)=>new Intl.NumberFormat('fr-FR',{maximumFractionDigits:dec}).format(n||0);
-const fmtMoney=(n)=>fmt(n)+' FCFA';
-const fmtDate=(d)=>d?new Date(d).toLocaleDateString('fr-FR'):'';
-const today=()=>new Date().toISOString().split('T')[0];
-const getWeekStart=(d=new Date())=>{const day=d.getDay();const diff=d.getDate()-day+(day===0?-6:1);return new Date(d.setDate(diff)).toISOString().split('T')[0];};
-const addDays=(date,days)=>{const d=new Date(date);d.setDate(d.getDate()+days);return d.toISOString().split('T')[0];};
-
-// ===== CONTEXTE =====
-const AppContext=createContext();
-const useApp=()=>useContext(AppContext);
-
-// ===== CONSTANTES =====
-const ROLES={Admin:'Administrateur',Manager:'Manager',Consultant:'Consultant',Observateur:'Observateur'};
-const PROJECT_STATUS={draft:'Brouillon',active:'En cours',completed:'Terminé',cancelled:'Annulé'};
-const INVOICE_STATUS={draft:'Brouillon',sent:'Envoyée',paid:'Payée',overdue:'En retard'};
-
-// ===== ICÔNES =====
-const Icons={
-    dashboard:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>,
-    clients:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>,
-    projects:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>,
-    timesheet:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>,
-    invoices:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>,
-    team:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>,
-    reports:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>,
-    settings:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>,
-    admin:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>,
-    plus:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4"/></svg>,
-    close:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>,
-    check:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7"/></svg>,
-    menu:<svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16"/></svg>,
-    logout:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>,
-    search:<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>,
-    edit:<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>,
-    trash:<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>,
-    eye:<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>,
-    arrowUp:<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>,
-    arrowDown:<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>,
-};
-
-// ===== COMPOSANTS UI =====
-const Loader=()=><div className="flex items-center justify-center p-8"><div className="loader"/></div>;
-
-const Badge=({children,color='gray',size='sm'})=>{
-    const colors={gray:'bg-slate-100 text-slate-600',blue:'bg-blue-100 text-blue-600',green:'bg-emerald-100 text-emerald-600',red:'bg-red-100 text-red-600',yellow:'bg-amber-100 text-amber-600',purple:'bg-purple-100 text-purple-600'};
-    return<span className={cn('rounded-full font-medium px-2.5 py-1 text-xs',colors[color])}>{children}</span>;
-};
-
-const Button=({children,onClick,variant='primary',size='md',disabled,loading,icon,className,type='button'})=>{
-    const variants={
-        primary:'gradient-primary text-white hover:shadow-lg hover:shadow-blue-500/25',
-        secondary:'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300',
-        success:'bg-emerald-500 text-white hover:bg-emerald-600',
-        danger:'bg-red-500 text-white hover:bg-red-600',
-        ghost:'text-slate-600 hover:bg-slate-100',
-    };
-    const sizes={sm:'px-3 py-1.5 text-sm',md:'px-4 py-2.5',lg:'px-6 py-3 text-lg'};
-    return(
-        <button type={type} onClick={onClick} disabled={disabled||loading} className={cn('btn rounded-xl font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed',variants[variant],sizes[size],className)}>
-            {loading?<div className="loader" style={{width:16,height:16,borderTopColor:'currentColor'}}/>:icon}{children}
-        </button>
-    );
-};
-
-const Input=({label,type='text',value,onChange,placeholder,required,error,className,...props})=>(
-    <div className={className}>
-        {label&&<label className="block text-sm font-medium text-slate-700 mb-1.5">{label}{required&&<span className="text-red-500 ml-1">*</span>}</label>}
-        <input type={type} value={value||''} onChange={e=>onChange(e.target.value)} placeholder={placeholder} className={cn('w-full px-4 py-2.5 bg-white border rounded-xl text-slate-800 placeholder-slate-400',error?'border-red-300':'border-slate-200')} {...props}/>
-        {error&&<p className="text-red-500 text-xs mt-1">{error}</p>}
-    </div>
-);
-
-const Select=({label,value,onChange,options,placeholder,required,className})=>(
-    <div className={className}>
-        {label&&<label className="block text-sm font-medium text-slate-700 mb-1.5">{label}{required&&<span className="text-red-500 ml-1">*</span>}</label>}
-        <select value={value||''} onChange={e=>onChange(e.target.value)} className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-800">
-            {placeholder&&<option value="">{placeholder}</option>}
-            {options.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-    </div>
-);
-
-const TextArea=({label,value,onChange,placeholder,rows=3,className})=>(
-    <div className={className}>
-        {label&&<label className="block text-sm font-medium text-slate-700 mb-1.5">{label}</label>}
-        <textarea value={value||''} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows} className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 resize-none"/>
-    </div>
-);
-
-const Modal=({isOpen,onClose,title,children,size='md'})=>{
-    if(!isOpen)return null;
-    const sizes={sm:'max-w-md',md:'max-w-2xl',lg:'max-w-4xl',xl:'max-w-6xl'};
-    return(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 animate-fade-in" onClick={onClose}>
-            <div className={cn('bg-white rounded-2xl w-full overflow-hidden shadow-2xl',sizes[size])} onClick={e=>e.stopPropagation()}>
-                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-                    <h2 className="text-xl font-bold text-slate-800">{title}</h2>
-                    <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 hover:text-slate-600">{Icons.close}</button>
-                </div>
-                <div className="p-6 max-h-[70vh] overflow-y-auto">{children}</div>
-            </div>
-        </div>
-    );
-};
-
-const Card=({title,children,action,className})=>(
-    <div className={cn('card overflow-hidden',className)}>
-        {(title||action)&&(
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-                {title&&<h3 className="font-bold text-slate-800">{title}</h3>}
-                {action}
-            </div>
-        )}
-        <div className="p-6">{children}</div>
-    </div>
-);
-
-const StatCard=({title,value,subtitle,icon,color='blue',trend})=>{
-    const colors={blue:'bg-blue-500',green:'bg-emerald-500',purple:'bg-purple-500',amber:'bg-amber-500',red:'bg-red-500',cyan:'bg-cyan-500'};
-    return(
-        <div className="card stat-card p-6">
-            <div className="flex items-start justify-between">
-                <div>
-                    <p className="text-slate-500 text-sm font-medium">{title}</p>
-                    <p className="text-2xl font-bold text-slate-800 mt-1">{value}</p>
-                    {subtitle&&<p className="text-slate-400 text-sm mt-1">{subtitle}</p>}
-                    {trend!==undefined&&(
-                        <div className={cn('flex items-center gap-1 mt-2 text-sm font-medium',trend>=0?'text-emerald-500':'text-red-500')}>
-                            {trend>=0?Icons.arrowUp:Icons.arrowDown}<span>{Math.abs(trend)}%</span>
-                        </div>
-                    )}
-                </div>
-                <div className={cn('w-12 h-12 rounded-xl flex items-center justify-center text-white',colors[color])}>{icon}</div>
-            </div>
-        </div>
-    );
-};
-
-const Table=({columns,data,onRowClick,emptyMessage='Aucune donnée'})=>(
-    <div className="overflow-x-auto">
-        <table className="w-full">
-            <thead>
-                <tr className="border-b border-slate-100">
-                    {columns.map((col,i)=><th key={i} className={cn('px-4 py-3 text-left text-sm font-semibold text-slate-600',col.className)}>{col.header}</th>)}
-                </tr>
-            </thead>
-            <tbody>
-                {data.length===0?(
-                    <tr><td colSpan={columns.length} className="px-4 py-12 text-center text-slate-400">{emptyMessage}</td></tr>
-                ):(
-                    data.map((row,i)=>(
-                        <tr key={row.id||i} onClick={()=>onRowClick?.(row)} className={cn('border-b border-slate-50 table-row',onRowClick&&'cursor-pointer')}>
-                            {columns.map((col,j)=><td key={j} className={cn('px-4 py-3 text-sm text-slate-600',col.className)}>{col.render?col.render(row):row[col.key]}</td>)}
-                        </tr>
-                    ))
-                )}
-            </tbody>
-        </table>
-    </div>
-);
-
-// ===== LANDING PAGE =====
-const LandingPage=({onLogin,onRegister})=>{
-    const features=[
-        {icon:'📊',title:'Tableau de bord',desc:'Vue d\'ensemble de votre activité en temps réel avec KPIs et graphiques'},
-        {icon:'👥',title:'Gestion d\'équipe',desc:'Collaborateurs, grades, compétences et disponibilités'},
-        {icon:'📋',title:'Missions & Projets',desc:'Suivi des missions en forfait ou régie, budget et avancement'},
-        {icon:'⏱️',title:'Timesheet',desc:'Saisie des temps intuitive avec validation workflow'},
-        {icon:'💰',title:'Facturation',desc:'Génération automatique des factures depuis les temps validés'},
-        {icon:'📈',title:'Rapports',desc:'Taux de chargeabilité, rentabilité, CA prévisionnel'}
-    ];
-
-    return(
-        <div className="min-h-screen bg-white">
-            {/* Header */}
-            <header className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-lg border-b border-slate-100">
-                <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-blue-500/25">K</div>
-                        <span className="text-xl font-bold text-slate-800">KabiNet</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <button onClick={onLogin} className="px-4 py-2 text-slate-600 hover:text-slate-800 font-medium transition-colors">Connexion</button>
-                        <button onClick={onRegister} className="px-5 py-2.5 gradient-primary text-white rounded-xl font-semibold hover:shadow-lg hover:shadow-blue-500/25 transition-all">S'inscrire</button>
-                    </div>
-                </div>
-            </header>
-
-            {/* Hero */}
-            <section className="pt-32 pb-20 px-4">
-                <div className="max-w-4xl mx-auto text-center">
-                    <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 rounded-full text-blue-600 text-sm font-medium mb-6">
-                        <span>✨</span> Solution complète pour cabinets de conseil
-                    </div>
-                    <h1 className="text-4xl md:text-6xl font-extrabold text-slate-800 mb-6 leading-tight">
-                        Gérez votre cabinet<br/><span className="text-transparent bg-clip-text gradient-primary">en toute simplicité</span>
-                    </h1>
-                    <p className="text-xl text-slate-500 mb-8 max-w-2xl mx-auto">
-                        KabiNet centralise la gestion de vos missions, équipes, temps et facturation dans une interface moderne et intuitive.
-                    </p>
-                    <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-                        <button onClick={onRegister} className="w-full sm:w-auto px-8 py-4 gradient-primary text-white rounded-xl font-bold text-lg hover:shadow-xl hover:shadow-blue-500/25 transition-all">
-                            🚀 Démarrer l'essai gratuit
-                        </button>
-                        <button onClick={onLogin} className="w-full sm:w-auto px-8 py-4 bg-slate-100 text-slate-700 rounded-xl font-bold text-lg hover:bg-slate-200 transition-all">
-                            Se connecter
-                        </button>
-                    </div>
-                    <p className="text-slate-400 text-sm mt-4">14 jours d'essai gratuit • Aucune carte requise</p>
-                </div>
-            </section>
-
-            {/* Features */}
-            <section className="py-20 px-4 bg-slate-50">
-                <div className="max-w-6xl mx-auto">
-                    <h2 className="text-3xl font-bold text-center text-slate-800 mb-4">Toutes les fonctionnalités dont vous avez besoin</h2>
-                    <p className="text-slate-500 text-center mb-12 max-w-2xl mx-auto">Une suite complète d'outils pour piloter efficacement votre cabinet</p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {features.map((f,i)=>(
-                            <div key={i} className="card card-hover p-6">
-                                <div className="w-14 h-14 bg-blue-50 rounded-xl flex items-center justify-center text-2xl mb-4">{f.icon}</div>
-                                <h3 className="text-lg font-bold text-slate-800 mb-2">{f.title}</h3>
-                                <p className="text-slate-500">{f.desc}</p>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            {/* Pricing */}
-            <section className="py-20 px-4" id="pricing">
-                <div className="max-w-6xl mx-auto">
-                    <h2 className="text-3xl font-bold text-center text-slate-800 mb-4">Tarifs simples et transparents</h2>
-                    <p className="text-slate-500 text-center mb-12">Choisissez le plan adapté à la taille de votre cabinet</p>
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {Object.entries(PLANS).map(([key,plan])=>(
-                            <div key={key} className={cn('card overflow-hidden transition-all',key==='standard'?'ring-2 ring-blue-500 relative':'')}>
-                                {key==='standard'&&<div className="absolute top-4 right-4 bg-blue-500 text-white text-xs font-bold px-3 py-1 rounded-full">POPULAIRE</div>}
-                                <div className={cn('p-6',key==='standard'?'bg-blue-50':'bg-slate-50')}>
-                                    <div className="flex items-center gap-3 mb-4">
-                                        <span className="text-3xl">{plan.icon}</span>
-                                        <div>
-                                            <h3 className="text-xl font-bold text-slate-800">{plan.nom}</h3>
-                                            <p className="text-slate-500 text-sm">{plan.duree}</p>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-baseline gap-1">
-                                        <span className="text-4xl font-extrabold text-slate-800">{plan.prix>0?fmt(plan.prix):'Gratuit'}</span>
-                                        {plan.prix>0&&<span className="text-slate-500">FCFA/mois</span>}
-                                    </div>
-                                </div>
-                                <div className="p-6">
-                                    <ul className="space-y-3 mb-6">
-                                        {plan.features.map((f,i)=>(
-                                            <li key={i} className="flex items-center gap-3 text-slate-600">
-                                                <span className="w-5 h-5 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center text-xs">✓</span>
-                                                {f}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                    <button onClick={onRegister} className={cn('w-full py-3 rounded-xl font-semibold transition-all',key==='trial'?'bg-slate-100 text-slate-700 hover:bg-slate-200':'gradient-primary text-white hover:shadow-lg')}>
-                                        {key==='trial'?'Essayer gratuitement':'Commencer'}
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            {/* CTA */}
-            <section className="py-20 px-4 bg-slate-50">
-                <div className="max-w-4xl mx-auto">
-                    <div className="card p-8 md:p-12 text-center bg-gradient-to-br from-blue-600 to-cyan-500">
-                        <h2 className="text-3xl font-bold text-white mb-4">Prêt à optimiser votre cabinet ?</h2>
-                        <p className="text-blue-100 mb-8">Rejoignez les cabinets qui font confiance à KabiNet</p>
-                        <button onClick={onRegister} className="px-8 py-4 bg-white text-blue-600 rounded-xl font-bold text-lg hover:shadow-xl transition-all">
-                            🚀 Créer mon compte gratuit
-                        </button>
-                    </div>
-                </div>
-            </section>
-
-            {/* Footer */}
-            <footer className="py-8 px-4 border-t border-slate-100">
-                <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-                    <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 gradient-primary rounded-lg flex items-center justify-center text-white font-bold text-sm">K</div>
-                        <span className="font-bold text-slate-600">KabiNet</span>
-                    </div>
-                    <p className="text-slate-400 text-sm">© 2025 KabiNet. Tous droits réservés.</p>
-                    <div className="flex items-center gap-4">
-                        <a href={`https://wa.me/${WHATSAPP_CONTACT.replace('+','')}`} target="_blank" className="text-slate-400 hover:text-emerald-500 transition-colors text-sm">📱 WhatsApp</a>
-                        <a href="mailto:contact@kabinet.sn" className="text-slate-400 hover:text-blue-500 transition-colors text-sm">📧 Contact</a>
-                    </div>
-                </div>
-            </footer>
-        </div>
-    );
-};
-
-// ===== PAGE CONNEXION =====
-const LoginPage=({onLogin,onRegister,onBack})=>{
-    const[email,setEmail]=useState('');
-    const[password,setPassword]=useState('');
-    const[loading,setLoading]=useState(false);
-    const[error,setError]=useState('');
-
-    const handleSubmit=async(e)=>{
-        e.preventDefault();
-        if(!email||!password){setError('Email et mot de passe requis');return;}
-        setLoading(true);setError('');
-        try{
-            const{data,error:authError}=await supabase.auth.signInWithPassword({email:email.toLowerCase().trim(),password});
-            if(authError)throw authError;
-            onLogin(data.user);
-        }catch(e){
-            setError(e.message==='Invalid login credentials'?'Email ou mot de passe incorrect':e.message);
-        }
-        setLoading(false);
-    };
-
-    return(
-        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-            <div className="w-full max-w-md">
-                <div className="text-center mb-8">
-                    <button onClick={onBack} className="text-slate-400 hover:text-slate-600 mb-4 text-sm">← Retour à l'accueil</button>
-                    <div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center text-white font-bold text-3xl shadow-lg shadow-blue-500/25 mx-auto mb-4">K</div>
-                    <h1 className="text-2xl font-bold text-slate-800">Connexion</h1>
-                    <p className="text-slate-500 mt-2">Accédez à votre espace KabiNet</p>
-                </div>
-                <form onSubmit={handleSubmit} className="card p-6 space-y-4">
-                    {error&&<div className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm">{error}</div>}
-                    <Input label="Email" type="email" value={email} onChange={setEmail} placeholder="votre@email.com" required/>
-                    <Input label="Mot de passe" type="password" value={password} onChange={setPassword} placeholder="••••••••" required/>
-                    <Button type="submit" variant="primary" loading={loading} className="w-full">Se connecter</Button>
-                </form>
-                <p className="text-center text-slate-500 mt-6">
-                    Pas encore de compte ? <button onClick={onRegister} className="text-blue-600 font-semibold hover:underline">S'inscrire</button>
-                </p>
-            </div>
-        </div>
-    );
-};
-
-// ===== PAGE INSCRIPTION =====
-const RegisterPage=({onLogin,onBack,onNeedConfirm})=>{
-    const[step,setStep]=useState(1);
-    const[form,setForm]=useState({cabinet:'',nom:'',prenom:'',email:'',password:''});
-    const[loading,setLoading]=useState(false);
-    const[error,setError]=useState('');
-
-    const handleChange=(k,v)=>setForm(p=>({...p,[k]:v}));
-
-    const handleSubmit=async()=>{
-        if(!form.cabinet||!form.nom||!form.prenom||!form.email||!form.password){setError('Tous les champs sont requis');return;}
-        if(form.password.length<6){setError('Mot de passe: minimum 6 caractères');return;}
-        setLoading(true);setError('');
-        try{
-            // 1. Créer le compte auth
-            const{data:authData,error:authError}=await supabase.auth.signUp({
-                email:form.email.toLowerCase().trim(),
-                password:form.password,
-                options:{data:{nom:form.nom,prenom:form.prenom,cabinet:form.cabinet}}
-            });
-            if(authError)throw authError;
-            
-            // 2. Créer l'organisation
-            const{data:org,error:orgError}=await supabase.from('organisations').insert([{nom:form.cabinet}]).select().single();
-            if(orgError)throw orgError;
-            
-            // 3. Créer l'utilisateur
-            const{data:user,error:userError}=await supabase.from('utilisateurs').insert([{
-                organisation_id:org.id,
-                auth_id:authData.user?.id,
-                nom:form.nom,
-                prenom:form.prenom,
-                email:form.email.toLowerCase().trim(),
-                role:'Admin'
-            }]).select().single();
-            if(userError)throw userError;
-            
-            // 4. Créer l'abonnement trial
-            const dateFin=new Date();dateFin.setDate(dateFin.getDate()+14);
-            await supabase.from('abonnements').insert([{
-                organisation_id:org.id,
-                plan:'trial',
-                statut:'actif',
-                date_debut:new Date().toISOString(),
-                date_fin:dateFin.toISOString()
-            }]);
-            
-            // 5. Données initiales
-            await initOrganisationData(org.id);
-            
-            onNeedConfirm(form.email);
-        }catch(e){
-            setError(e.message?.includes('already registered')?'Cet email est déjà utilisé':e.message);
-        }
-        setLoading(false);
-    };
-
-    return(
-        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-            <div className="w-full max-w-md">
-                <div className="text-center mb-8">
-                    <button onClick={onBack} className="text-slate-400 hover:text-slate-600 mb-4 text-sm">← Retour à l'accueil</button>
-                    <div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center text-white font-bold text-3xl shadow-lg shadow-blue-500/25 mx-auto mb-4">K</div>
-                    <h1 className="text-2xl font-bold text-slate-800">Créer votre compte</h1>
-                    <p className="text-slate-500 mt-2">14 jours d'essai gratuit</p>
-                </div>
-                
-                {/* Progress */}
-                <div className="flex items-center justify-center gap-2 mb-6">
-                    <div className={cn('w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm',step>=1?'gradient-primary text-white':'bg-slate-200 text-slate-500')}>1</div>
-                    <div className={cn('w-12 h-1 rounded-full',step>=2?'gradient-primary':'bg-slate-200')}/>
-                    <div className={cn('w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm',step>=2?'gradient-primary text-white':'bg-slate-200 text-slate-500')}>2</div>
-                </div>
-
-                <div className="card p-6 space-y-4">
-                    {error&&<div className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm">{error}</div>}
-                    
-                    {step===1&&(<>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1.5">🏢 Nom de votre cabinet</label>
-                            <input type="text" value={form.cabinet} onChange={e=>handleChange('cabinet',e.target.value)} placeholder="Ex: Mon Cabinet Conseil SARL" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400"/>
-                        </div>
-                        <Button onClick={()=>form.cabinet?setStep(2):setError('Nom du cabinet requis')} className="w-full">Continuer →</Button>
-                    </>)}
-                    
-                    {step===2&&(<>
-                        <div className="grid grid-cols-2 gap-3">
-                            <Input label="Prénom" value={form.prenom} onChange={v=>handleChange('prenom',v)} placeholder="Jean" required/>
-                            <Input label="Nom" value={form.nom} onChange={v=>handleChange('nom',v)} placeholder="Dupont" required/>
-                        </div>
-                        <Input label="Email" type="email" value={form.email} onChange={v=>handleChange('email',v)} placeholder="jean@cabinet.sn" required/>
-                        <Input label="Mot de passe" type="password" value={form.password} onChange={v=>handleChange('password',v)} placeholder="Min. 6 caractères" required/>
-                        <div className="flex gap-3">
-                            <Button variant="secondary" onClick={()=>setStep(1)} className="flex-1">← Retour</Button>
-                            <Button onClick={handleSubmit} loading={loading} className="flex-1">Créer mon compte</Button>
-                        </div>
-                    </>)}
-                </div>
-                <p className="text-center text-slate-500 mt-6">
-                    Déjà inscrit ? <button onClick={onLogin} className="text-blue-600 font-semibold hover:underline">Se connecter</button>
-                </p>
-            </div>
-        </div>
-    );
-};
-
-// Page confirmation email
-const ConfirmEmailPage=({email,onLogin})=>(
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-md text-center">
-            <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                <span className="text-5xl">📧</span>
-            </div>
-            <h1 className="text-2xl font-bold text-slate-800 mb-4">Vérifiez votre email</h1>
-            <p className="text-slate-500 mb-2">Un email de confirmation a été envoyé à :</p>
-            <p className="text-blue-600 font-bold mb-6">{email}</p>
-            <div className="card p-6 text-left space-y-3 mb-6">
-                <p className="flex items-center gap-3 text-slate-600"><span>1️⃣</span> Ouvrez votre boîte email</p>
-                <p className="flex items-center gap-3 text-slate-600"><span>2️⃣</span> Cliquez sur le lien de confirmation</p>
-                <p className="flex items-center gap-3 text-slate-600"><span>3️⃣</span> Revenez vous connecter</p>
-            </div>
-            <Button onClick={onLogin} variant="primary" className="w-full">Aller à la connexion</Button>
-        </div>
-    </div>
-);
-
-// Initialiser les données d'organisation
-async function initOrganisationData(orgId){
-    const depts=[
-        {code:'AUD',nom:'Audit',facturable:true,couleur:'#2563eb'},
-        {code:'TAX',nom:'Tax & Legal',facturable:true,couleur:'#7c3aed'},
-        {code:'CON',nom:'Consulting',facturable:true,couleur:'#059669'},
-        {code:'OUT',nom:'Outsourcing',facturable:true,couleur:'#d97706'},
-    ];
-    await supabase.from('departements').insert(depts.map(d=>({...d,organisation_id:orgId})));
-    
-    const grades=[
-        {code:'ASS',nom:'Associé',niveau:10,taux_journalier:1500000,taux_cible:40},
-        {code:'DIR',nom:'Directeur',niveau:8,taux_journalier:900000,taux_cible:60},
-        {code:'SM',nom:'Senior Manager',niveau:7,taux_journalier:650000,taux_cible:70},
-        {code:'M',nom:'Manager',niveau:6,taux_journalier:450000,taux_cible:75},
-        {code:'S',nom:'Senior',niveau:4,taux_journalier:250000,taux_cible:85},
-        {code:'J',nom:'Junior',niveau:3,taux_journalier:150000,taux_cible:90},
-    ];
-    await supabase.from('grades').insert(grades.map(g=>({...g,organisation_id:orgId})));
-    
-    const cats=[
-        {code:'AUDIT',nom:'Audit',facturable:true,couleur:'#2563eb'},
-        {code:'CONSEIL',nom:'Conseil',facturable:true,couleur:'#059669'},
-        {code:'ADMIN',nom:'Administratif',facturable:false,couleur:'#6b7280'},
-    ];
-    await supabase.from('categories_taches').insert(cats.map(c=>({...c,organisation_id:orgId})));
-    
-    const typesFrais=[
-        {code:'AVION',nom:'Billet d\'avion',categorie:'transport'},
-        {code:'TRAIN',nom:'Train',categorie:'transport'},
-        {code:'TAXI',nom:'Taxi/VTC',categorie:'transport'},
-        {code:'KM',nom:'Indemnités kilométriques',categorie:'transport',taux_km:150},
-        {code:'HOTEL',nom:'Hôtel',categorie:'hebergement'},
-        {code:'REPAS',nom:'Repas',categorie:'repas',montant_max:15000},
-    ];
-    await supabase.from('types_frais').insert(typesFrais.map(t=>({...t,organisation_id:orgId})));
+facturable:true,organisation_id:orgId},{code:'TAX',nom:'Tax & Legal',facturable:true,organisation_id:orgId},{code:'CON',nom:'Consulting',facturable:true,organisation_id:orgId}]);
+await supabase.from('grades').insert([{code:'ASS',nom:'Associé',niveau:10,taux_journalier:1500000,organisation_id:orgId},{code:'M',nom:'Manager',niveau:6,taux_journalier:450000,organisation_id:orgId},{code:'S',nom:'Senior',niveau:4,taux_journalier:250000,organisation_id:orgId},{code:'J',nom:'Junior',niveau:3,taux_journalier:150000,organisation_id:orgId}]);
+await supabase.from('categories_taches').insert([{code:'AUDIT',nom:'Audit',facturable:true,organisation_id:orgId},{code:'CONSEIL',nom:'Conseil',facturable:true,organisation_id:orgId},{code:'ADMIN',nom:'Administratif',facturable:false,organisation_id:orgId}]);
+await supabase.from('types_frais').insert([{code:'TAXI',nom:'Taxi',organisation_id:orgId},{code:'HOTEL',nom:'Hôtel',organisation_id:orgId},{code:'REPAS',nom:'Repas',organisation_id:orgId}]);
 }
 
-// ===== APPLICATION PRINCIPALE =====
+// ===== MAIN APP =====
 const MainApp=({user,onLogout})=>{
-    const[userData,setUserData]=useState(null);
-    const[orgData,setOrgData]=useState(null);
-    const[loading,setLoading]=useState(true);
-    const[currentPage,setCurrentPage]=useState('dashboard');
-    const[sidebarOpen,setSidebarOpen]=useState(false);
-    
-    const isSuperAdmin=SUPER_ADMINS.includes(user?.email);
-    
-    useEffect(()=>{loadUserData();},[user]);
-    
-    const loadUserData=async()=>{
-        try{
-            const{data:u}=await supabase.from('utilisateurs').select('*,organisations(*)').eq('auth_id',user.id).single();
-            setUserData(u);
-            setOrgData(u?.organisations);
-        }catch(e){console.error(e);}
-        setLoading(false);
-    };
-    
-    if(loading)return<Loader/>;
-    
-    // Super Admin sans organisation
-    if(isSuperAdmin&&!userData){
-        return<SuperAdminApp user={user} onLogout={onLogout}/>;
-    }
-    
-    if(!userData||!orgData)return<div className="min-h-screen flex items-center justify-center text-slate-600">Erreur de chargement. <button onClick={onLogout} className="ml-2 text-blue-600 underline">Déconnexion</button></div>;
-    
-    const navItems=[
-        {key:'dashboard',label:'Tableau de bord',icon:Icons.dashboard},
-        {key:'clients',label:'Clients',icon:Icons.clients},
-        {key:'projects',label:'Missions',icon:Icons.projects},
-        {key:'timesheet',label:'Temps',icon:Icons.timesheet},
-        {key:'invoices',label:'Facturation',icon:Icons.invoices},
-        {key:'team',label:'Équipe',icon:Icons.team},
-        {key:'reports',label:'Rapports',icon:Icons.reports},
-        {key:'settings',label:'Paramètres',icon:Icons.settings},
-    ];
-    
-    if(isSuperAdmin){
-        navItems.push({key:'superadmin',label:'Super Admin',icon:Icons.admin});
-    }
-    
-    const contextValue={user:userData,org:orgData,reload:loadUserData,isSuperAdmin};
-    
-    return(
-        <AppContext.Provider value={contextValue}>
-            <div className="min-h-screen bg-slate-50 flex">
-                {sidebarOpen&&<div className="fixed inset-0 bg-black/30 z-40 lg:hidden" onClick={()=>setSidebarOpen(false)}/>}
-                
-                {/* Sidebar */}
-                <aside className={cn('sidebar w-64 bg-white border-r border-slate-100 flex flex-col fixed lg:relative h-screen z-50',sidebarOpen&&'open')}>
-                    <div className="p-4 border-b border-slate-100">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold shadow-lg shadow-blue-500/25">K</div>
-                            <div>
-                                <h1 className="font-bold text-slate-800">KabiNet</h1>
-                                <p className="text-xs text-slate-400 truncate max-w-[140px]">{orgData.nom}</p>
-                            </div>
-                        </div>
-                    </div>
-                    <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-                        {navItems.map(item=>(
-                            <button key={item.key} onClick={()=>{setCurrentPage(item.key);setSidebarOpen(false);}} className={cn('nav-item w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left transition-all',currentPage===item.key?'active font-medium':'text-slate-600 hover:text-slate-800')}>
-                                {item.icon}<span>{item.label}</span>
-                            </button>
-                        ))}
-                    </nav>
-                    <div className="p-4 border-t border-slate-100">
-                        <div className="flex items-center gap-3 mb-3">
-                            <div className="w-10 h-10 rounded-full gradient-primary flex items-center justify-center text-white font-bold text-sm">
-                                {userData.prenom?.[0]}{userData.nom?.[0]}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-slate-800 truncate">{userData.prenom} {userData.nom}</p>
-                                <p className="text-xs text-slate-400">{ROLES[userData.role]}</p>
-                            </div>
-                        </div>
-                        <button onClick={onLogout} className="w-full flex items-center gap-2 px-4 py-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all">
-                            {Icons.logout}<span>Déconnexion</span>
-                        </button>
-                    </div>
-                </aside>
-                
-                {/* Main */}
-                <main className="flex-1 min-h-screen">
-                    <header className="lg:hidden flex items-center justify-between p-4 bg-white border-b border-slate-100 sticky top-0 z-30">
-                        <button onClick={()=>setSidebarOpen(true)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600">{Icons.menu}</button>
-                        <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 gradient-primary rounded-lg flex items-center justify-center text-white font-bold text-sm">K</div>
-                            <span className="font-bold text-slate-800">KabiNet</span>
-                        </div>
-                        <div className="w-10"/>
-                    </header>
-                    
-                    <div className="p-4 lg:p-8">
-                        {currentPage==='dashboard'&&<DashboardPage/>}
-                        {currentPage==='clients'&&<ClientsPage/>}
-                        {currentPage==='projects'&&<ProjectsPage/>}
-                        {currentPage==='timesheet'&&<TimesheetPage/>}
-                        {currentPage==='invoices'&&<InvoicesPage/>}
-                        {currentPage==='team'&&<TeamPage/>}
-                        {currentPage==='reports'&&<ReportsPage/>}
-                        {currentPage==='settings'&&<SettingsPage/>}
-                        {currentPage==='superadmin'&&<SuperAdminPage/>}
-                    </div>
-                </main>
-            </div>
-        </AppContext.Provider>
-    );
+const[userData,setUserData]=useState(null);const[orgData,setOrgData]=useState(null);const[aboData,setAboData]=useState(null);const[loading,setLoading]=useState(true);const[page,setPage]=useState('dashboard');const[sidebarOpen,setSidebarOpen]=useState(false);
+const isSuperAdmin=SUPER_ADMINS.includes(user?.email);
+
+useEffect(()=>{loadUser();},[user]);
+const loadUser=async()=>{try{
+const{data:u}=await supabase.from('utilisateurs').select('*,organisations(*)').eq('auth_id',user.id).single();
+const{data:a}=await supabase.from('abonnements').select('*').eq('organisation_id',u?.organisation_id).order('created_at',{ascending:false}).limit(1).single();
+setUserData(u);setOrgData(u?.organisations);setAboData(a);
+}catch(e){console.error(e);}setLoading(false);};
+
+if(loading)return<Loader/>;
+if(isSuperAdmin&&!userData)return<SuperAdminApp user={user} onLogout={onLogout}/>;
+if(!userData||!orgData)return<div className="min-h-screen flex items-center justify-center">Erreur. <button onClick={onLogout} className="ml-2 text-blue-600 underline">Déconnexion</button></div>;
+
+const nav=[{k:'dashboard',l:'Dashboard',i:Icons.dashboard},{k:'clients',l:'Clients',i:Icons.clients},{k:'projects',l:'Missions',i:Icons.projects},{k:'timesheet',l:'Temps',i:Icons.timesheet},{k:'invoices',l:'Factures',i:Icons.invoices},{k:'expenses',l:'Frais',i:Icons.expenses},{k:'team',l:'Équipe',i:Icons.team},{k:'reports',l:'Rapports',i:Icons.reports},{k:'settings',l:'Paramètres',i:Icons.settings}];
+if(isSuperAdmin)nav.push({k:'admin',l:'Admin',i:Icons.admin});
+
+const ctx={user:userData,org:orgData,abo:aboData,reload:loadUser,isSuperAdmin};
+return<AppContext.Provider value={ctx}>
+<div className="min-h-screen bg-slate-50 flex">
+{sidebarOpen&&<div className="fixed inset-0 bg-black/30 z-40 lg:hidden" onClick={()=>setSidebarOpen(false)}/>}
+<aside className={cn('sidebar w-64 bg-white border-r flex flex-col fixed lg:relative h-screen z-50',sidebarOpen&&'open')}>
+<div className="p-4 border-b flex items-center gap-3"><div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold">K</div><div><div className="font-bold">KabiNet</div><div className="text-xs text-slate-400 truncate max-w-[140px]">{orgData.nom}</div></div></div>
+<nav className="flex-1 p-3 space-y-1">{nav.map(n=><button key={n.k} onClick={()=>{setPage(n.k);setSidebarOpen(false);}} className={cn('nav-item w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left',page===n.k?'active font-medium':'text-slate-600')}><span>{n.i}</span>{n.l}</button>)}</nav>
+<div className="p-4 border-t"><div className="flex items-center gap-3 mb-3"><div className="w-10 h-10 gradient-primary rounded-full flex items-center justify-center text-white font-bold text-sm">{userData.prenom?.[0]}{userData.nom?.[0]}</div><div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{userData.prenom} {userData.nom}</div><div className="text-xs text-slate-400">{userData.role}</div></div></div><button onClick={onLogout} className="w-full flex items-center gap-2 px-4 py-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl">{Icons.logout} Déconnexion</button></div>
+</aside>
+<main className="flex-1">
+<header className="lg:hidden flex items-center justify-between p-4 bg-white border-b sticky top-0 z-30"><button onClick={()=>setSidebarOpen(true)} className="p-2">{Icons.menu}</button><div className="font-bold">KabiNet</div><div className="w-10"/></header>
+<div className="p-4 lg:p-8">
+{page==='dashboard'&&<DashboardPage/>}
+{page==='clients'&&<ClientsPage/>}
+{page==='projects'&&<ProjectsPage/>}
+{page==='timesheet'&&<TimesheetPage/>}
+{page==='invoices'&&<InvoicesPage/>}
+{page==='expenses'&&<ExpensesPage/>}
+{page==='team'&&<TeamPage/>}
+{page==='reports'&&<ReportsPage/>}
+{page==='settings'&&<SettingsPage/>}
+{page==='admin'&&<AdminPage/>}
+</div>
+</main>
+</div>
+</AppContext.Provider>;
 };
 
-// ===== SUPER ADMIN APP (sans organisation) =====
+// ===== SUPER ADMIN (sans org) =====
 const SuperAdminApp=({user,onLogout})=>{
-    const[orgs,setOrgs]=useState([]);
-    const[users,setUsers]=useState([]);
-    const[abos,setAbos]=useState([]);
-    const[loading,setLoading]=useState(true);
-    const[tab,setTab]=useState('orgs');
-    
-    useEffect(()=>{loadData();},[]);
-    
-    const loadData=async()=>{
-        const[o,u,a]=await Promise.all([
-            supabase.from('organisations').select('*').order('created_at',{ascending:false}),
-            supabase.from('utilisateurs').select('*,organisations(nom)').order('created_at',{ascending:false}),
-            supabase.from('abonnements').select('*,organisations(nom)').order('created_at',{ascending:false}),
-        ]);
-        setOrgs(o.data||[]);
-        setUsers(u.data||[]);
-        setAbos(a.data||[]);
-        setLoading(false);
-    };
-    
-    return(
-        <div className="min-h-screen bg-slate-50">
-            <header className="bg-white border-b border-slate-100 px-6 py-4">
-                <div className="max-w-7xl mx-auto flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold">K</div>
-                        <div>
-                            <h1 className="font-bold text-slate-800">KabiNet</h1>
-                            <p className="text-xs text-amber-600 font-medium">🛡️ Super Admin</p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                        <span className="text-sm text-slate-500">{user.email}</span>
-                        <Button variant="secondary" onClick={onLogout} icon={Icons.logout}>Déconnexion</Button>
-                    </div>
-                </div>
-            </header>
-            
-            <div className="max-w-7xl mx-auto p-6">
-                <div className="mb-6">
-                    <h1 className="text-2xl font-bold text-slate-800">Administration Globale</h1>
-                    <p className="text-slate-500">Gérez toutes les organisations et abonnements</p>
-                </div>
-                
-                {/* Stats */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                    <StatCard title="Organisations" value={orgs.length} icon={Icons.clients} color="blue"/>
-                    <StatCard title="Utilisateurs" value={users.length} icon={Icons.team} color="green"/>
-                    <StatCard title="Abonnements actifs" value={abos.filter(a=>a.statut==='actif').length} icon={Icons.check} color="purple"/>
-                    <StatCard title="Essais en cours" value={abos.filter(a=>a.plan==='trial'&&a.statut==='actif').length} icon="🎁" color="amber"/>
-                </div>
-                
-                {/* Tabs */}
-                <div className="flex gap-2 mb-6">
-                    {[{k:'orgs',l:'Organisations'},{k:'users',l:'Utilisateurs'},{k:'abos',l:'Abonnements'}].map(t=>(
-                        <button key={t.k} onClick={()=>setTab(t.k)} className={cn('px-4 py-2 rounded-xl font-medium transition-all',tab===t.k?'gradient-primary text-white':'bg-white text-slate-600 hover:bg-slate-50')}>
-                            {t.l}
-                        </button>
-                    ))}
-                </div>
-                
-                <Card>
-                    {loading?<Loader/>:(
-                        <>
-                            {tab==='orgs'&&(
-                                <Table columns={[
-                                    {header:'Cabinet',render:r=><span className="font-medium text-slate-800">{r.nom}</span>},
-                                    {header:'Email',key:'email'},
-                                    {header:'Créé le',render:r=>fmtDate(r.created_at)},
-                                ]} data={orgs}/>
-                            )}
-                            {tab==='users'&&(
-                                <Table columns={[
-                                    {header:'Nom',render:r=><span className="font-medium text-slate-800">{r.prenom} {r.nom}</span>},
-                                    {header:'Email',key:'email'},
-                                    {header:'Cabinet',render:r=>r.organisations?.nom||'-'},
-                                    {header:'Rôle',render:r=><Badge color={r.role==='Admin'?'blue':'gray'}>{r.role}</Badge>},
-                                    {header:'Créé le',render:r=>fmtDate(r.created_at)},
-                                ]} data={users}/>
-                            )}
-                            {tab==='abos'&&(
-                                <Table columns={[
-                                    {header:'Cabinet',render:r=>r.organisations?.nom||'-'},
-                                    {header:'Plan',render:r=><Badge color={r.plan==='premium'?'purple':r.plan==='standard'?'blue':'gray'}>{PLANS[r.plan]?.nom||r.plan}</Badge>},
-                                    {header:'Statut',render:r=><Badge color={r.statut==='actif'?'green':'red'}>{r.statut}</Badge>},
-                                    {header:'Début',render:r=>fmtDate(r.date_debut)},
-                                    {header:'Fin',render:r=>fmtDate(r.date_fin)},
-                                ]} data={abos}/>
-                            )}
-                        </>
-                    )}
-                </Card>
-            </div>
-        </div>
-    );
+const[orgs,setOrgs]=useState([]);const[users,setUsers]=useState([]);const[abos,setAbos]=useState([]);const[loading,setLoading]=useState(true);const[tab,setTab]=useState('orgs');
+const[editOrg,setEditOrg]=useState(null);const[editForm,setEditForm]=useState({plan:'trial',date_fin:''});const[saving,setSaving]=useState(false);
+
+useEffect(()=>{loadData();},[]);
+const loadData=async()=>{
+const[o,u,a]=await Promise.all([supabase.from('organisations').select('*').order('created_at',{ascending:false}),supabase.from('utilisateurs').select('*,organisations(nom)').order('created_at',{ascending:false}),supabase.from('abonnements').select('*,organisations(nom)').order('created_at',{ascending:false})]);
+setOrgs(o.data||[]);setUsers(u.data||[]);setAbos(a.data||[]);setLoading(false);};
+const getAbo=orgId=>abos.find(a=>a.organisation_id===orgId);
+const openEdit=org=>{const a=getAbo(org.id);setEditOrg(org);setEditForm({plan:a?.plan||'trial',date_fin:a?.date_fin?.split('T')[0]||''});};
+const saveAbo=async()=>{if(!editOrg)return;setSaving(true);try{
+const a=getAbo(editOrg.id);const data={organisation_id:editOrg.id,plan:editForm.plan,statut:'actif',date_debut:new Date().toISOString(),date_fin:editForm.date_fin?new Date(editForm.date_fin).toISOString():null,montant:PLANS[editForm.plan]?.prix||0};
+if(a?.id)await supabase.from('abonnements').update(data).eq('id',a.id);else await supabase.from('abonnements').insert([data]);
+await loadData();setEditOrg(null);}catch(e){alert(e.message);}setSaving(false);};
+
+return<div className="min-h-screen bg-slate-50">
+<header className="bg-white border-b px-6 py-4 flex items-center justify-between"><div className="flex items-center gap-3"><div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold">K</div><div><div className="font-bold">KabiNet</div><div className="text-xs text-amber-600">🛡️ Super Admin</div></div></div><div className="flex items-center gap-4"><span className="text-sm text-slate-500">{user.email}</span><Button variant="secondary" onClick={onLogout}>Déconnexion</Button></div></header>
+<div className="max-w-6xl mx-auto p-6">
+<h1 className="text-2xl font-bold mb-6">Administration Globale</h1>
+<div className="grid grid-cols-4 gap-4 mb-6">
+<StatCard title="Organisations" value={orgs.length} icon="🏢" color="blue"/>
+<StatCard title="Utilisateurs" value={users.length} icon="👥" color="green"/>
+<StatCard title="Essais" value={abos.filter(a=>a.plan==='trial').length} icon="🎁" color="amber"/>
+<StatCard title="Payants" value={abos.filter(a=>a.plan!=='trial').length} icon="⭐" color="purple"/>
+</div>
+<div className="flex gap-2 mb-4">{['orgs','users','abos'].map(t=><button key={t} onClick={()=>setTab(t)} className={cn('px-4 py-2 rounded-xl font-medium',tab===t?'gradient-primary text-white':'bg-white')}>{t==='orgs'?'Organisations':t==='users'?'Utilisateurs':'Abonnements'}</button>)}</div>
+<Card>{loading?<Loader/>:<>
+{tab==='orgs'&&<Table columns={[{header:'Cabinet',render:r=><b>{r.nom}</b>},{header:'Créé',render:r=>fmtDate(r.created_at)},{header:'Plan',render:r=>{const a=getAbo(r.id);return<Badge color={a?.plan==='premium'?'purple':a?.plan==='standard'?'blue':'gray'}>{PLANS[a?.plan]?.nom||'Essai'}</Badge>}},{header:'Expire',render:r=>{const a=getAbo(r.id);return a?.date_fin?fmtDate(a.date_fin):'-'}},{header:'',render:r=><Button variant="ghost" onClick={()=>openEdit(r)}>✏️</Button>}]} data={orgs}/>}
+{tab==='users'&&<Table columns={[{header:'Nom',render:r=><b>{r.prenom} {r.nom}</b>},{header:'Email',key:'email'},{header:'Cabinet',render:r=>r.organisations?.nom||'-'},{header:'Rôle',render:r=><Badge color={r.role==='Admin'?'blue':'gray'}>{r.role}</Badge>},{header:'Créé',render:r=>fmtDate(r.created_at)}]} data={users}/>}
+{tab==='abos'&&<Table columns={[{header:'Cabinet',render:r=>r.organisations?.nom||'-'},{header:'Plan',render:r=><Badge color={r.plan==='premium'?'purple':r.plan==='standard'?'blue':'gray'}>{PLANS[r.plan]?.nom||r.plan}</Badge>},{header:'Statut',render:r=><Badge color={r.statut==='actif'?'green':'red'}>{r.statut}</Badge>},{header:'Début',render:r=>fmtDate(r.date_debut)},{header:'Fin',render:r=>fmtDate(r.date_fin)}]} data={abos}/>}
+</>}</Card>
+</div>
+<Modal isOpen={!!editOrg} onClose={()=>setEditOrg(null)} title={`Modifier: ${editOrg?.nom}`} size="sm">
+<div className="space-y-4">
+<Select label="Plan" value={editForm.plan} onChange={v=>setEditForm(p=>({...p,plan:v}))} options={Object.entries(PLANS).map(([k,v])=>({value:k,label:v.nom+' - '+fmt(v.prix)+' F'}))}/>
+<Input label="Date d'expiration" type="date" value={editForm.date_fin} onChange={v=>setEditForm(p=>({...p,date_fin:v}))}/>
+<div className="flex gap-3"><Button variant="secondary" onClick={()=>setEditOrg(null)} className="flex-1">Annuler</Button><Button onClick={saveAbo} loading={saving} className="flex-1">Enregistrer</Button></div>
+</div>
+</Modal>
+</div>;
 };
 
 // ===== PAGES =====
 const DashboardPage=()=>{
-    const{org}=useApp();
-    const[data,setData]=useState({projets:0,heures:0,taux:0,ca:0,enCours:0});
-    const[loading,setLoading]=useState(true);
-    
-    useEffect(()=>{
-        Promise.all([
-            supabase.from('projets').select('id').eq('organisation_id',org.id).eq('statut','active'),
-            supabase.from('saisies_temps').select('heures,facturable').eq('organisation_id',org.id),
-            supabase.from('factures').select('montant_total,statut').eq('organisation_id',org.id),
-        ]).then(([p,t,f])=>{
-            const heures=t.data?.reduce((s,x)=>s+x.heures,0)||0;
-            const hFact=t.data?.filter(x=>x.facturable).reduce((s,x)=>s+x.heures,0)||0;
-            const ca=f.data?.filter(x=>x.statut==='paid').reduce((s,x)=>s+x.montant_total,0)||0;
-            const enc=f.data?.filter(x=>['sent','overdue'].includes(x.statut)).reduce((s,x)=>s+x.montant_total,0)||0;
-            setData({projets:p.data?.length||0,heures,taux:heures>0?Math.round(hFact/heures*100):0,ca,enCours:enc});
-            setLoading(false);
-        });
-    },[]);
-    
-    if(loading)return<Loader/>;
-    
-    return(
-        <div className="space-y-6 animate-fade-in">
-            <div>
-                <h1 className="text-2xl font-bold text-slate-800">Tableau de bord</h1>
-                <p className="text-slate-500">Vue d'ensemble de votre activité</p>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-                <StatCard title="Missions actives" value={data.projets} icon={Icons.projects} color="blue"/>
-                <StatCard title="Heures saisies" value={fmt(data.heures)+'h'} icon={Icons.timesheet} color="cyan"/>
-                <StatCard title="Taux de charge" value={data.taux+'%'} icon={Icons.reports} color="green"/>
-                <StatCard title="CA Encaissé" value={fmtMoney(data.ca)} icon={Icons.invoices} color="purple"/>
-                <StatCard title="En attente" value={fmtMoney(data.enCours)} icon={Icons.arrowUp} color="amber"/>
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Card title="Activité récente"><p className="text-slate-400 text-sm">Les dernières actions s'afficheront ici</p></Card>
-                <Card title="À faire"><p className="text-slate-400 text-sm">Vos tâches en attente</p></Card>
-            </div>
-        </div>
-    );
+const{org}=useApp();const[stats,setStats]=useState({projets:0,heures:0,ca:0,clients:0});const[loading,setLoading]=useState(true);
+useEffect(()=>{Promise.all([
+supabase.from('projets').select('id').eq('organisation_id',org.id).eq('statut','active'),
+supabase.from('saisies_temps').select('heures').eq('organisation_id',org.id),
+supabase.from('factures').select('montant_total,statut').eq('organisation_id',org.id),
+supabase.from('clients').select('id').eq('organisation_id',org.id)
+]).then(([p,t,f,c])=>{setStats({projets:p.data?.length||0,heures:t.data?.reduce((s,x)=>s+(x.heures||0),0)||0,ca:f.data?.filter(x=>x.statut==='paid').reduce((s,x)=>s+(x.montant_total||0),0)||0,clients:c.data?.length||0});setLoading(false);});},[]);
+if(loading)return<Loader/>;
+return<div className="animate-fade"><h1 className="text-2xl font-bold mb-6">Tableau de bord</h1>
+<div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6"><StatCard title="Missions actives" value={stats.projets} icon="📋" color="blue"/><StatCard title="Heures saisies" value={fmt(stats.heures)+'h'} icon="⏱️" color="green"/><StatCard title="CA encaissé" value={fmtMoney(stats.ca)} icon="💰" color="purple"/><StatCard title="Clients" value={stats.clients} icon="🏢" color="amber"/></div>
+<div className="grid lg:grid-cols-2 gap-6"><Card title="Activité récente"><p className="text-slate-400">Dernières actions...</p></Card><Card title="À faire"><p className="text-slate-400">Tâches en attente...</p></Card></div>
+</div>;
 };
 
 const ClientsPage=()=>{
-    const{org}=useApp();
-    const[clients,setClients]=useState([]);
-    const[loading,setLoading]=useState(true);
-    const[search,setSearch]=useState('');
-    const[modalOpen,setModalOpen]=useState(false);
-    const[editItem,setEditItem]=useState(null);
-    
-    useEffect(()=>{loadData();},[]);
-    const loadData=async()=>{const{data}=await supabase.from('clients').select('*').eq('organisation_id',org.id).order('nom');setClients(data||[]);setLoading(false);};
-    
-    const filtered=clients.filter(c=>c.nom?.toLowerCase().includes(search.toLowerCase())||c.code?.toLowerCase().includes(search.toLowerCase()));
-    
-    const handleSave=async(form)=>{
-        if(editItem?.id){await supabase.from('clients').update(form).eq('id',editItem.id);}
-        else{await supabase.from('clients').insert([{...form,organisation_id:org.id}]);}
-        setModalOpen(false);setEditItem(null);loadData();
-    };
-    
-    return(
-        <div className="space-y-6 animate-fade-in">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div><h1 className="text-2xl font-bold text-slate-800">Clients</h1><p className="text-slate-500">{clients.length} clients</p></div>
-                <Button onClick={()=>{setEditItem(null);setModalOpen(true);}} icon={Icons.plus}>Nouveau client</Button>
-            </div>
-            <Card>
-                <div className="mb-4">
-                    <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">{Icons.search}</span>
-                        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher..." className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"/>
-                    </div>
-                </div>
-                {loading?<Loader/>:<Table columns={[
-                    {header:'Code',render:r=><span className="font-mono text-blue-600 text-xs bg-blue-50 px-2 py-1 rounded">{r.code}</span>},
-                    {header:'Nom',render:r=><span className="font-medium text-slate-800">{r.nom}</span>},
-                    {header:'Ville',key:'ville'},
-                    {header:'Email',key:'email'},
-                    {header:'',render:r=><button onClick={()=>{setEditItem(r);setModalOpen(true);}} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600">{Icons.edit}</button>,className:'w-10'},
-                ]} data={filtered}/>}
-            </Card>
-            <ClientModal isOpen={modalOpen} onClose={()=>{setModalOpen(false);setEditItem(null);}} client={editItem} onSave={handleSave}/>
-        </div>
-    );
-};
-
-const ClientModal=({isOpen,onClose,client,onSave})=>{
-    const[form,setForm]=useState({});
-    const[loading,setLoading]=useState(false);
-    useEffect(()=>{setForm(client||{code:'CLI'+Date.now().toString().slice(-6),ville:'DAKAR'});},[client,isOpen]);
-    const handleSubmit=async()=>{if(!form.nom){alert('Nom requis');return;}setLoading(true);await onSave(form);setLoading(false);};
-    return(
-        <Modal isOpen={isOpen} onClose={onClose} title={client?'Modifier le client':'Nouveau client'}>
-            <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                    <Input label="Code" value={form.code} onChange={v=>setForm(p=>({...p,code:v}))}/>
-                    <Input label="Nom" value={form.nom} onChange={v=>setForm(p=>({...p,nom:v}))} required/>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                    <Input label="Ville" value={form.ville} onChange={v=>setForm(p=>({...p,ville:v}))}/>
-                    <Input label="Email" type="email" value={form.email} onChange={v=>setForm(p=>({...p,email:v}))}/>
-                </div>
-                <Input label="Téléphone" value={form.telephone} onChange={v=>setForm(p=>({...p,telephone:v}))}/>
-                <TextArea label="Adresse" value={form.adresse} onChange={v=>setForm(p=>({...p,adresse:v}))}/>
-                <div className="flex gap-3 pt-4">
-                    <Button variant="secondary" onClick={onClose} className="flex-1">Annuler</Button>
-                    <Button onClick={handleSubmit} loading={loading} className="flex-1">Enregistrer</Button>
-                </div>
-            </div>
-        </Modal>
-    );
+const{org}=useApp();const[items,setItems]=useState([]);const[loading,setLoading]=useState(true);const[search,setSearch]=useState('');const[modal,setModal]=useState(false);const[edit,setEdit]=useState(null);const[form,setForm]=useState({});const[saving,setSaving]=useState(false);
+useEffect(()=>{load();},[]);
+const load=async()=>{const{data}=await supabase.from('clients').select('*').eq('organisation_id',org.id).order('nom');setItems(data||[]);setLoading(false);};
+const openNew=()=>{setEdit(null);setForm({code:genCode('CLI'),nom:'',ville:'DAKAR',email:'',telephone:''});setModal(true);};
+const openEdit=r=>{setEdit(r);setForm(r);setModal(true);};
+const save=async()=>{if(!form.nom)return alert('Nom requis');setSaving(true);try{if(edit?.id)await supabase.from('clients').update(form).eq('id',edit.id);else await supabase.from('clients').insert([{...form,organisation_id:org.id}]);setModal(false);load();}catch(e){alert(e.message);}setSaving(false);};
+const del=async r=>{if(!confirm('Supprimer ce client?'))return;await supabase.from('clients').delete().eq('id',r.id);load();};
+const filtered=items.filter(x=>x.nom?.toLowerCase().includes(search.toLowerCase()));
+return<div className="animate-fade"><div className="flex justify-between items-center mb-6"><div><h1 className="text-2xl font-bold">Clients</h1><p className="text-slate-500">{items.length} clients</p></div><Button onClick={openNew} icon="➕">Nouveau</Button></div>
+<Card><div className="mb-4"><Input value={search} onChange={setSearch} placeholder="🔍 Rechercher..." className="max-w-xs"/></div>
+<Table loading={loading} columns={[{header:'Code',render:r=><span className="font-mono text-blue-600 text-xs bg-blue-50 px-2 py-1 rounded">{r.code}</span>},{header:'Nom',render:r=><b>{r.nom}</b>},{header:'Ville',key:'ville'},{header:'Email',key:'email'},{header:'',render:r=><div className="flex gap-1"><button onClick={()=>openEdit(r)} className="p-1 hover:bg-slate-100 rounded">✏️</button><button onClick={()=>del(r)} className="p-1 hover:bg-red-50 text-red-500 rounded">🗑️</button></div>}]} data={filtered}/>
+</Card>
+<Modal isOpen={modal} onClose={()=>setModal(false)} title={edit?'Modifier client':'Nouveau client'}>
+<div className="space-y-4">
+<div className="grid grid-cols-2 gap-4"><Input label="Code" value={form.code} onChange={v=>setForm(p=>({...p,code:v}))}/><Input label="Nom" value={form.nom} onChange={v=>setForm(p=>({...p,nom:v}))} required/></div>
+<div className="grid grid-cols-2 gap-4"><Input label="Ville" value={form.ville} onChange={v=>setForm(p=>({...p,ville:v}))}/><Input label="Email" value={form.email} onChange={v=>setForm(p=>({...p,email:v}))}/></div>
+<Input label="Téléphone" value={form.telephone} onChange={v=>setForm(p=>({...p,telephone:v}))}/>
+<div className="flex gap-3 pt-4"><Button variant="secondary" onClick={()=>setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Enregistrer</Button></div>
+</div>
+</Modal>
+</div>;
 };
 
 const ProjectsPage=()=>{
-    const{org}=useApp();
-    const[items,setItems]=useState([]);
-    const[loading,setLoading]=useState(true);
-    useEffect(()=>{supabase.from('projets').select('*,clients(nom)').eq('organisation_id',org.id).order('created_at',{ascending:false}).then(({data})=>{setItems(data||[]);setLoading(false);});},[]);
-    const statusColors={draft:'gray',active:'green',completed:'blue',cancelled:'red'};
-    return(
-        <div className="space-y-6 animate-fade-in">
-            <div className="flex items-center justify-between">
-                <div><h1 className="text-2xl font-bold text-slate-800">Missions</h1><p className="text-slate-500">{items.length} missions</p></div>
-                <Button icon={Icons.plus}>Nouvelle mission</Button>
-            </div>
-            <Card>{loading?<Loader/>:<Table columns={[
-                {header:'Code',render:r=><span className="font-mono text-blue-600 text-xs bg-blue-50 px-2 py-1 rounded">{r.code}</span>},
-                {header:'Mission',render:r=><span className="font-medium text-slate-800">{r.nom}</span>},
-                {header:'Client',render:r=>r.clients?.nom},
-                {header:'Statut',render:r=><Badge color={statusColors[r.statut]}>{PROJECT_STATUS[r.statut]}</Badge>},
-                {header:'Budget',render:r=>r.budget_montant?fmtMoney(r.budget_montant):'-'},
-            ]} data={items}/>}</Card>
-        </div>
-    );
+const{org}=useApp();const[items,setItems]=useState([]);const[clients,setClients]=useState([]);const[depts,setDepts]=useState([]);const[loading,setLoading]=useState(true);const[modal,setModal]=useState(false);const[edit,setEdit]=useState(null);const[form,setForm]=useState({});const[saving,setSaving]=useState(false);
+useEffect(()=>{load();},[]);
+const load=async()=>{const[p,c,d]=await Promise.all([supabase.from('projets').select('*,clients(nom)').eq('organisation_id',org.id).order('created_at',{ascending:false}),supabase.from('clients').select('id,nom').eq('organisation_id',org.id),supabase.from('departements').select('id,nom').eq('organisation_id',org.id)]);setItems(p.data||[]);setClients(c.data||[]);setDepts(d.data||[]);setLoading(false);};
+const openNew=()=>{setEdit(null);setForm({code:genCode('PRJ'),nom:'',client_id:'',departement_id:'',type_facturation:'regie',statut:'active',budget_montant:0,date_debut:today()});setModal(true);};
+const openEdit=r=>{setEdit(r);setForm({...r,date_debut:r.date_debut||'',date_fin:r.date_fin||''});setModal(true);};
+const save=async()=>{if(!form.nom)return alert('Nom requis');setSaving(true);try{const data={...form,client_id:form.client_id||null,departement_id:form.departement_id||null};if(edit?.id)await supabase.from('projets').update(data).eq('id',edit.id);else await supabase.from('projets').insert([{...data,organisation_id:org.id}]);setModal(false);load();}catch(e){alert(e.message);}setSaving(false);};
+const statusColor={draft:'gray',active:'green',completed:'blue',cancelled:'red'};
+return<div className="animate-fade"><div className="flex justify-between items-center mb-6"><div><h1 className="text-2xl font-bold">Missions</h1><p className="text-slate-500">{items.length} missions</p></div><Button onClick={openNew} icon="➕">Nouvelle</Button></div>
+<Card><Table loading={loading} columns={[{header:'Code',render:r=><span className="font-mono text-blue-600 text-xs bg-blue-50 px-2 py-1 rounded">{r.code}</span>},{header:'Mission',render:r=><b>{r.nom}</b>},{header:'Client',render:r=>r.clients?.nom||'-'},{header:'Type',render:r=><Badge>{r.type_facturation==='forfait'?'Forfait':'Régie'}</Badge>},{header:'Statut',render:r=><Badge color={statusColor[r.statut]}>{r.statut}</Badge>},{header:'Budget',render:r=>r.budget_montant?fmtMoney(r.budget_montant):'-'},{header:'',render:r=><button onClick={()=>openEdit(r)} className="p-1 hover:bg-slate-100 rounded">✏️</button>}]} data={items}/></Card>
+<Modal isOpen={modal} onClose={()=>setModal(false)} title={edit?'Modifier mission':'Nouvelle mission'} size="lg">
+<div className="space-y-4">
+<div className="grid grid-cols-2 gap-4"><Input label="Code" value={form.code} onChange={v=>setForm(p=>({...p,code:v}))}/><Input label="Nom" value={form.nom} onChange={v=>setForm(p=>({...p,nom:v}))} required/></div>
+<div className="grid grid-cols-2 gap-4"><Select label="Client" value={form.client_id} onChange={v=>setForm(p=>({...p,client_id:v}))} options={clients.map(c=>({value:c.id,label:c.nom}))} placeholder="Sélectionner"/><Select label="Département" value={form.departement_id} onChange={v=>setForm(p=>({...p,departement_id:v}))} options={depts.map(d=>({value:d.id,label:d.nom}))} placeholder="Sélectionner"/></div>
+<div className="grid grid-cols-3 gap-4"><Select label="Type" value={form.type_facturation} onChange={v=>setForm(p=>({...p,type_facturation:v}))} options={[{value:'regie',label:'Régie'},{value:'forfait',label:'Forfait'}]}/><Select label="Statut" value={form.statut} onChange={v=>setForm(p=>({...p,statut:v}))} options={[{value:'draft',label:'Brouillon'},{value:'active',label:'En cours'},{value:'completed',label:'Terminé'}]}/><Input label="Budget (FCFA)" type="number" value={form.budget_montant} onChange={v=>setForm(p=>({...p,budget_montant:v}))}/></div>
+<div className="grid grid-cols-2 gap-4"><Input label="Date début" type="date" value={form.date_debut} onChange={v=>setForm(p=>({...p,date_debut:v}))}/><Input label="Date fin" type="date" value={form.date_fin} onChange={v=>setForm(p=>({...p,date_fin:v}))}/></div>
+<div className="flex gap-3 pt-4"><Button variant="secondary" onClick={()=>setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Enregistrer</Button></div>
+</div>
+</Modal>
+</div>;
 };
 
 const TimesheetPage=()=>{
-    const{org,user}=useApp();
-    const[weekStart,setWeekStart]=useState(getWeekStart());
-    const[entries,setEntries]=useState([]);
-    const[projects,setProjects]=useState([]);
-    const[loading,setLoading]=useState(true);
-    const weekDays=['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'].map((d,i)=>({label:d,date:addDays(weekStart,i)}));
-    
-    useEffect(()=>{
-        setLoading(true);
-        const weekEnd=addDays(weekStart,6);
-        Promise.all([
-            supabase.from('saisies_temps').select('*,projets(nom,code)').eq('organisation_id',org.id).eq('utilisateur_id',user.id).gte('date',weekStart).lte('date',weekEnd),
-            supabase.from('projets').select('id,nom,code').eq('organisation_id',org.id).eq('statut','active'),
-        ]).then(([t,p])=>{setEntries(t.data||[]);setProjects(p.data||[]);setLoading(false);});
-    },[weekStart]);
-    
-    const totalWeek=entries.reduce((s,e)=>s+e.heures,0);
-    
-    return(
-        <div className="space-y-6 animate-fade-in">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div><h1 className="text-2xl font-bold text-slate-800">Saisie des temps</h1><p className="text-slate-500">Semaine du {fmtDate(weekStart)}</p></div>
-                <div className="flex items-center gap-2">
-                    <Button variant="secondary" onClick={()=>setWeekStart(addDays(weekStart,-7))}>←</Button>
-                    <Button variant="secondary" onClick={()=>setWeekStart(getWeekStart())}>Aujourd'hui</Button>
-                    <Button variant="secondary" onClick={()=>setWeekStart(addDays(weekStart,7))}>→</Button>
-                </div>
-            </div>
-            <Card>
-                {loading?<Loader/>:(
-                    <div className="overflow-x-auto">
-                        <table className="w-full">
-                            <thead>
-                                <tr className="border-b border-slate-100">
-                                    <th className="px-4 py-3 text-left text-sm font-semibold text-slate-600 w-48">Projet</th>
-                                    {weekDays.map(d=><th key={d.date} className="px-2 py-3 text-center text-sm font-semibold text-slate-600 w-20">{d.label}<br/><span className="text-xs text-slate-400 font-normal">{d.date.split('-')[2]}</span></th>)}
-                                    <th className="px-4 py-3 text-right text-sm font-semibold text-slate-600">Total</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {projects.map(p=>{
-                                    const pEntries=entries.filter(e=>e.projet_id===p.id);
-                                    const total=pEntries.reduce((s,e)=>s+e.heures,0);
-                                    return(
-                                        <tr key={p.id} className="border-b border-slate-50">
-                                            <td className="px-4 py-2"><span className="font-medium text-slate-700 text-sm">{p.nom}</span></td>
-                                            {weekDays.map(d=>{
-                                                const entry=pEntries.find(e=>e.date===d.date);
-                                                return<td key={d.date} className="px-2 py-2 text-center">
-                                                    <input type="number" min="0" max="24" step="0.5" defaultValue={entry?.heures||''} placeholder="–" className="w-14 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-center text-slate-700 text-sm"/>
-                                                </td>;
-                                            })}
-                                            <td className="px-4 py-2 text-right font-bold text-slate-700">{total>0?total:'–'}</td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                            <tfoot>
-                                <tr className="bg-slate-50">
-                                    <td className="px-4 py-3 font-bold text-slate-700">Total</td>
-                                    {weekDays.map(d=>{
-                                        const dayTotal=entries.filter(e=>e.date===d.date).reduce((s,e)=>s+e.heures,0);
-                                        return<td key={d.date} className="px-2 py-3 text-center font-bold text-blue-600">{dayTotal>0?dayTotal:'–'}</td>;
-                                    })}
-                                    <td className="px-4 py-3 text-right font-bold text-xl text-blue-600">{totalWeek}h</td>
-                                </tr>
-                            </tfoot>
-                        </table>
-                    </div>
-                )}
-                <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-100">
-                    <Button variant="secondary">Enregistrer</Button>
-                    <Button>Soumettre</Button>
-                </div>
-            </Card>
-        </div>
-    );
+const{org,user}=useApp();const[weekStart,setWeekStart]=useState(getWeekStart());const[entries,setEntries]=useState([]);const[projects,setProjects]=useState([]);const[loading,setLoading]=useState(true);const[saving,setSaving]=useState(false);
+const days=['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'].map((d,i)=>({label:d,date:addDays(weekStart,i)}));
+useEffect(()=>{load();},[weekStart]);
+const load=async()=>{setLoading(true);const end=addDays(weekStart,6);const[t,p]=await Promise.all([supabase.from('saisies_temps').select('*').eq('organisation_id',org.id).eq('utilisateur_id',user.id).gte('date',weekStart).lte('date',end),supabase.from('projets').select('id,nom,code').eq('organisation_id',org.id).eq('statut','active')]);setEntries(t.data||[]);setProjects(p.data||[]);setLoading(false);};
+const getEntry=(projId,date)=>entries.find(e=>e.projet_id===projId&&e.date===date);
+const updateEntry=async(projId,date,heures)=>{const existing=getEntry(projId,date);const h=parseFloat(heures)||0;
+if(existing){if(h>0)await supabase.from('saisies_temps').update({heures:h}).eq('id',existing.id);else await supabase.from('saisies_temps').delete().eq('id',existing.id);}
+else if(h>0)await supabase.from('saisies_temps').insert([{organisation_id:org.id,utilisateur_id:user.id,projet_id:projId,date,heures:h,facturable:true}]);
+load();};
+const totalWeek=entries.reduce((s,e)=>s+(e.heures||0),0);
+return<div className="animate-fade"><div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6"><div><h1 className="text-2xl font-bold">Saisie des temps</h1><p className="text-slate-500">Semaine du {fmtDate(weekStart)}</p></div>
+<div className="flex gap-2"><Button variant="secondary" onClick={()=>setWeekStart(addDays(weekStart,-7))}>←</Button><Button variant="secondary" onClick={()=>setWeekStart(getWeekStart())}>Aujourd'hui</Button><Button variant="secondary" onClick={()=>setWeekStart(addDays(weekStart,7))}>→</Button></div></div>
+<Card>{loading?<Loader/>:<div className="overflow-x-auto"><table className="w-full"><thead><tr className="border-b"><th className="px-4 py-3 text-left w-48">Projet</th>{days.map(d=><th key={d.date} className="px-2 py-3 text-center w-16">{d.label}<br/><span className="text-xs text-slate-400">{d.date.split('-')[2]}</span></th>)}<th className="px-4 py-3 text-right">Total</th></tr></thead>
+<tbody>{projects.map(p=>{const total=entries.filter(e=>e.projet_id===p.id).reduce((s,e)=>s+(e.heures||0),0);return<tr key={p.id} className="border-b border-slate-50"><td className="px-4 py-2 text-sm font-medium">{p.nom}</td>{days.map(d=><td key={d.date} className="px-1 py-2 text-center"><input type="number" min="0" max="24" step="0.5" defaultValue={getEntry(p.id,d.date)?.heures||''} onBlur={e=>updateEntry(p.id,d.date,e.target.value)} className="w-14 px-2 py-1.5 bg-slate-50 border rounded-lg text-center text-sm"/></td>)}<td className="px-4 py-2 text-right font-bold">{total||'-'}</td></tr>})}</tbody>
+<tfoot><tr className="bg-slate-50"><td className="px-4 py-3 font-bold">Total</td>{days.map(d=>{const t=entries.filter(e=>e.date===d.date).reduce((s,e)=>s+(e.heures||0),0);return<td key={d.date} className="px-2 py-3 text-center font-bold text-blue-600">{t||'-'}</td>})}<td className="px-4 py-3 text-right font-bold text-xl text-blue-600">{totalWeek}h</td></tr></tfoot>
+</table></div>}</Card>
+</div>;
 };
 
 const InvoicesPage=()=>{
-    const{org}=useApp();
-    const[items,setItems]=useState([]);
-    const[loading,setLoading]=useState(true);
-    useEffect(()=>{supabase.from('factures').select('*,clients(nom)').eq('organisation_id',org.id).order('date_emission',{ascending:false}).then(({data})=>{setItems(data||[]);setLoading(false);});},[]);
-    const statusColors={draft:'gray',sent:'blue',paid:'green',overdue:'red'};
-    return(
-        <div className="space-y-6 animate-fade-in">
-            <div className="flex items-center justify-between">
-                <div><h1 className="text-2xl font-bold text-slate-800">Facturation</h1><p className="text-slate-500">{items.length} factures</p></div>
-                <Button icon={Icons.plus}>Nouvelle facture</Button>
-            </div>
-            <Card>{loading?<Loader/>:<Table columns={[
-                {header:'N°',render:r=><span className="font-mono text-blue-600">{r.reference}</span>},
-                {header:'Client',render:r=>r.clients?.nom},
-                {header:'Date',render:r=>fmtDate(r.date_emission)},
-                {header:'Montant',render:r=><span className="font-bold text-slate-800">{fmtMoney(r.montant_total)}</span>},
-                {header:'Statut',render:r=><Badge color={statusColors[r.statut]}>{INVOICE_STATUS[r.statut]}</Badge>},
-            ]} data={items}/>}</Card>
-        </div>
-    );
+const{org}=useApp();const[items,setItems]=useState([]);const[clients,setClients]=useState([]);const[loading,setLoading]=useState(true);const[modal,setModal]=useState(false);const[form,setForm]=useState({});const[saving,setSaving]=useState(false);
+useEffect(()=>{load();},[]);
+const load=async()=>{const[f,c]=await Promise.all([supabase.from('factures').select('*,clients(nom)').eq('organisation_id',org.id).order('date_emission',{ascending:false}),supabase.from('clients').select('id,nom').eq('organisation_id',org.id)]);setItems(f.data||[]);setClients(c.data||[]);setLoading(false);};
+const openNew=()=>{setForm({reference:genCode('FAC'),client_id:'',date_emission:today(),date_echeance:addDays(today(),30),montant_ht:0,taux_tva:18,statut:'draft'});setModal(true);};
+const save=async()=>{if(!form.client_id)return alert('Client requis');setSaving(true);try{const tva=form.montant_ht*form.taux_tva/100;await supabase.from('factures').insert([{...form,organisation_id:org.id,montant_tva:tva,montant_total:form.montant_ht+tva}]);setModal(false);load();}catch(e){alert(e.message);}setSaving(false);};
+const statusColor={draft:'gray',sent:'blue',paid:'green',overdue:'red'};
+return<div className="animate-fade"><div className="flex justify-between items-center mb-6"><div><h1 className="text-2xl font-bold">Facturation</h1><p className="text-slate-500">{items.length} factures</p></div><Button onClick={openNew} icon="➕">Nouvelle</Button></div>
+<Card><Table loading={loading} columns={[{header:'N°',render:r=><span className="font-mono text-blue-600">{r.reference}</span>},{header:'Client',render:r=>r.clients?.nom||'-'},{header:'Date',render:r=>fmtDate(r.date_emission)},{header:'Montant',render:r=><b>{fmtMoney(r.montant_total)}</b>},{header:'Statut',render:r=><Badge color={statusColor[r.statut]}>{r.statut}</Badge>}]} data={items}/></Card>
+<Modal isOpen={modal} onClose={()=>setModal(false)} title="Nouvelle facture">
+<div className="space-y-4">
+<div className="grid grid-cols-2 gap-4"><Input label="Référence" value={form.reference} onChange={v=>setForm(p=>({...p,reference:v}))}/><Select label="Client" value={form.client_id} onChange={v=>setForm(p=>({...p,client_id:v}))} options={clients.map(c=>({value:c.id,label:c.nom}))} placeholder="Sélectionner" required/></div>
+<div className="grid grid-cols-2 gap-4"><Input label="Date émission" type="date" value={form.date_emission} onChange={v=>setForm(p=>({...p,date_emission:v}))}/><Input label="Échéance" type="date" value={form.date_echeance} onChange={v=>setForm(p=>({...p,date_echeance:v}))}/></div>
+<div className="grid grid-cols-2 gap-4"><Input label="Montant HT" type="number" value={form.montant_ht} onChange={v=>setForm(p=>({...p,montant_ht:v}))}/><Input label="TVA %" type="number" value={form.taux_tva} onChange={v=>setForm(p=>({...p,taux_tva:v}))}/></div>
+<div className="flex gap-3 pt-4"><Button variant="secondary" onClick={()=>setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Créer</Button></div>
+</div>
+</Modal>
+</div>;
+};
+
+const ExpensesPage=()=>{
+const{org,user}=useApp();const[items,setItems]=useState([]);const[loading,setLoading]=useState(true);const[modal,setModal]=useState(false);const[form,setForm]=useState({});const[saving,setSaving]=useState(false);
+useEffect(()=>{load();},[]);
+const load=async()=>{const{data}=await supabase.from('notes_frais').select('*').eq('organisation_id',org.id).order('date_frais',{ascending:false});setItems(data||[]);setLoading(false);};
+const openNew=()=>{setForm({reference:genCode('NDF'),titre:'',date_frais:today(),montant_total:0,statut:'draft'});setModal(true);};
+const save=async()=>{if(!form.titre)return alert('Titre requis');setSaving(true);try{await supabase.from('notes_frais').insert([{...form,organisation_id:org.id}]);setModal(false);load();}catch(e){alert(e.message);}setSaving(false);};
+const statusColor={draft:'gray',submitted:'blue',approved:'green',rejected:'red',paid:'purple'};
+return<div className="animate-fade"><div className="flex justify-between items-center mb-6"><div><h1 className="text-2xl font-bold">Notes de frais</h1><p className="text-slate-500">{items.length} notes</p></div><Button onClick={openNew} icon="➕">Nouvelle</Button></div>
+<Card><Table loading={loading} columns={[{header:'Réf',render:r=><span className="font-mono text-blue-600">{r.reference}</span>},{header:'Titre',render:r=><b>{r.titre}</b>},{header:'Date',render:r=>fmtDate(r.date_frais)},{header:'Montant',render:r=><b>{fmtMoney(r.montant_total)}</b>},{header:'Statut',render:r=><Badge color={statusColor[r.statut]}>{r.statut}</Badge>}]} data={items}/></Card>
+<Modal isOpen={modal} onClose={()=>setModal(false)} title="Nouvelle note de frais">
+<div className="space-y-4">
+<Input label="Titre" value={form.titre} onChange={v=>setForm(p=>({...p,titre:v}))} placeholder="Ex: Déplacement client" required/>
+<div className="grid grid-cols-2 gap-4"><Input label="Date" type="date" value={form.date_frais} onChange={v=>setForm(p=>({...p,date_frais:v}))}/><Input label="Montant" type="number" value={form.montant_total} onChange={v=>setForm(p=>({...p,montant_total:v}))}/></div>
+<div className="flex gap-3 pt-4"><Button variant="secondary" onClick={()=>setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Créer</Button></div>
+</div>
+</Modal>
+</div>;
 };
 
 const TeamPage=()=>{
-    const{org}=useApp();
-    const[items,setItems]=useState([]);
-    const[loading,setLoading]=useState(true);
-    useEffect(()=>{supabase.from('collaborateurs').select('*,departements(nom),grades(nom)').eq('organisation_id',org.id).order('nom').then(({data})=>{setItems(data||[]);setLoading(false);});},[]);
-    return(
-        <div className="space-y-6 animate-fade-in">
-            <div className="flex items-center justify-between">
-                <div><h1 className="text-2xl font-bold text-slate-800">Équipe</h1><p className="text-slate-500">{items.length} collaborateurs</p></div>
-                <Button icon={Icons.plus}>Nouveau collaborateur</Button>
-            </div>
-            <Card>{loading?<Loader/>:<Table columns={[
-                {header:'Nom',render:r=><span className="font-medium text-slate-800">{r.prenom} {r.nom}</span>},
-                {header:'Email',key:'email'},
-                {header:'Département',render:r=>r.departements?.nom||'-'},
-                {header:'Grade',render:r=>r.grades?.nom||'-'},
-                {header:'Statut',render:r=><Badge color={r.actif?'green':'gray'}>{r.actif?'Actif':'Inactif'}</Badge>},
-            ]} data={items}/>}</Card>
-        </div>
-    );
+const{org}=useApp();const[items,setItems]=useState([]);const[depts,setDepts]=useState([]);const[grades,setGrades]=useState([]);const[loading,setLoading]=useState(true);const[modal,setModal]=useState(false);const[form,setForm]=useState({});const[saving,setSaving]=useState(false);
+useEffect(()=>{load();},[]);
+const load=async()=>{const[c,d,g]=await Promise.all([supabase.from('collaborateurs').select('*,departements(nom),grades(nom)').eq('organisation_id',org.id).order('nom'),supabase.from('departements').select('id,nom').eq('organisation_id',org.id),supabase.from('grades').select('id,nom,taux_journalier').eq('organisation_id',org.id)]);setItems(c.data||[]);setDepts(d.data||[]);setGrades(g.data||[]);setLoading(false);};
+const openNew=()=>{setForm({code:genCode('EMP'),nom:'',prenom:'',email:'',departement_id:'',grade_id:'',date_entree:today(),actif:true});setModal(true);};
+const save=async()=>{if(!form.nom||!form.prenom)return alert('Nom et prénom requis');setSaving(true);try{const grade=grades.find(g=>g.id===form.grade_id);await supabase.from('collaborateurs').insert([{...form,organisation_id:org.id,taux_journalier:grade?.taux_journalier||0}]);setModal(false);load();}catch(e){alert(e.message);}setSaving(false);};
+return<div className="animate-fade"><div className="flex justify-between items-center mb-6"><div><h1 className="text-2xl font-bold">Équipe</h1><p className="text-slate-500">{items.length} collaborateurs</p></div><Button onClick={openNew} icon="➕">Nouveau</Button></div>
+<Card><Table loading={loading} columns={[{header:'Nom',render:r=><b>{r.prenom} {r.nom}</b>},{header:'Email',key:'email'},{header:'Département',render:r=>r.departements?.nom||'-'},{header:'Grade',render:r=>r.grades?.nom||'-'},{header:'TJ',render:r=>r.taux_journalier?fmt(r.taux_journalier)+' F':'-'},{header:'Statut',render:r=><Badge color={r.actif?'green':'gray'}>{r.actif?'Actif':'Inactif'}</Badge>}]} data={items}/></Card>
+<Modal isOpen={modal} onClose={()=>setModal(false)} title="Nouveau collaborateur" size="lg">
+<div className="space-y-4">
+<div className="grid grid-cols-3 gap-4"><Input label="Code" value={form.code} onChange={v=>setForm(p=>({...p,code:v}))}/><Input label="Prénom" value={form.prenom} onChange={v=>setForm(p=>({...p,prenom:v}))} required/><Input label="Nom" value={form.nom} onChange={v=>setForm(p=>({...p,nom:v}))} required/></div>
+<div className="grid grid-cols-2 gap-4"><Input label="Email" type="email" value={form.email} onChange={v=>setForm(p=>({...p,email:v}))}/><Input label="Téléphone" value={form.telephone} onChange={v=>setForm(p=>({...p,telephone:v}))}/></div>
+<div className="grid grid-cols-3 gap-4"><Select label="Département" value={form.departement_id} onChange={v=>setForm(p=>({...p,departement_id:v}))} options={depts.map(d=>({value:d.id,label:d.nom}))} placeholder="Sélectionner"/><Select label="Grade" value={form.grade_id} onChange={v=>setForm(p=>({...p,grade_id:v}))} options={grades.map(g=>({value:g.id,label:g.nom+' - '+fmt(g.taux_journalier)+' F'}))} placeholder="Sélectionner"/><Input label="Date entrée" type="date" value={form.date_entree} onChange={v=>setForm(p=>({...p,date_entree:v}))}/></div>
+<div className="flex gap-3 pt-4"><Button variant="secondary" onClick={()=>setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Créer</Button></div>
+</div>
+</Modal>
+</div>;
 };
 
-const ReportsPage=()=><div className="animate-fade-in"><h1 className="text-2xl font-bold text-slate-800 mb-4">Rapports</h1><Card><p className="text-slate-400">Rapports et KPIs en cours de développement...</p></Card></div>;
-const SettingsPage=()=><div className="animate-fade-in"><h1 className="text-2xl font-bold text-slate-800 mb-4">Paramètres</h1><Card><p className="text-slate-400">Configuration de l'application...</p></Card></div>;
-const SuperAdminPage=()=>{const{isSuperAdmin}=useApp();if(!isSuperAdmin)return null;return<div className="animate-fade-in"><h1 className="text-2xl font-bold text-slate-800 mb-4">Administration</h1><Card><p className="text-slate-400">Accès super admin depuis le menu principal</p></Card></div>;};
+const ReportsPage=()=>{
+const{org}=useApp();const[data,setData]=useState({heures:0,facture:0,encaisse:0});const[loading,setLoading]=useState(true);
+useEffect(()=>{Promise.all([supabase.from('saisies_temps').select('heures,facturable').eq('organisation_id',org.id),supabase.from('factures').select('montant_total,statut').eq('organisation_id',org.id)]).then(([t,f])=>{const h=t.data||[];const fa=f.data||[];setData({heures:h.reduce((s,x)=>s+(x.heures||0),0),heuresFact:h.filter(x=>x.facturable).reduce((s,x)=>s+(x.heures||0),0),facture:fa.reduce((s,x)=>s+(x.montant_total||0),0),encaisse:fa.filter(x=>x.statut==='paid').reduce((s,x)=>s+(x.montant_total||0),0)});setLoading(false);});},[]);
+if(loading)return<Loader/>;
+const taux=data.heures>0?Math.round(data.heuresFact/data.heures*100):0;
+return<div className="animate-fade"><h1 className="text-2xl font-bold mb-6">Rapports</h1>
+<div className="grid md:grid-cols-4 gap-4 mb-6"><StatCard title="Heures totales" value={fmt(data.heures)+'h'} icon="⏱️" color="blue"/><StatCard title="Heures facturables" value={fmt(data.heuresFact)+'h'} icon="💼" color="green"/><StatCard title="Taux chargeabilité" value={taux+'%'} icon="📊" color="purple"/><StatCard title="CA encaissé" value={fmtMoney(data.encaisse)} icon="💰" color="amber"/></div>
+<Card title="Détails"><p className="text-slate-500">Rapports détaillés à venir...</p></Card>
+</div>;
+};
 
-// ===== APPLICATION =====
+const SettingsPage=()=>{
+const{org,abo,reload,isSuperAdmin}=useApp();const[tab,setTab]=useState('org');const[form,setForm]=useState({});const[saving,setSaving]=useState(false);const[depts,setDepts]=useState([]);const[grades,setGrades]=useState([]);const[loading,setLoading]=useState(true);
+
+useEffect(()=>{setForm({nom:org.nom,adresse:org.adresse||'',ville:org.ville||'',email:org.email||'',telephone:org.telephone||''});loadParams();},[org]);
+const loadParams=async()=>{const[d,g]=await Promise.all([supabase.from('departements').select('*').eq('organisation_id',org.id).order('nom'),supabase.from('grades').select('*').eq('organisation_id',org.id).order('niveau',{ascending:false})]);setDepts(d.data||[]);setGrades(g.data||[]);setLoading(false);};
+const saveOrg=async()=>{setSaving(true);try{await supabase.from('organisations').update(form).eq('id',org.id);reload();alert('Enregistré!');}catch(e){alert(e.message);}setSaving(false);};
+const exportData=async()=>{const[c,p,t,f]=await Promise.all([supabase.from('clients').select('*').eq('organisation_id',org.id),supabase.from('projets').select('*').eq('organisation_id',org.id),supabase.from('saisies_temps').select('*').eq('organisation_id',org.id),supabase.from('factures').select('*').eq('organisation_id',org.id)]);
+const data={organisation:org,clients:c.data,projets:p.data,temps:t.data,factures:f.data,exportedAt:new Date().toISOString()};
+const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`kabinet_backup_${org.nom.replace(/\s+/g,'_')}_${today()}.json`;a.click();};
+
+const joursRestants=abo?.date_fin?Math.ceil((new Date(abo.date_fin)-new Date())/(1000*60*60*24)):0;
+const isExpire=joursRestants<=0&&abo?.plan!=='premium';
+
+return<div className="animate-fade"><h1 className="text-2xl font-bold mb-6">Paramètres</h1>
+<div className="flex gap-2 mb-6 border-b">{[{k:'org',l:'🏢 Organisation'},{k:'abo',l:'💳 Abonnement'},{k:'params',l:'⚙️ Configuration'},{k:'backup',l:'💾 Sauvegarde'}].map(t=><button key={t.k} onClick={()=>setTab(t.k)} className={cn('px-4 py-3 font-medium -mb-px',tab===t.k?'border-b-2 border-blue-500 text-blue-600':'text-slate-500')}>{t.l}</button>)}</div>
+
+{tab==='org'&&<Card title="Informations de l'organisation">
+<div className="space-y-4 max-w-xl">
+<Input label="Nom du cabinet" value={form.nom} onChange={v=>setForm(p=>({...p,nom:v}))}/>
+<Input label="Adresse" value={form.adresse} onChange={v=>setForm(p=>({...p,adresse:v}))}/>
+<div className="grid grid-cols-2 gap-4"><Input label="Ville" value={form.ville} onChange={v=>setForm(p=>({...p,ville:v}))}/><Input label="Téléphone" value={form.telephone} onChange={v=>setForm(p=>({...p,telephone:v}))}/></div>
+<Input label="Email" type="email" value={form.email} onChange={v=>setForm(p=>({...p,email:v}))}/>
+<Button onClick={saveOrg} loading={saving}>💾 Enregistrer</Button>
+</div>
+</Card>}
+
+{tab==='abo'&&<Card title="Abonnement">
+<div className="max-w-2xl">
+<div className={cn('p-6 rounded-2xl mb-6',isExpire?'bg-red-50 border-2 border-red-200':'bg-blue-50 border-2 border-blue-200')}>
+<div className="flex items-center justify-between mb-4">
+<div><span className="text-3xl mr-3">{PLANS[abo?.plan]?.icon||'🎁'}</span><span className="text-2xl font-bold">{PLANS[abo?.plan]?.nom||'Essai'}</span></div>
+<Badge color={isExpire?'red':'green'}>{isExpire?'Expiré':'Actif'}</Badge>
+</div>
+{abo?.date_fin&&<div className="flex justify-between text-sm"><span className="text-slate-600">Expire le: <b>{fmtDate(abo.date_fin)}</b></span><span className={isExpire?'text-red-600 font-bold':'text-slate-600'}>{isExpire?'Expiré':joursRestants+' jours restants'}</span></div>}
+</div>
+<h3 className="font-bold mb-4">Changer de plan</h3>
+<div className="grid md:grid-cols-3 gap-4">
+{Object.entries(PLANS).map(([k,p])=><div key={k} className={cn('p-4 rounded-xl border-2',abo?.plan===k?'border-blue-500 bg-blue-50':'border-slate-200')}>
+<div className="text-2xl mb-2">{p.icon}</div>
+<div className="font-bold">{p.nom}</div>
+<div className="text-slate-500 text-sm">{p.prix?fmt(p.prix)+' F/mois':'Gratuit'}</div>
+{abo?.plan===k?<Badge color="blue" className="mt-2">Plan actuel</Badge>:<a href="https://wa.me/221781234567?text=Bonjour, je souhaite passer au plan "+p.nom target="_blank" className="mt-3 block text-center text-sm text-blue-600 hover:underline">Contacter pour upgrade</a>}
+</div>)}
+</div>
+</div>
+</Card>}
+
+{tab==='params'&&<div className="space-y-6">
+<Card title="Départements">{loading?<Loader/>:<Table columns={[{header:'Code',render:r=><span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">{r.code}</span>},{header:'Nom',render:r=><b>{r.nom}</b>},{header:'Facturable',render:r=><Badge color={r.facturable?'green':'gray'}>{r.facturable?'Oui':'Non'}</Badge>}]} data={depts}/>}</Card>
+<Card title="Grades">{loading?<Loader/>:<Table columns={[{header:'Code',key:'code'},{header:'Nom',render:r=><b>{r.nom}</b>},{header:'Niveau',key:'niveau'},{header:'Taux journalier',render:r=>fmtMoney(r.taux_journalier)}]} data={grades}/>}</Card>
+</div>}
+
+{tab==='backup'&&<Card title="Sauvegarde et Import">
+<div className="max-w-xl space-y-6">
+<div className="p-6 bg-slate-50 rounded-xl">
+<h3 className="font-bold mb-2">📥 Exporter les données</h3>
+<p className="text-slate-500 text-sm mb-4">Téléchargez une sauvegarde complète de vos données (clients, projets, temps, factures) au format JSON.</p>
+<Button onClick={exportData} variant="secondary" icon="⬇️">Exporter en JSON</Button>
+</div>
+<div className="p-6 bg-slate-50 rounded-xl">
+<h3 className="font-bold mb-2">📤 Importer des données</h3>
+<p className="text-slate-500 text-sm mb-4">L'import en masse depuis Excel sera disponible prochainement.</p>
+<Button variant="secondary" disabled icon="⬆️">Import Excel (bientôt)</Button>
+</div>
+</div>
+</Card>}
+</div>;
+};
+
+const AdminPage=()=>{
+const{isSuperAdmin}=useApp();
+if(!isSuperAdmin)return<div className="text-center py-20"><div className="text-6xl mb-4">🔒</div><h2 className="text-xl font-bold">Accès refusé</h2><p className="text-slate-500">Réservé aux super admins</p></div>;
+return<div className="animate-fade"><h1 className="text-2xl font-bold mb-6">Administration</h1><Card><p className="text-slate-500">Accédez à l'interface admin globale via le menu si vous n'êtes pas connecté à une organisation.</p></Card></div>;
+};
+
+// ===== APP ROOT =====
 const App=()=>{
-    const[user,setUser]=useState(null);
-    const[loading,setLoading]=useState(true);
-    const[page,setPage]=useState('landing');
-    const[confirmEmail,setConfirmEmail]=useState('');
-    
-    useEffect(()=>{
-        supabase.auth.getSession().then(({data:{session}})=>{setUser(session?.user||null);setLoading(false);});
-        const{data:{subscription}}=supabase.auth.onAuthStateChange((e,session)=>{setUser(session?.user||null);});
-        return()=>subscription.unsubscribe();
-    },[]);
-    
-    const handleLogout=async()=>{await supabase.auth.signOut();setUser(null);setPage('landing');};
-    
-    if(loading)return<div className="min-h-screen bg-slate-50 flex items-center justify-center"><div className="loader"/></div>;
-    if(user)return<MainApp user={user} onLogout={handleLogout}/>;
-    
-    if(page==='login')return<LoginPage onLogin={setUser} onRegister={()=>setPage('register')} onBack={()=>setPage('landing')}/>;
-    if(page==='register')return<RegisterPage onLogin={()=>setPage('login')} onBack={()=>setPage('landing')} onNeedConfirm={email=>{setConfirmEmail(email);setPage('confirm');}}/>;
-    if(page==='confirm')return<ConfirmEmailPage email={confirmEmail} onLogin={()=>setPage('login')}/>;
-    return<LandingPage onLogin={()=>setPage('login')} onRegister={()=>setPage('register')}/>;
+const[user,setUser]=useState(null);const[loading,setLoading]=useState(true);const[page,setPage]=useState('landing');const[confirmEmail,setConfirmEmail]=useState('');
+useEffect(()=>{supabase.auth.getSession().then(({data:{session}})=>{setUser(session?.user||null);setLoading(false);});
+const{data:{subscription}}=supabase.auth.onAuthStateChange((e,s)=>setUser(s?.user||null));return()=>subscription.unsubscribe();},[]);
+const logout=async()=>{await supabase.auth.signOut();setUser(null);setPage('landing');};
+if(loading)return<div className="min-h-screen flex items-center justify-center"><div className="loader"/></div>;
+if(user)return<MainApp user={user} onLogout={logout}/>;
+if(page==='login')return<LoginPage onLogin={setUser} onRegister={()=>setPage('register')} onBack={()=>setPage('landing')}/>;
+if(page==='register')return<RegisterPage onLogin={()=>setPage('login')} onBack={()=>setPage('landing')} onConfirm={e=>{setConfirmEmail(e);setPage('confirm');}}/>;
+if(page==='confirm')return<ConfirmPage email={confirmEmail} onLogin={()=>setPage('login')}/>;
+return<LandingPage onLogin={()=>setPage('login')} onRegister={()=>setPage('register')}/>;
 };
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
