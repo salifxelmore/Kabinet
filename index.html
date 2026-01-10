@@ -3617,7 +3617,7 @@ const NotesFraisPage = () => {
     loadData();
   };
 
-  const mesNotes = notes.filter(n => n.utilisateur_id === user.id);
+  const mesNotes = notes.filter(n => n.collaborateur_id === collab?.id);
   
   // Notes à valider: seulement si l'utilisateur est validateur
   const notesAValider = isValidateur ? notes.filter(n => {
@@ -3712,7 +3712,7 @@ const NotesFraisPage = () => {
             {header: 'Statut', render: r => <Badge color={EXPENSE_STATUS[r.statut]?.color}>{EXPENSE_STATUS[r.statut]?.label}</Badge>}
           ]} data={displayNotes} actions={r => (
             <div className="flex gap-1">
-              {r.statut === 'draft' && r.utilisateur_id === user.id && (<>
+              {r.statut === 'draft' && r.collaborateur_id === collab?.id && (<>
                 <Button variant="ghost" size="xs" onClick={() => openEdit(r)} title="Modifier">✏️</Button>
                 <Button variant="ghost" size="xs" onClick={() => submitNote(r)} title="Soumettre">📤</Button>
                 <Button variant="ghost" size="xs" onClick={() => deleteNote(r)} title="Supprimer">🗑️</Button>
