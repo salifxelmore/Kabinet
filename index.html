@@ -4403,14 +4403,22 @@ const ParametresPage = () => {
       supabase.from('categories_taches').select('*').eq('organisation_id', org.id).order('nom'),
       supabase.from('jours_feries').select('*').eq('organisation_id', org.id).order('date'),
       supabase.from('collaborateurs').select('*,grades:grade_id(nom,niveau),departements:departement_id(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
-      supabase.from('validateurs_departement').select('*,collaborateur:collaborateur_id(nom,prenom),departement:departement_id(nom)').eq('organisation_id', org.id)
+      supabase.from('validateurs_departement').select('*').eq('organisation_id', org.id)
     ]);
     setDepts(d.data || []); 
     setGrades(g.data || []); 
     setCategories(c.data || []); 
     setHolidays(h.data || []); 
     setCollaborateurs(col.data || []);
-    setValidateurs(val.data || []);
+    
+    // Enrichir les validateurs avec les noms des collaborateurs et départements
+    const enrichedValidateurs = (val.data || []).map(v => ({
+      ...v,
+      collaborateur: (col.data || []).find(c => c.id === v.collaborateur_id),
+      departement: (d.data || []).find(dept => dept.id === v.departement_id)
+    }));
+    setValidateurs(enrichedValidateurs);
+    
     setLoading(false);
   };
 
@@ -4424,22 +4432,33 @@ const ParametresPage = () => {
       const exists = validateurs.find(v => v.type_validation === type && v.departement_id === deptId && v.collaborateur_id === collabId);
       if (exists) return alert('Ce collaborateur est déjà validateur pour ce département');
       
-      await supabase.from('validateurs_departement').insert([{
+      const {error} = await supabase.from('validateurs_departement').insert([{
         organisation_id: org.id,
         departement_id: deptId,
         collaborateur_id: collabId,
         type_validation: type // 'conges' ou 'frais'
       }]);
+      if (error) throw error;
       loadParams();
       // Réinitialiser le formulaire
       setEditForm(p => ({...p, validateur_dept_conges: '', validateur_collab_conges: '', validateur_dept_frais: '', validateur_collab_frais: ''}));
-    } catch(e) { alert(e.message); }
+      alert('Validateur ajouté avec succès !');
+    } catch(e) { 
+      console.error('Erreur ajout validateur:', e);
+      alert('Erreur: ' + e.message); 
+    }
   };
   
   const removeValidateur = async (id) => {
     if (!confirm('Retirer ce validateur ?')) return;
-    await supabase.from('validateurs_departement').delete().eq('id', id);
-    loadParams();
+    try {
+      const {error} = await supabase.from('validateurs_departement').delete().eq('id', id);
+      if (error) throw error;
+      loadParams();
+    } catch(e) {
+      console.error('Erreur suppression validateur:', e);
+      alert('Erreur: ' + e.message);
+    }
   };
 
   // CRUD générique
