@@ -899,14 +899,15 @@ const MainApp = ({user, onLogout}) => {
     timesheet: true, // Tout le monde
     conges: true, // Tout le monde
     frais: true, // Tout le monde
+    profil: true, // Tout le monde peut voir son profil
     crm: isManager, // Manager+ seulement
-    missions: isManager, // Manager+ seulement (lecture seule sinon)
-    facturation: isAssocie, // Associé+ seulement
+    missions: isManager, // Manager+ seulement
+    facturation: isManager, // Manager+ (leurs missions) et Associé+ (toutes)
     soustraitance: isManager, // Manager+ seulement
     interco: isManager, // Manager+ seulement
     equipe: isAssocie, // Associé+ seulement
     rapports: isManager, // Manager+ seulement
-    parametres: isAdmin, // Admin seulement
+    parametres: isAdmin, // Admin seulement (config organisation)
   };
 
   // Menu filtré selon permissions
@@ -918,11 +919,12 @@ const MainApp = ({user, onLogout}) => {
     {k: 'timesheet', l: 'Temps', i: '⏱️'},
     {k: 'conges', l: 'Congés', i: '🏖️'},
     {k: 'frais', l: 'Notes de frais', i: '🧾'},
-    {k: 'facturation', l: 'Facturation', i: '💰'},
     {k: 'soustraitance', l: 'Sous-traitance', i: '🤝'},
     {k: 'interco', l: 'Interco', i: '🔄'},
+    {k: 'facturation', l: 'Facturation', i: '💰'},
     {k: 'equipe', l: 'Équipe', i: '👥'},
     {k: 'rapports', l: 'Rapports', i: '📈'},
+    {k: 'profil', l: 'Mon profil', i: '👤'},
     {k: 'parametres', l: 'Paramètres', i: '⚙️'}
   ];
   
@@ -1014,6 +1016,7 @@ const MainApp = ({user, onLogout}) => {
             {page === 'interco' && <IntercoPage />}
             {page === 'equipe' && <EquipePage />}
             {page === 'rapports' && <RapportsPage />}
+            {page === 'profil' && <MonProfilPage />}
             {page === 'parametres' && <ParametresPage />}
             {page === 'admin' && <AdminPage />}
           </div>
@@ -3083,9 +3086,9 @@ const CongesPage = () => {
 };
 // ========== FACTURATION PAGE ==========
 const FacturationPage = () => {
-  const {org} = useApp();
+  const {org, collab, isAssocie, isAdmin} = useApp();
   const [factures, setFactures] = useState([]);
-  const [missions, setMissions] = useState([]);
+  const [allMissions, setAllMissions] = useState([]);
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null);
@@ -3093,20 +3096,37 @@ const FacturationPage = () => {
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState('toutes');
+  
+  // Associé+ voit tout, Manager voit seulement ses missions
+  const canViewAll = isAssocie || isAdmin;
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     const [f, m, c] = await Promise.all([
-      supabase.from('factures').select('*,clients(nom),projets(nom,code)').eq('organisation_id', org.id).order('date_emission', {ascending: false}),
+      supabase.from('factures').select('*,clients(nom),projets(nom,code,responsable_id)').eq('organisation_id', org.id).order('date_emission', {ascending: false}),
       supabase.from('projets').select('*,clients(nom),departements:departement_id(nom)').eq('organisation_id', org.id),
       supabase.from('clients').select('id,nom').eq('organisation_id', org.id)
     ]);
-    setFactures(f.data || []);
-    setMissions(m.data || []);
+    
+    // Filtrer les factures pour les managers (seulement leurs missions)
+    let filteredFactures = f.data || [];
+    if (!canViewAll && collab?.id) {
+      filteredFactures = filteredFactures.filter(fac => 
+        !fac.projet_id || fac.projets?.responsable_id === collab.id
+      );
+    }
+    
+    setFactures(filteredFactures);
+    setAllMissions(m.data || []);
     setClients(c.data || []);
     setLoading(false);
   };
+  
+  // Missions filtrées pour le select (Manager = ses missions, Associé+ = toutes)
+  const missions = canViewAll 
+    ? allMissions 
+    : allMissions.filter(m => m.responsable_id === collab?.id);
 
   const openNew = () => {
     setEditItem(null);
@@ -3259,7 +3279,7 @@ const FacturationPage = () => {
 
   return (
     <div>
-      <PageHeader title="Facturation" subtitle={factures.length + ' factures'} 
+      <PageHeader title="Facturation" subtitle={canViewAll ? factures.length + ' factures' : 'Mes missions - ' + factures.length + ' factures'} 
         tabs={[
           {key: 'toutes', label: 'Toutes', count: factures.length},
           {key: 'draft', label: 'Brouillons', count: factures.filter(f => f.statut === 'draft').length},
@@ -3272,6 +3292,13 @@ const FacturationPage = () => {
           <Button onClick={openNew} icon="➕">Nouvelle</Button>
         </div>} 
       />
+      
+      {!canViewAll && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-sm">
+          ℹ️ Vous voyez uniquement les factures des missions dont vous êtes responsable.
+        </div>
+      )}
+      
       <div className="grid grid-cols-3 gap-4 mb-6">
         <StatCard title="Total facturé" value={fmtMoney(stats.total)} icon="📄" color="blue" />
         <StatCard title="Encaissé" value={fmtMoney(stats.encaisse)} icon="✅" color="green" />
@@ -4693,6 +4720,167 @@ const RapportsPage = () => {
     </div>
   );
 };
+
+// ========== MON PROFIL PAGE ==========
+const MonProfilPage = () => {
+  const {org, user, collab, reload} = useApp();
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [collabData, setCollabData] = useState(null);
+
+  useEffect(() => { loadProfile(); }, []);
+
+  const loadProfile = async () => {
+    // Charger les données du collaborateur
+    const {data} = await supabase.from('collaborateurs')
+      .select('*,grades:grade_id(nom,niveau),departements:departement_id(nom)')
+      .eq('email', user.email)
+      .maybeSingle();
+    
+    if (data) {
+      setCollabData(data);
+      setForm({
+        telephone: data.telephone || '',
+        adresse: data.adresse || '',
+        photo_url: data.photo_url || ''
+      });
+    }
+    setLoading(false);
+  };
+
+  const saveProfile = async () => {
+    if (!collabData?.id) return alert('Profil non trouvé');
+    setSaving(true);
+    try {
+      const {error} = await supabase.from('collaborateurs').update({
+        telephone: form.telephone || '',
+        adresse: form.adresse || '',
+        photo_url: form.photo_url || null
+      }).eq('id', collabData.id);
+      
+      if (error) throw error;
+      alert('✅ Profil mis à jour !');
+      reload();
+    } catch (e) {
+      alert('Erreur: ' + e.message);
+    }
+    setSaving(false);
+  };
+
+  const uploadPhoto = async (file) => {
+    if (!file) return;
+    const fileName = `photos/${org.id}/${Date.now()}_${file.name}`;
+    const {error} = await supabase.storage.from('collaborateurs').upload(fileName, file);
+    if (error) { alert('Erreur upload: ' + error.message); return; }
+    const {data: urlData} = supabase.storage.from('collaborateurs').getPublicUrl(fileName);
+    setForm(p => ({...p, photo_url: urlData.publicUrl}));
+  };
+
+  if (loading) return <Loader text="Chargement..." />;
+
+  return (
+    <div>
+      <PageHeader title="Mon profil" subtitle="Gérez vos informations personnelles" />
+      
+      <div className="grid lg:grid-cols-3 gap-6">
+        {/* Carte profil */}
+        <Card className="lg:col-span-1">
+          <div className="text-center">
+            {/* Photo */}
+            <div className="relative inline-block mb-4">
+              {form.photo_url ? (
+                <img src={form.photo_url} alt="Photo" className="w-32 h-32 rounded-full object-cover border-4 border-white shadow-lg mx-auto" />
+              ) : (
+                <div className="w-32 h-32 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-4xl font-bold shadow-lg mx-auto">
+                  {collabData?.prenom?.[0]}{collabData?.nom?.[0]}
+                </div>
+              )}
+              <label className="absolute bottom-0 right-0 w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-blue-600 shadow-lg">
+                📷
+                <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadPhoto(e.target.files?.[0])} />
+              </label>
+            </div>
+            
+            <h2 className="text-xl font-bold text-slate-800">{collabData?.prenom} {collabData?.nom}</h2>
+            <p className="text-slate-500">{collabData?.grades?.nom || 'Non défini'}</p>
+            <Badge color="blue" className="mt-2">{collabData?.departements?.nom || 'Sans département'}</Badge>
+            
+            <div className="mt-6 pt-6 border-t border-slate-100 text-left space-y-3">
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-slate-400">📧</span>
+                <span className="text-slate-600">{collabData?.email || '-'}</span>
+              </div>
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-slate-400">🏢</span>
+                <span className="text-slate-600">{org.nom}</span>
+              </div>
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-slate-400">📅</span>
+                <span className="text-slate-600">Depuis {collabData?.date_entree ? fmtDate(collabData.date_entree) : '-'}</span>
+              </div>
+            </div>
+          </div>
+        </Card>
+        
+        {/* Formulaire édition */}
+        <Card title="✏️ Modifier mes informations" className="lg:col-span-2">
+          <div className="space-y-6">
+            {/* Infos non modifiables */}
+            <div className="p-4 bg-slate-50 rounded-xl">
+              <h4 className="font-medium text-slate-700 mb-3">Informations gérées par l'administration</h4>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-slate-400">Nom complet</span>
+                  <p className="font-medium">{collabData?.prenom} {collabData?.nom}</p>
+                </div>
+                <div>
+                  <span className="text-slate-400">Email</span>
+                  <p className="font-medium">{collabData?.email}</p>
+                </div>
+                <div>
+                  <span className="text-slate-400">Grade</span>
+                  <p className="font-medium">{collabData?.grades?.nom || '-'}</p>
+                </div>
+                <div>
+                  <span className="text-slate-400">Département</span>
+                  <p className="font-medium">{collabData?.departements?.nom || '-'}</p>
+                </div>
+              </div>
+            </div>
+            
+            {/* Infos modifiables */}
+            <div>
+              <h4 className="font-medium text-slate-700 mb-3">Informations modifiables</h4>
+              <div className="space-y-4">
+                <Input 
+                  label="Téléphone" 
+                  value={form.telephone} 
+                  onChange={v => setForm(p => ({...p, telephone: v}))} 
+                  placeholder="Ex: +221 77 123 45 67"
+                />
+                <TextArea 
+                  label="Adresse" 
+                  value={form.adresse} 
+                  onChange={v => setForm(p => ({...p, adresse: v}))} 
+                  placeholder="Ex: Dakar, Almadies"
+                  rows={2}
+                />
+              </div>
+            </div>
+            
+            <div className="flex justify-end pt-4 border-t">
+              <Button onClick={saveProfile} loading={saving} icon="💾">
+                Enregistrer les modifications
+              </Button>
+            </div>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+};
+
 // ========== PARAMETRES PAGE ==========
 const ParametresPage = () => {
   const {org, abo, reload} = useApp();
