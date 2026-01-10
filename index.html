@@ -1246,6 +1246,7 @@ const CRMPage = () => {
   const [opportunites, setOpportunites] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [filterType, setFilterType] = useState('');
   const [modal, setModal] = useState(null);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
@@ -1369,7 +1370,11 @@ const CRMPage = () => {
     }
   };
 
-  const filteredClients = clients.filter(c => c.nom?.toLowerCase().includes(search.toLowerCase()) || c.ninea?.toLowerCase().includes(search.toLowerCase()));
+  const filteredClients = clients.filter(c => {
+    const matchSearch = c.nom?.toLowerCase().includes(search.toLowerCase()) || c.ninea?.toLowerCase().includes(search.toLowerCase());
+    const matchType = !filterType || c.type_client === filterType;
+    return matchSearch && matchType;
+  });
   const filteredContacts = contacts.filter(c => c.nom?.toLowerCase().includes(search.toLowerCase()) || c.prenom?.toLowerCase().includes(search.toLowerCase()));
   const oppActives = opportunites.filter(o => !['gagne', 'perdu'].includes(o.stage));
   const totalPipeline = oppActives.reduce((s, o) => s + (o.montant * o.probabilite / 100), 0);
@@ -1395,7 +1400,11 @@ const CRMPage = () => {
       {loading ? <Loader /> : (<>
         {tab === 'clients' && (
           <Card>
-            <div className="flex gap-4 mb-4"><SearchInput value={search} onChange={setSearch} placeholder="Rechercher..." className="flex-1" /><Select value="" onChange={() => {}} options={CLIENT_TYPES} placeholder="Type" className="w-40" /></div>
+            <div className="flex gap-4 mb-4">
+              <SearchInput value={search} onChange={setSearch} placeholder="Rechercher..." className="flex-1" />
+              <Select value={filterType} onChange={setFilterType} options={CLIENT_TYPES} placeholder="Tous les types" className="w-48" />
+              {filterType && <Button variant="ghost" size="sm" onClick={() => setFilterType('')}>🔄</Button>}
+            </div>
             <Table columns={[
               {header: 'Client', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.code} • {CLIENT_TYPES.find(t => t.value === r.type_client)?.label}</div></div>},
               {header: 'NINEA', render: r => r.ninea || '-'},
@@ -2877,7 +2886,7 @@ const NotesFraisPage = () => {
 
   const loadData = async () => {
     const [n, m] = await Promise.all([
-      supabase.from('notes_frais').select('*,projets(nom,code)').eq('organisation_id', org.id).order('date', {ascending: false}),
+      supabase.from('notes_frais').select('*,projets(nom,code)').eq('organisation_id', org.id).order('date_frais', {ascending: false}),
       supabase.from('projets').select('id,nom,code').eq('organisation_id', org.id)
     ]);
     setNotes(n.data || []);
@@ -2892,7 +2901,7 @@ const NotesFraisPage = () => {
       utilisateur_id: user.id,
       projet_id: '',
       type_frais: 'transport',
-      date: today(),
+      date_frais: today(),
       description: '',
       montant: 0,
       justificatif: false,
@@ -2903,7 +2912,7 @@ const NotesFraisPage = () => {
 
   const openEdit = (n) => {
     setEditItem(n);
-    setForm({...n, date: n.date?.split('T')[0] || ''});
+    setForm({...n, date_frais: n.date_frais?.split('T')[0] || ''});
     setModal('note');
   };
 
@@ -2916,7 +2925,7 @@ const NotesFraisPage = () => {
         utilisateur_id: user.id,
         projet_id: form.projet_id || null,
         type_frais: form.type_frais,
-        date: form.date,
+        date_frais: form.date_frais,
         description: form.description || '',
         montant: parseFloat(form.montant) || 0,
         justificatif: form.justificatif || false,
@@ -2987,7 +2996,7 @@ const NotesFraisPage = () => {
 
   const exportNotes = () => exportToExcel(displayNotes, [
     {header: 'Référence', key: 'reference'},
-    {header: 'Date', key: 'date'},
+    {header: 'Date', key: 'date_frais'},
     {header: 'Type', getValue: r => EXPENSE_TYPES.find(t => t.value === r.type_frais)?.label || ''},
     {header: 'Mission', getValue: r => r.projets?.code || ''},
     {header: 'Description', key: 'description'},
@@ -3024,7 +3033,7 @@ const NotesFraisPage = () => {
       {loading ? <Loader /> : (
         <Card>
           <Table columns={[
-            {header: 'Référence', render: r => <div><div className="font-medium">{r.reference}</div><div className="text-xs text-slate-400">{fmtDate(r.date)}</div></div>},
+            {header: 'Référence', render: r => <div><div className="font-medium">{r.reference}</div><div className="text-xs text-slate-400">{fmtDate(r.date_frais)}</div></div>},
             {header: 'Type', render: r => {
               const t = EXPENSE_TYPES.find(x => x.value === r.type_frais);
               return <span>{t?.icon} {t?.label}</span>;
@@ -3058,7 +3067,7 @@ const NotesFraisPage = () => {
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <Input label="Référence" value={form.reference} onChange={v => setForm(p => ({...p, reference: v}))} disabled={!!editItem} />
-            <Input label="Date" type="date" value={form.date} onChange={v => setForm(p => ({...p, date: v}))} required />
+            <Input label="Date" type="date" value={form.date_frais} onChange={v => setForm(p => ({...p, date_frais: v}))} required />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <Select label="Type de frais" value={form.type_frais} onChange={v => setForm(p => ({...p, type_frais: v}))} options={EXPENSE_TYPES.map(t => ({value: t.value, label: t.icon + ' ' + t.label}))} />
