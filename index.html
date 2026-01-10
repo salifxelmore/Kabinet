@@ -791,15 +791,21 @@ const MainApp = ({user, onLogout}) => {
   const loadUser = async () => {
     try {
       console.log('Loading user with auth_id:', user.id);
-      const {data: u, error: userError} = await supabase.from('utilisateurs').select('*,organisations(*),departements(*),grades(*)').eq('auth_id', user.id).single();
+      // Requête simplifiée - charger utilisateur et organisation séparément
+      const {data: u, error: userError} = await supabase.from('utilisateurs').select('*').eq('auth_id', user.id).single();
       console.log('User data:', u, 'Error:', userError);
-      if (u) {
+      
+      if (u && u.organisation_id) {
+        // Charger l'organisation
+        const {data: org} = await supabase.from('organisations').select('*').eq('id', u.organisation_id).single();
+        // Charger l'abonnement
         const {data: a} = await supabase.from('abonnements').select('*').eq('organisation_id', u.organisation_id).order('created_at', {ascending: false}).limit(1).single();
+        
         setUserData(u);
-        setOrgData(u.organisations);
+        setOrgData(org);
         setAboData(a);
+        console.log('User loaded successfully:', u, org, a);
       } else if (isSuperAdmin) {
-        // Super admin sans organisation - afficher admin par défaut
         console.log('Super admin without org, showing admin panel');
         setViewMode('admin');
       }
