@@ -1242,6 +1242,7 @@ const CRMPage = () => {
   const {org} = useApp();
   const [tab, setTab] = useState('clients');
   const [clients, setClients] = useState([]);
+  const [prospects, setProspects] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [opportunites, setOpportunites] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1260,14 +1261,17 @@ const CRMPage = () => {
       supabase.from('contacts').select('*,clients(nom)').eq('organisation_id', org.id).order('nom'),
       supabase.from('opportunites').select('*,clients(nom)').eq('organisation_id', org.id).order('created_at', {ascending: false})
     ]);
-    setClients(c.data || []);
+    const allClients = c.data || [];
+    // Séparer clients (est_prospect = false ou null) et prospects (est_prospect = true)
+    setClients(allClients.filter(x => !x.est_prospect));
+    setProspects(allClients.filter(x => x.est_prospect === true));
     setContacts(co.data || []);
     setOpportunites(op.data || []);
     setLoading(false);
   };
 
   // CLIENT CRUD
-  const openNewClient = () => { setEditItem(null); setForm({code: genCode('CLI'), type_client: 'entreprise', nom: '', denomination: '', ninea: '', adresse: '', ville: 'DAKAR', email: '', telephone: ''}); setModal('client'); };
+  const openNewClient = () => { setEditItem(null); setForm({code: genCode('CLI'), type_client: 'entreprise', nom: '', denomination: '', ninea: '', adresse: '', ville: 'DAKAR', email: '', telephone: '', est_prospect: false}); setModal('client'); };
   const openEditClient = (c) => { setEditItem(c); setForm({...c}); setModal('client'); };
   const saveClient = async () => {
     if (!form.nom && !form.denomination) return alert('Nom requis');
@@ -1281,6 +1285,26 @@ const CRMPage = () => {
     setSaving(false);
   };
   const deleteClient = async (c) => { if (!confirm(`Supprimer "${c.nom}" ?`)) return; await supabase.from('clients').delete().eq('id', c.id); loadData(); };
+  
+  // PROSPECT CRUD
+  const openNewProspect = () => { setEditItem(null); setForm({code: genCode('PRO'), type_client: 'entreprise', nom: '', denomination: '', ninea: '', adresse: '', ville: 'DAKAR', email: '', telephone: '', est_prospect: true}); setModal('prospect'); };
+  const openEditProspect = (p) => { setEditItem(p); setForm({...p}); setModal('prospect'); };
+  const saveProspect = async () => {
+    if (!form.nom && !form.denomination) return alert('Nom requis');
+    setSaving(true);
+    try {
+      const data = {...form, nom: form.denomination || form.nom, est_prospect: true};
+      if (editItem?.id) await supabase.from('clients').update(data).eq('id', editItem.id);
+      else await supabase.from('clients').insert([{...data, organisation_id: org.id}]);
+      setModal(null); loadData();
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+  const convertToClient = async (p) => {
+    if (!confirm(`Convertir "${p.nom}" en client ?`)) return;
+    await supabase.from('clients').update({est_prospect: false, code: genCode('CLI')}).eq('id', p.id);
+    loadData();
+  };
 
   // CONTACT CRUD
   const openNewContact = (clientId = '') => { setEditItem(null); setForm({client_id: clientId, nom: '', prenom: '', fonction: '', email: '', telephone: '', principal: false}); setModal('contact'); };
@@ -1318,17 +1342,39 @@ const CRMPage = () => {
   const deleteContact = async (c) => { if (!confirm(`Supprimer "${c.prenom} ${c.nom}" ?`)) return; await supabase.from('contacts').delete().eq('id', c.id); loadData(); };
 
   // OPPORTUNITE CRUD
-  const openNewOpp = () => { setEditItem(null); setForm({code: genCode('OPP'), nom: '', client_id: '', montant: 0, probabilite: 50, stage: 'prospect', date_cloture_prevue: ''}); setModal('opportunite'); };
-  const openEditOpp = (o) => { setEditItem(o); setForm({...o, date_cloture_prevue: o.date_cloture_prevue?.split('T')[0] || ''}); setModal('opportunite'); };
+  const allClientsAndProspects = [...clients, ...prospects]; // Pour le select dans le modal
+  const openNewOpp = () => { setEditItem(null); setForm({code: genCode('OPP'), nom: '', client_id: '', nouveau_prospect: false, prospect_nom: '', prospect_email: '', prospect_telephone: '', montant: 0, probabilite: 50, stage: 'prospect', date_cloture_prevue: ''}); setModal('opportunite'); };
+  const openEditOpp = (o) => { setEditItem(o); setForm({...o, date_cloture_prevue: o.date_cloture_prevue?.split('T')[0] || '', nouveau_prospect: false}); setModal('opportunite'); };
+  
   const saveOpp = async () => {
-    if (!form.nom || !form.client_id) return alert('Client et nom requis');
     setSaving(true);
     try {
+      let clientId = form.client_id;
+      
+      // Si nouveau prospect, le créer d'abord
+      if (form.nouveau_prospect && form.prospect_nom) {
+        const prospectData = {
+          code: genCode('PRO'),
+          nom: form.prospect_nom,
+          email: form.prospect_email || '',
+          telephone: form.prospect_telephone || '',
+          type_client: 'entreprise',
+          ville: 'DAKAR',
+          est_prospect: true,
+          organisation_id: org.id
+        };
+        const {data: newProspect, error: prospectError} = await supabase.from('clients').insert([prospectData]).select().single();
+        if (prospectError) throw prospectError;
+        clientId = newProspect.id;
+      }
+      
+      if (!form.nom || !clientId) return alert('Nom et client/prospect requis');
+      
       const ref = form.code || genCode('OPP');
       const data = {
         reference: ref,
         nom: form.nom,
-        client_id: form.client_id,
+        client_id: clientId,
         description: form.description || '',
         montant: parseFloat(form.montant) || 0,
         probabilite: parseInt(form.probabilite) || 50,
@@ -1338,7 +1384,6 @@ const CRMPage = () => {
       
       let result;
       if (editItem?.id) {
-        // En mode édition, garder la reference existante si pas modifiée
         data.reference = editItem.reference || ref;
         result = await supabase.from('opportunites').update(data).eq('id', editItem.id);
       } else {
@@ -1354,7 +1399,7 @@ const CRMPage = () => {
     setSaving(false);
   };
   
-  // Mettre à jour le stage d'une opportunité (drag & drop pipeline)
+  // Mettre à jour le stage d'une opportunité (avec conversion auto prospect -> client si gagné)
   const updateOppStage = async (o, stage) => { 
     try {
       // Important: inclure reference pour éviter l'erreur NOT NULL
@@ -1363,6 +1408,21 @@ const CRMPage = () => {
         reference: o.reference || o.code || genCode('OPP')
       }).eq('id', o.id); 
       if (error) throw error;
+      
+      // Si l'opportunité passe à "gagne", convertir le prospect en client
+      if (stage === 'gagne' && o.client_id) {
+        // Vérifier si c'est un prospect
+        const prospect = prospects.find(p => p.id === o.client_id);
+        if (prospect) {
+          await supabase.from('clients').update({
+            est_prospect: false,
+            code: genCode('CLI')
+          }).eq('id', o.client_id);
+          // Notification
+          alert(`✅ Opportunité gagnée ! Le prospect "${prospect.nom}" a été converti en client.`);
+        }
+      }
+      
       loadData(); 
     } catch(e) {
       console.error('Update stage error:', e);
@@ -1373,6 +1433,11 @@ const CRMPage = () => {
   const filteredClients = clients.filter(c => {
     const matchSearch = c.nom?.toLowerCase().includes(search.toLowerCase()) || c.ninea?.toLowerCase().includes(search.toLowerCase());
     const matchType = !filterType || c.type_client === filterType;
+    return matchSearch && matchType;
+  });
+  const filteredProspects = prospects.filter(p => {
+    const matchSearch = p.nom?.toLowerCase().includes(search.toLowerCase()) || p.email?.toLowerCase().includes(search.toLowerCase());
+    const matchType = !filterType || p.type_client === filterType;
     return matchSearch && matchType;
   });
   const filteredContacts = contacts.filter(c => c.nom?.toLowerCase().includes(search.toLowerCase()) || c.prenom?.toLowerCase().includes(search.toLowerCase()));
@@ -1391,10 +1456,22 @@ const CRMPage = () => {
 
   return (
     <div>
-      <PageHeader title="CRM" subtitle={`${clients.length} clients • ${contacts.length} contacts • ${opportunites.length} opportunités`}
-        tabs={[{key: 'clients', label: 'Clients', icon: '🏢', count: clients.length}, {key: 'contacts', label: 'Contacts', icon: '👤', count: contacts.length}, {key: 'opportunites', label: 'Opportunités', icon: '🎯', count: opportunites.length}, {key: 'pipeline', label: 'Pipeline', icon: '📊'}]}
+      <PageHeader title="CRM" subtitle={`${clients.length} clients • ${prospects.length} prospects • ${contacts.length} contacts • ${opportunites.length} opportunités`}
+        tabs={[
+          {key: 'clients', label: 'Clients', icon: '🏢', count: clients.length}, 
+          {key: 'prospects', label: 'Prospects', icon: '🎯', count: prospects.length},
+          {key: 'contacts', label: 'Contacts', icon: '👤', count: contacts.length}, 
+          {key: 'opportunites', label: 'Opportunités', icon: '💰', count: opportunites.length}, 
+          {key: 'pipeline', label: 'Pipeline', icon: '📊'}
+        ]}
         activeTab={tab} onTabChange={setTab}
-        action={<div className="flex gap-2"><Button variant="secondary" size="sm" onClick={exportClients} icon="📥">Export</Button><Button variant="secondary" size="sm" onClick={() => openNewContact()} icon="👤">Contact</Button><Button size="sm" onClick={openNewClient} icon="➕">Client</Button></div>}
+        action={<div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={exportClients} icon="📥">Export</Button>
+          {tab === 'prospects' && <Button size="sm" onClick={openNewProspect} icon="➕">Prospect</Button>}
+          {tab === 'clients' && <Button size="sm" onClick={openNewClient} icon="➕">Client</Button>}
+          {tab === 'contacts' && <Button size="sm" onClick={() => openNewContact()} icon="➕">Contact</Button>}
+          {(tab === 'opportunites' || tab === 'pipeline') && <Button size="sm" onClick={openNewOpp} icon="➕">Opportunité</Button>}
+        </div>}
       />
 
       {loading ? <Loader /> : (<>
@@ -1411,6 +1488,39 @@ const CRMPage = () => {
               {header: 'Ville', key: 'ville'},
               {header: 'Contact', render: r => <div className="text-sm"><div>{r.email}</div><div className="text-slate-400">{r.telephone}</div></div>}
             ]} data={filteredClients} actions={r => <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openNewContact(r.id)}>👤</Button><Button variant="ghost" size="xs" onClick={() => openEditClient(r)}>✏️</Button><Button variant="ghost" size="xs" onClick={() => deleteClient(r)}>🗑️</Button></div>} />
+          </Card>
+        )}
+        
+        {tab === 'prospects' && (
+          <Card>
+            <div className="flex gap-4 mb-4">
+              <SearchInput value={search} onChange={setSearch} placeholder="Rechercher..." className="flex-1" />
+              <Select value={filterType} onChange={setFilterType} options={CLIENT_TYPES} placeholder="Tous les types" className="w-48" />
+              {filterType && <Button variant="ghost" size="sm" onClick={() => setFilterType('')}>🔄</Button>}
+            </div>
+            {filteredProspects.length === 0 ? (
+              <div className="text-center py-12 text-slate-400">
+                <div className="text-4xl mb-4">🎯</div>
+                <p>Aucun prospect pour l'instant</p>
+                <p className="text-sm mt-2">Les prospects sont créés lors de la saisie d'une opportunité ou manuellement</p>
+              </div>
+            ) : (
+              <Table columns={[
+                {header: 'Prospect', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.code} • {CLIENT_TYPES.find(t => t.value === r.type_client)?.label}</div></div>},
+                {header: 'Contact', render: r => <div className="text-sm"><div>{r.email || '-'}</div><div className="text-slate-400">{r.telephone || '-'}</div></div>},
+                {header: 'Ville', key: 'ville'},
+                {header: 'Opportunités', render: r => {
+                  const oppCount = opportunites.filter(o => o.client_id === r.id).length;
+                  return oppCount > 0 ? <Badge color="blue">{oppCount}</Badge> : <span className="text-slate-400">-</span>;
+                }}
+              ]} data={filteredProspects} actions={r => (
+                <div className="flex gap-1">
+                  <Button variant="success" size="xs" onClick={() => convertToClient(r)} title="Convertir en client">✓ Client</Button>
+                  <Button variant="ghost" size="xs" onClick={() => openEditProspect(r)} title="Modifier">✏️</Button>
+                  <Button variant="ghost" size="xs" onClick={() => deleteClient(r)} title="Supprimer">🗑️</Button>
+                </div>
+              )} />
+            )}
           </Card>
         )}
 
@@ -1558,14 +1668,97 @@ const CRMPage = () => {
       </Modal>
 
       {/* MODAL OPPORTUNITE */}
-      <Modal isOpen={modal === 'opportunite'} onClose={() => setModal(null)} title={editItem ? 'Modifier opportunité' : 'Nouvelle opportunité'}>
+      <Modal isOpen={modal === 'opportunite'} onClose={() => setModal(null)} title={editItem ? 'Modifier opportunité' : 'Nouvelle opportunité'} size="lg">
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4"><Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} /><Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" required /></div>
-          <Input label="Nom de l'opportunité" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
-          <div className="grid grid-cols-3 gap-4"><Input label="Montant (FCFA)" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} /><Input label="Probabilité (%)" type="number" value={form.probabilite} onChange={v => setForm(p => ({...p, probabilite: v}))} min={0} max={100} /><Select label="Étape" value={form.stage} onChange={v => setForm(p => ({...p, stage: v}))} options={OPPORTUNITY_STAGES.map(s => ({value: s.id, label: s.nom}))} /></div>
+          <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
+          <Input label="Nom de l'opportunité" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required placeholder="Ex: Audit comptable 2026" />
+          
+          {/* Choix Client existant ou Nouveau prospect */}
+          {!editItem && (
+            <div className="p-4 bg-slate-50 rounded-xl space-y-4">
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" checked={!form.nouveau_prospect} onChange={() => setForm(p => ({...p, nouveau_prospect: false, client_id: ''}))} className="w-4 h-4" />
+                  <span className="font-medium">Client ou Prospect existant</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" checked={form.nouveau_prospect} onChange={() => setForm(p => ({...p, nouveau_prospect: true, client_id: ''}))} className="w-4 h-4" />
+                  <span className="font-medium">Nouveau prospect</span>
+                </label>
+              </div>
+              
+              {!form.nouveau_prospect ? (
+                <Select 
+                  label="Client / Prospect" 
+                  value={form.client_id} 
+                  onChange={v => setForm(p => ({...p, client_id: v}))} 
+                  options={[
+                    ...clients.map(c => ({value: c.id, label: '🏢 ' + c.nom})),
+                    ...prospects.map(p => ({value: p.id, label: '🎯 ' + p.nom}))
+                  ]} 
+                  placeholder="Sélectionner un client ou prospect" 
+                  required 
+                />
+              ) : (
+                <div className="space-y-3">
+                  <Input label="Nom du prospect" value={form.prospect_nom} onChange={v => setForm(p => ({...p, prospect_nom: v}))} required placeholder="Ex: SONATEL SA" />
+                  <div className="grid grid-cols-2 gap-4">
+                    <Input label="Email" type="email" value={form.prospect_email} onChange={v => setForm(p => ({...p, prospect_email: v}))} placeholder="contact@example.com" />
+                    <Input label="Téléphone" value={form.prospect_telephone} onChange={v => setForm(p => ({...p, prospect_telephone: v}))} placeholder="+221 77 000 00 00" />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* En mode édition, juste afficher le client */}
+          {editItem && (
+            <Select label="Client / Prospect" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={allClientsAndProspects.map(c => ({value: c.id, label: c.nom}))} required />
+          )}
+          
+          <div className="grid grid-cols-3 gap-4">
+            <Input label="Montant (FCFA)" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} />
+            <Input label="Probabilité (%)" type="number" value={form.probabilite} onChange={v => setForm(p => ({...p, probabilite: v}))} min={0} max={100} />
+            <Select label="Étape" value={form.stage} onChange={v => setForm(p => ({...p, stage: v}))} options={OPPORTUNITY_STAGES.map(s => ({value: s.id, label: s.nom}))} />
+          </div>
           <Input label="Date clôture prévue" type="date" value={form.date_cloture_prevue} onChange={v => setForm(p => ({...p, date_cloture_prevue: v}))} />
           <TextArea label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} rows={3} />
-          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveOpp} loading={saving} className="flex-1">Enregistrer</Button></div>
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={saveOpp} loading={saving} className="flex-1">Enregistrer</Button>
+          </div>
+        </div>
+      </Modal>
+      
+      {/* MODAL PROSPECT */}
+      <Modal isOpen={modal === 'prospect'} onClose={() => setModal(null)} title={editItem ? 'Modifier prospect' : 'Nouveau prospect'} size="lg">
+        <div className="space-y-4">
+          <Select label="Type" value={form.type_client} onChange={v => setForm(p => ({...p, type_client: v}))} options={CLIENT_TYPES} required />
+          {form.type_client === 'entreprise' ? (<>
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
+              <Input label="NINEA" value={form.ninea} onChange={v => setForm(p => ({...p, ninea: v}))} />
+            </div>
+            <Input label="Dénomination sociale" value={form.denomination} onChange={v => setForm(p => ({...p, denomination: v}))} required />
+          </>) : (
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
+              <Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
+            </div>
+          )}
+          <Input label="Adresse" value={form.adresse} onChange={v => setForm(p => ({...p, adresse: v}))} />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Ville" value={form.ville || 'DAKAR'} onChange={v => setForm(p => ({...p, ville: v}))} />
+            <Input label="Pays" value={form.pays || 'Sénégal'} onChange={v => setForm(p => ({...p, pays: v}))} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} />
+            <Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} />
+          </div>
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={saveProspect} loading={saving} className="flex-1">Enregistrer</Button>
+          </div>
         </div>
       </Modal>
     </div>
