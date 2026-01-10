@@ -1870,13 +1870,30 @@ const DashboardPage = () => {
       const now = new Date();
       const currentYear = now.getFullYear();
       const caParMois = [];
+      
+      // Debug dates des factures
+      console.log('=== DATES FACTURES ===');
+      allFactures.forEach((f, i) => {
+        console.log(`Facture ${i+1}: date_emission=${f.date_emission}, date_facture=${f.date_facture}`);
+      });
+      
       for (let i = 0; i < 12; i++) {
         const date = new Date(currentYear, i, 1);
         const mois = date.toLocaleDateString('fr-FR', {month: 'short'});
         const monthStart = date.toISOString().split('T')[0];
         const monthEnd = new Date(currentYear, i + 1, 0).toISOString().split('T')[0];
-        const montant = factures.data?.filter(f => f.date_facture >= monthStart && f.date_facture <= monthEnd)
-          .reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0) || 0;
+        
+        // Utiliser date_emission (date de création de la facture)
+        const facturesDuMois = allFactures.filter(f => {
+          const dateFacture = f.date_emission || f.date_facture;
+          return dateFacture >= monthStart && dateFacture <= monthEnd;
+        });
+        const montant = facturesDuMois.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
+        
+        if (facturesDuMois.length > 0) {
+          console.log(`Mois ${i+1} (${mois}): ${facturesDuMois.length} factures, montant=${montant}`);
+        }
+        
         caParMois.push({mois: mois.charAt(0).toUpperCase() + mois.slice(1), montant, isFuture: i > now.getMonth()});
       }
       
@@ -5733,7 +5750,10 @@ const RapportsPage = () => {
 
     // Filtrer par période
     const tPeriod = (temps.data || []).filter(t => t.date >= start && t.date <= end);
-    const fPeriod = (factures.data || []).filter(f => f.date_facture >= start && f.date_facture <= end);
+    const fPeriod = (factures.data || []).filter(f => {
+      const dateFacture = f.date_emission || f.date_facture;
+      return dateFacture >= start && dateFacture <= end;
+    });
     
     const heuresTotal = tPeriod.reduce((s, t) => s + (t.heures || 0), 0);
     const heuresFact = tPeriod.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0);
@@ -5766,8 +5786,11 @@ const RapportsPage = () => {
       const monthEnd = new Date(selectedYear, i + 1, 0).toISOString().split('T')[0];
       const moisLabel = new Date(selectedYear, i, 1).toLocaleDateString('fr-FR', {month: 'short'});
       
-      const montantCA = f.filter(x => x.date_facture >= monthStart && x.date_facture <= monthEnd)
-        .reduce((s, x) => s + (parseFloat(x.montant_total) || 0), 0);
+      // Utiliser date_emission (date de création) au lieu de date_facture
+      const montantCA = f.filter(x => {
+        const dateFacture = x.date_emission || x.date_facture;
+        return dateFacture >= monthStart && dateFacture <= monthEnd;
+      }).reduce((s, x) => s + (parseFloat(x.montant_total) || 0), 0);
       caParMois.push({mois: moisLabel.charAt(0).toUpperCase() + moisLabel.slice(1), montant: montantCA, isFuture: i > new Date().getMonth() && selectedYear === new Date().getFullYear()});
       
       const heuresMois = (temps.data || []).filter(t => t.date >= monthStart && t.date <= monthEnd)
