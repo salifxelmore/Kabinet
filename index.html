@@ -3923,8 +3923,57 @@ const EquipePage = () => {
   // Collaborateur CRUD
   const openNewCollab = () => { setEditItem(null); setForm({code: genCode('EMP'), nom: '', prenom: '', email: '', telephone: '', departement_id: '', grade_id: '', date_entree: today(), actif: true}); setModal('collab'); };
   const openEditCollab = (c) => { setEditItem(c); setForm({...c, date_entree: c.date_entree?.split('T')[0]}); setModal('collab'); };
+  
+  // Créer un compte utilisateur pour le collaborateur
+  const createUserAccount = async (email, prenom, nom, orgId) => {
+    const DEFAULT_PASSWORD = 'Kabinet2024!';
+    
+    try {
+      // 1. Créer le compte auth dans Supabase
+      const {data: authData, error: authError} = await supabase.auth.signUp({
+        email: email,
+        password: DEFAULT_PASSWORD,
+        options: {
+          data: { prenom, nom }
+        }
+      });
+      
+      if (authError) {
+        // Si l'utilisateur existe déjà, on continue
+        if (authError.message?.includes('already registered')) {
+          console.log('Utilisateur auth déjà existant:', email);
+          return {existing: true};
+        }
+        throw authError;
+      }
+      
+      // 2. Créer l'entrée dans la table utilisateurs
+      if (authData?.user) {
+        const {error: userError} = await supabase.from('utilisateurs').insert([{
+          auth_id: authData.user.id,
+          email: email,
+          prenom: prenom,
+          nom: nom,
+          role: 'user',
+          organisation_id: orgId
+        }]);
+        
+        if (userError && !userError.message?.includes('duplicate')) {
+          console.error('Erreur création utilisateur:', userError);
+        }
+      }
+      
+      return {success: true, password: DEFAULT_PASSWORD};
+    } catch (e) {
+      console.error('Erreur création compte:', e);
+      return {error: e.message};
+    }
+  };
+  
   const saveCollab = async () => {
     if (!form.nom || !form.prenom) return alert('Nom et prénom requis');
+    if (!editItem && !form.email) return alert('Email requis pour créer un compte de connexion');
+    
     setSaving(true);
     try {
       const grade = grades.find(g => g.id === form.grade_id);
@@ -3943,8 +3992,26 @@ const EquipePage = () => {
       
       let result;
       if (editItem?.id) {
+        // Modification
         result = await supabase.from('collaborateurs').update(data).eq('id', editItem.id);
       } else {
+        // Création - d'abord créer le compte utilisateur
+        if (form.email) {
+          const accountResult = await createUserAccount(form.email, form.prenom, form.nom, org.id);
+          
+          if (accountResult.error) {
+            throw new Error('Erreur création compte: ' + accountResult.error);
+          }
+          
+          if (accountResult.success) {
+            alert(`✅ Compte créé pour ${form.prenom} ${form.nom}\n\n📧 Email: ${form.email}\n🔑 Mot de passe: ${accountResult.password}\n\nLe collaborateur peut maintenant se connecter !`);
+          } else if (accountResult.existing) {
+            // Le compte existe déjà, on continue
+            console.log('Compte existant, liaison avec collaborateur');
+          }
+        }
+        
+        // Créer le collaborateur
         result = await supabase.from('collaborateurs').insert([{...data, organisation_id: org.id}]);
       }
       
@@ -3953,6 +4020,48 @@ const EquipePage = () => {
     } catch(e) { 
       console.error('Collab save error:', e);
       alert('Erreur: ' + e.message); 
+    }
+    setSaving(false);
+  };
+  
+  // Réinitialiser le mot de passe d'un collaborateur
+  const resetPassword = async (collab) => {
+    if (!collab.email) return alert('Ce collaborateur n\'a pas d\'email');
+    if (!confirm(`Réinitialiser le mot de passe de ${collab.prenom} ${collab.nom} ?\n\nUn email sera envoyé à ${collab.email}`)) return;
+    
+    try {
+      const {error} = await supabase.auth.resetPasswordForEmail(collab.email, {
+        redirectTo: window.location.origin + '/#'
+      });
+      
+      if (error) throw error;
+      alert(`✅ Email de réinitialisation envoyé à ${collab.email}`);
+    } catch(e) {
+      console.error('Reset password error:', e);
+      alert('Erreur: ' + e.message);
+    }
+  };
+  
+  // Créer un compte pour un collaborateur existant (sans compte)
+  const createAccountForExisting = async (collab) => {
+    if (!collab.email) return alert('Ce collaborateur n\'a pas d\'email. Modifiez-le d\'abord.');
+    if (!confirm(`Créer un compte de connexion pour ${collab.prenom} ${collab.nom} ?\n\nEmail: ${collab.email}`)) return;
+    
+    setSaving(true);
+    try {
+      const result = await createUserAccount(collab.email, collab.prenom, collab.nom, org.id);
+      
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      
+      if (result.success) {
+        alert(`✅ Compte créé !\n\n📧 Email: ${collab.email}\n🔑 Mot de passe: ${result.password}`);
+      } else if (result.existing) {
+        alert(`Ce compte existe déjà. Le collaborateur peut se connecter avec son email.`);
+      }
+    } catch(e) {
+      alert('Erreur: ' + e.message);
     }
     setSaving(false);
   };
@@ -4012,8 +4121,10 @@ const EquipePage = () => {
               {header: 'Statut', render: r => <Badge color={r.actif ? 'green' : 'gray'}>{r.actif ? 'Actif' : 'Inactif'}</Badge>}
             ]} data={collaborateurs} actions={r => (
               <div className="flex gap-1">
+                <Button variant="ghost" size="xs" onClick={() => createAccountForExisting(r)} title="Créer compte">🔑</Button>
+                <Button variant="ghost" size="xs" onClick={() => resetPassword(r)} title="Réinitialiser mot de passe">📧</Button>
                 <Button variant="ghost" size="xs" onClick={() => openPassageGrade(r)} title="Passage grade">🎖️</Button>
-                <Button variant="ghost" size="xs" onClick={() => openEditCollab(r)}>✏️</Button>
+                <Button variant="ghost" size="xs" onClick={() => openEditCollab(r)} title="Modifier">✏️</Button>
               </div>
             )} />
           </Card>
@@ -4027,13 +4138,19 @@ const EquipePage = () => {
       {/* Modal Collaborateur */}
       <Modal isOpen={modal === 'collab'} onClose={() => setModal(null)} title={editItem ? 'Modifier collaborateur' : 'Nouveau collaborateur'} size="lg">
         <div className="space-y-4">
+          {!editItem && (
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-sm">
+              <strong>💡 Création de compte automatique</strong><br/>
+              Un compte de connexion sera créé avec le mot de passe par défaut : <code className="bg-blue-100 px-1 rounded">Kabinet2024!</code>
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-4">
             <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
             <Input label="Prénom" value={form.prenom} onChange={v => setForm(p => ({...p, prenom: v}))} required />
             <Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} />
+            <Input label="Email (servira à la connexion)" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} required={!editItem} />
             <Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} />
           </div>
           <div className="grid grid-cols-3 gap-4">
@@ -4042,7 +4159,7 @@ const EquipePage = () => {
             <Input label="Date entrée" type="date" value={form.date_entree} onChange={v => setForm(p => ({...p, date_entree: v}))} />
           </div>
           <Checkbox label="Collaborateur actif" checked={form.actif} onChange={v => setForm(p => ({...p, actif: v}))} />
-          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveCollab} loading={saving} className="flex-1">Enregistrer</Button></div>
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveCollab} loading={saving} className="flex-1">{editItem ? 'Enregistrer' : 'Créer collaborateur'}</Button></div>
         </div>
       </Modal>
 
