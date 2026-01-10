@@ -245,7 +245,15 @@ const Input = ({label, type = 'text', value, onChange, placeholder, required, di
     {label && <label className="block text-sm font-medium text-slate-700 mb-1.5">{label}{required && <span className="text-red-500 ml-1">*</span>}</label>}
     <div className="relative">
       {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">{prefix}</span>}
-      <input type={type} value={value ?? ''} onChange={e => onChange(type === 'number' ? (parseFloat(e.target.value) || 0) : e.target.value)}
+      <input type={type} value={value === 0 && type === 'number' ? '' : (value ?? '')} 
+        onChange={e => {
+          if (type === 'number') {
+            const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
+            onChange(isNaN(val) ? 0 : val);
+          } else {
+            onChange(e.target.value);
+          }
+        }}
         placeholder={placeholder} disabled={disabled}
         className={cn('w-full px-4 py-2.5 bg-white border rounded-xl text-slate-800 placeholder-slate-400 disabled:bg-slate-50 disabled:cursor-not-allowed',
           error ? 'border-red-300' : 'border-slate-200', prefix && 'pl-10', suffix && 'pr-10')} {...props} />
@@ -1459,6 +1467,28 @@ const MissionsPage = () => {
 
   const openAcomptes = (m) => { setEditItem(m); setModal('acomptes'); };
 
+  const deleteMission = async (m) => {
+    // Vérifier s'il y a des heures saisies sur cette mission
+    const {data: temps} = await supabase.from('saisies_temps').select('id').eq('projet_id', m.id);
+    const hasTemps = temps && temps.length > 0;
+    
+    let confirmMsg = `Supprimer la mission "${m.nom}" ?`;
+    if (hasTemps) {
+      confirmMsg = `⚠️ ATTENTION: Cette mission a ${temps.length} saisie(s) de temps.\n\nSupprimer la mission "${m.nom}" ?\n\nToutes les heures et factures liées seront supprimées.`;
+    }
+    
+    if (!confirm(confirmMsg)) return;
+    
+    // Supprimer les données liées
+    await supabase.from('saisies_temps').delete().eq('projet_id', m.id);
+    await supabase.from('acomptes').delete().eq('projet_id', m.id);
+    await supabase.from('factures').delete().eq('projet_id', m.id);
+    // Supprimer la mission
+    await supabase.from('projets').delete().eq('id', m.id);
+    
+    loadData();
+  };
+
   const addAcompte = async () => {
     const missionAcomptes = acomptes.filter(a => a.projet_id === editItem.id);
     const totalAcomptes = missionAcomptes.reduce((s, a) => s + (a.montant || 0), 0);
@@ -1547,7 +1577,8 @@ const MissionsPage = () => {
           ]} data={filtered} actions={r => (
             <div className="flex gap-1">
               <Button variant="ghost" size="xs" onClick={() => openAcomptes(r)} title="Acomptes">💰</Button>
-              <Button variant="ghost" size="xs" onClick={() => openEdit(r)}>✏️</Button>
+              <Button variant="ghost" size="xs" onClick={() => openEdit(r)} title="Modifier">✏️</Button>
+              <Button variant="ghost" size="xs" onClick={() => deleteMission(r)} title="Supprimer">🗑️</Button>
             </div>
           )} />
         </Card>
@@ -1917,14 +1948,17 @@ const TimesheetPage = () => {
       {loading ? <Loader /> : (<>
         {/* Filtres */}
         <Card className="mb-4">
-          <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex flex-col sm:flex-row gap-4 items-end">
             <SearchInput value={filterSearch} onChange={setFilterSearch} placeholder="Rechercher une mission..." className="flex-1" />
             <Select value={filterClient} onChange={setFilterClient} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Tous les clients" className="w-48" />
+            {(filterSearch || filterClient) && (
+              <Button variant="ghost" size="sm" onClick={() => { setFilterSearch(''); setFilterClient(''); }}>🔄 Reset</Button>
+            )}
           </div>
         </Card>
 
         {/* Tableau temps facturables */}
-        <Card title="⏱️ Temps facturables" className="mb-4">
+        <Card title="⏱️ Temps facturables" collapsible defaultOpen={true} className="mb-4">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -2006,7 +2040,6 @@ const TimesheetPage = () => {
 const CongesPage = () => {
   const {org, user} = useApp();
   const [conges, setConges] = useState([]);
-  const [collaborateurs, setCollaborateurs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState({});
@@ -2016,17 +2049,14 @@ const CongesPage = () => {
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    const [c, co] = await Promise.all([
-      supabase.from('conges').select('*,collaborateurs(nom,prenom)').eq('organisation_id', org.id).order('date_debut', {ascending: false}),
-      supabase.from('collaborateurs').select('*').eq('organisation_id', org.id).eq('actif', true)
-    ]);
-    setConges(c.data || []);
-    setCollaborateurs(co.data || []);
+    const {data, error} = await supabase.from('conges').select('*').eq('organisation_id', org.id).order('date_debut', {ascending: false});
+    if (error) console.error('Conges error:', error);
+    setConges(data || []);
     setLoading(false);
   };
 
   const openNew = () => {
-    setForm({collaborateur_id: user.id, type_conge: 'conge_paye', date_debut: '', date_fin: '', motif: ''});
+    setForm({utilisateur_id: user.id, type_conge: 'conge_paye', date_debut: '', date_fin: '', motif: ''});
     setModal(true);
   };
 
@@ -2035,21 +2065,31 @@ const CongesPage = () => {
     setSaving(true);
     try {
       const jours = workingDaysBetween(form.date_debut, form.date_fin);
-      await supabase.from('conges').insert([{...form, organisation_id: org.id, nb_jours: jours, statut: 'pending'}]);
+      const {error} = await supabase.from('conges').insert([{
+        organisation_id: org.id, 
+        utilisateur_id: user.id,
+        type_conge: form.type_conge,
+        date_debut: form.date_debut,
+        date_fin: form.date_fin,
+        nb_jours: jours, 
+        motif: form.motif,
+        statut: 'pending'
+      }]);
+      if (error) throw error;
       setModal(false); loadData();
-    } catch (e) { alert(e.message); }
+    } catch (e) { alert('Erreur: ' + e.message); }
     setSaving(false);
   };
 
   const updateStatus = async (conge, statut) => {
-    await supabase.from('conges').update({statut, validateur_id: user.id, date_validation: new Date().toISOString()}).eq('id', conge.id);
+    await supabase.from('conges').update({statut, date_validation: new Date().toISOString()}).eq('id', conge.id);
     loadData();
   };
 
-  const mesConges = conges.filter(c => c.collaborateur_id === user.id);
+  const mesConges = conges.filter(c => c.utilisateur_id === user.id);
   const congesAValider = conges.filter(c => c.statut === 'pending');
 
-  // Solde congés (simplifié: 2.5j/mois, 30j/an)
+  // Solde congés (simplifié: 30j/an)
   const soldeConges = 30 - mesConges.filter(c => c.statut === 'approved' && c.type_conge === 'conge_paye').reduce((s, c) => s + (c.nb_jours || 0), 0);
 
   return (
@@ -2063,7 +2103,6 @@ const CongesPage = () => {
       {loading ? <Loader /> : (
         <Card>
           <Table columns={[
-            {header: 'Collaborateur', render: r => tab !== 'mes' ? <span>{r.collaborateurs?.prenom} {r.collaborateurs?.nom}</span> : <span>Moi</span>},
             {header: 'Type', render: r => { const t = LEAVE_TYPES.find(l => l.value === r.type_conge); return <Badge color={t?.color}>{t?.label}</Badge>; }},
             {header: 'Période', render: r => <span>{fmtDate(r.date_debut)} → {fmtDate(r.date_fin)}</span>},
             {header: 'Jours', render: r => <span className="font-medium">{r.nb_jours}j</span>},
@@ -2147,14 +2186,38 @@ const FacturationPage = () => {
   const exportPDF = (f) => {
     const {jsPDF} = window.jspdf;
     const doc = new jsPDF();
-    doc.setFontSize(20); doc.text('FACTURE', 105, 20, {align: 'center'});
-    doc.setFontSize(12); doc.text(f.reference, 105, 28, {align: 'center'});
+    
+    doc.setFontSize(20);
+    doc.text('FACTURE', 105, 25, {align: 'center'});
+    
+    doc.setFontSize(14);
+    doc.text(f.reference || '', 105, 35, {align: 'center'});
+    
+    doc.setDrawColor(200);
+    doc.line(20, 45, 190, 45);
+    
     doc.setFontSize(10);
-    doc.text('Date: ' + fmtDate(f.date_emission), 20, 45);
-    doc.text('Client: ' + (f.clients?.nom || '-'), 20, 52);
-    doc.text('Montant HT: ' + fmt(f.montant_ht) + ' FCFA', 20, 70);
-    doc.text('TVA: ' + fmt(f.montant_tva) + ' FCFA', 20, 78);
-    doc.setFontSize(14); doc.text('TOTAL: ' + fmt(f.montant_total) + ' FCFA', 20, 90);
+    doc.text('Date: ' + fmtDate(f.date_emission), 20, 55);
+    doc.text('Echeance: ' + fmtDate(f.date_echeance), 20, 62);
+    doc.text('Client: ' + (f.clients?.nom || '-'), 20, 69);
+    if (f.projets?.nom) doc.text('Mission: ' + (f.projets?.code || '') + ' - ' + f.projets.nom, 20, 76);
+    
+    doc.line(20, 85, 190, 85);
+    
+    doc.setFontSize(11);
+    const y1 = 100;
+    doc.text('Montant HT:', 110, y1);
+    doc.text(fmt(f.montant_ht || 0) + ' FCFA', 190, y1, {align: 'right'});
+    
+    doc.text('TVA (' + (f.taux_tva || 18) + '%):', 110, y1 + 10);
+    doc.text(fmt(f.montant_tva || 0) + ' FCFA', 190, y1 + 10, {align: 'right'});
+    
+    doc.line(110, y1 + 15, 190, y1 + 15);
+    
+    doc.setFontSize(14);
+    doc.text('TOTAL TTC:', 110, y1 + 25);
+    doc.text(fmt(f.montant_total || 0) + ' FCFA', 190, y1 + 25, {align: 'right'});
+    
     doc.save('Facture_' + f.reference + '.pdf');
   };
 
