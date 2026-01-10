@@ -881,6 +881,7 @@ const MainApp = ({user, onLogout}) => {
     {k: 'staffing', l: 'Staffing', i: '📅'},
     {k: 'timesheet', l: 'Temps', i: '⏱️'},
     {k: 'conges', l: 'Congés', i: '🏖️'},
+    {k: 'frais', l: 'Notes de frais', i: '🧾'},
     {k: 'facturation', l: 'Facturation', i: '💰'},
     {k: 'soustraitance', l: 'Sous-traitance', i: '🤝'},
     {k: 'interco', l: 'Interco', i: '🔄'},
@@ -947,6 +948,7 @@ const MainApp = ({user, onLogout}) => {
             {page === 'staffing' && <StaffingPage />}
             {page === 'timesheet' && <TimesheetPage />}
             {page === 'conges' && <CongesPage />}
+            {page === 'frais' && <NotesFraisPage />}
             {page === 'facturation' && <FacturationPage />}
             {page === 'soustraitance' && <SoustraitancePage />}
             {page === 'interco' && <IntercoPage />}
@@ -1353,13 +1355,23 @@ const CRMPage = () => {
   const filteredContacts = contacts.filter(c => c.nom?.toLowerCase().includes(search.toLowerCase()) || c.prenom?.toLowerCase().includes(search.toLowerCase()));
   const oppActives = opportunites.filter(o => !['gagne', 'perdu'].includes(o.stage));
   const totalPipeline = oppActives.reduce((s, o) => s + (o.montant * o.probabilite / 100), 0);
+  
+  const exportClients = () => exportToExcel(clients, [
+    {header: 'Code', key: 'code'},
+    {header: 'Nom', key: 'nom'},
+    {header: 'Type', getValue: r => CLIENT_TYPES.find(t => t.value === r.type_client)?.label || ''},
+    {header: 'NINEA', key: 'ninea'},
+    {header: 'Ville', key: 'ville'},
+    {header: 'Email', key: 'email'},
+    {header: 'Téléphone', key: 'telephone'}
+  ], 'clients');
 
   return (
     <div>
       <PageHeader title="CRM" subtitle={`${clients.length} clients • ${contacts.length} contacts • ${opportunites.length} opportunités`}
         tabs={[{key: 'clients', label: 'Clients', icon: '🏢', count: clients.length}, {key: 'contacts', label: 'Contacts', icon: '👤', count: contacts.length}, {key: 'opportunites', label: 'Opportunités', icon: '🎯', count: opportunites.length}, {key: 'pipeline', label: 'Pipeline', icon: '📊'}]}
         activeTab={tab} onTabChange={setTab}
-        action={<div className="flex gap-2"><Button variant="secondary" size="sm" onClick={() => openNewContact()} icon="👤">Contact</Button><Button size="sm" onClick={openNewClient} icon="➕">Client</Button></div>}
+        action={<div className="flex gap-2"><Button variant="secondary" size="sm" onClick={exportClients} icon="📥">Export</Button><Button variant="secondary" size="sm" onClick={() => openNewContact()} icon="👤">Contact</Button><Button size="sm" onClick={openNewClient} icon="➕">Client</Button></div>}
       />
 
       {loading ? <Loader /> : (<>
@@ -2463,6 +2475,14 @@ const FacturationPage = () => {
   };
 
   const updateStatus = async (f, statut) => { 
+    // Confirmation selon le statut
+    const messages = {
+      'sent': `Envoyer la facture ${f.reference} au client ?`,
+      'paid': `Marquer la facture ${f.reference} comme entièrement payée (${fmtMoney(f.montant_total)}) ?`
+    };
+    
+    if (messages[statut] && !confirm(messages[statut])) return;
+    
     const updates = {statut};
     if (statut === 'paid') {
       updates.montant_encaisse = f.montant_total;
@@ -2545,6 +2565,19 @@ const FacturationPage = () => {
     tab === 'draft' ? factures.filter(f => f.statut === 'draft') :
     tab === 'sent' ? factures.filter(f => f.statut === 'sent') :
     tab === 'paid' ? factures.filter(f => f.statut === 'paid') : factures;
+  
+  const exportFactures = () => exportToExcel(filteredFactures, [
+    {header: 'Référence', key: 'reference'},
+    {header: 'Client', getValue: r => r.clients?.nom || ''},
+    {header: 'Mission', getValue: r => r.projets?.code || ''},
+    {header: 'Date émission', key: 'date_emission'},
+    {header: 'Date échéance', key: 'date_echeance'},
+    {header: 'Montant HT', key: 'montant_ht'},
+    {header: 'TVA', key: 'montant_tva'},
+    {header: 'Montant TTC', key: 'montant_total'},
+    {header: 'Encaissé', key: 'montant_encaisse'},
+    {header: 'Statut', getValue: r => INVOICE_STATUS[r.statut]?.label || ''}
+  ], 'factures');
 
   return (
     <div>
@@ -2556,7 +2589,10 @@ const FacturationPage = () => {
           {key: 'paid', label: 'Payées', count: factures.filter(f => f.statut === 'paid').length}
         ]}
         activeTab={tab} onTabChange={setTab}
-        action={<Button onClick={openNew} icon="➕">Nouvelle</Button>} 
+        action={<div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={exportFactures} icon="📥">Export</Button>
+          <Button onClick={openNew} icon="➕">Nouvelle</Button>
+        </div>} 
       />
       <div className="grid grid-cols-3 gap-4 mb-6">
         <StatCard title="Total facturé" value={fmtMoney(stats.total)} icon="📄" color="blue" />
@@ -2655,6 +2691,246 @@ const FacturationPage = () => {
           <Input label="Montant encaissé (FCFA)" type="number" value={form.montant_encaisse} onChange={v => setForm(p => ({...p, montant_encaisse: v}))} />
           <Input label="Date encaissement" type="date" value={form.date_encaissement} onChange={v => setForm(p => ({...p, date_encaissement: v}))} />
           <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveEncaissement} loading={saving} className="flex-1">Enregistrer</Button></div>
+        </div>
+      </Modal>
+    </div>
+  );
+};
+
+// ========== NOTES DE FRAIS PAGE ==========
+const EXPENSE_TYPES = [
+  {value: 'transport', label: 'Transport', icon: '🚗'},
+  {value: 'repas', label: 'Repas', icon: '🍽️'},
+  {value: 'hebergement', label: 'Hébergement', icon: '🏨'},
+  {value: 'fournitures', label: 'Fournitures', icon: '📎'},
+  {value: 'communication', label: 'Communication', icon: '📱'},
+  {value: 'autre', label: 'Autre', icon: '📦'}
+];
+
+const EXPENSE_STATUS = {
+  draft: {label: 'Brouillon', color: 'gray'},
+  submitted: {label: 'Soumise', color: 'blue'},
+  approved: {label: 'Approuvée', color: 'green'},
+  rejected: {label: 'Refusée', color: 'red'},
+  paid: {label: 'Remboursée', color: 'purple'}
+};
+
+const NotesFraisPage = () => {
+  const {org, user} = useApp();
+  const [notes, setNotes] = useState([]);
+  const [missions, setMissions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(null);
+  const [editItem, setEditItem] = useState(null);
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState('mes');
+
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    const [n, m] = await Promise.all([
+      supabase.from('notes_frais').select('*,projets(nom,code)').eq('organisation_id', org.id).order('date', {ascending: false}),
+      supabase.from('projets').select('id,nom,code').eq('organisation_id', org.id)
+    ]);
+    setNotes(n.data || []);
+    setMissions(m.data || []);
+    setLoading(false);
+  };
+
+  const openNew = () => {
+    setEditItem(null);
+    setForm({
+      reference: genCode('NDF'),
+      utilisateur_id: user.id,
+      projet_id: '',
+      type_frais: 'transport',
+      date: today(),
+      description: '',
+      montant: 0,
+      justificatif: false,
+      statut: 'draft'
+    });
+    setModal('note');
+  };
+
+  const openEdit = (n) => {
+    setEditItem(n);
+    setForm({...n, date: n.date?.split('T')[0] || ''});
+    setModal('note');
+  };
+
+  const save = async () => {
+    if (!form.montant || form.montant <= 0) return alert('Montant requis');
+    setSaving(true);
+    try {
+      const data = {
+        reference: form.reference,
+        utilisateur_id: user.id,
+        projet_id: form.projet_id || null,
+        type_frais: form.type_frais,
+        date: form.date,
+        description: form.description || '',
+        montant: parseFloat(form.montant) || 0,
+        justificatif: form.justificatif || false,
+        statut: form.statut || 'draft'
+      };
+
+      let result;
+      if (editItem?.id) {
+        result = await supabase.from('notes_frais').update(data).eq('id', editItem.id);
+      } else {
+        result = await supabase.from('notes_frais').insert([{...data, organisation_id: org.id}]);
+      }
+
+      if (result.error) throw result.error;
+      setModal(null);
+      loadData();
+    } catch (e) {
+      console.error('Note frais error:', e);
+      alert('Erreur: ' + e.message);
+    }
+    setSaving(false);
+  };
+
+  const submitNote = async (n) => {
+    if (!confirm('Soumettre cette note de frais pour validation ?')) return;
+    await supabase.from('notes_frais').update({statut: 'submitted'}).eq('id', n.id);
+    loadData();
+  };
+
+  const approveNote = async (n) => {
+    if (!confirm(`Approuver la note ${n.reference} de ${fmtMoney(n.montant)} ?`)) return;
+    await supabase.from('notes_frais').update({statut: 'approved', date_validation: today()}).eq('id', n.id);
+    loadData();
+  };
+
+  const rejectNote = async (n) => {
+    const motif = prompt('Motif du refus :');
+    if (!motif) return;
+    await supabase.from('notes_frais').update({statut: 'rejected', motif_refus: motif}).eq('id', n.id);
+    loadData();
+  };
+
+  const markPaid = async (n) => {
+    if (!confirm(`Marquer la note ${n.reference} comme remboursée ?`)) return;
+    await supabase.from('notes_frais').update({statut: 'paid', date_remboursement: today()}).eq('id', n.id);
+    loadData();
+  };
+
+  const deleteNote = async (n) => {
+    if (n.statut !== 'draft') return alert('Seules les notes en brouillon peuvent être supprimées');
+    if (!confirm('Supprimer cette note de frais ?')) return;
+    await supabase.from('notes_frais').delete().eq('id', n.id);
+    loadData();
+  };
+
+  const mesNotes = notes.filter(n => n.utilisateur_id === user.id);
+  const notesAValider = notes.filter(n => n.statut === 'submitted');
+  const notesApprouvees = notes.filter(n => n.statut === 'approved');
+
+  const stats = {
+    totalMes: mesNotes.reduce((s, n) => s + (n.montant || 0), 0),
+    enAttente: mesNotes.filter(n => n.statut === 'submitted').reduce((s, n) => s + (n.montant || 0), 0),
+    approuve: mesNotes.filter(n => n.statut === 'approved').reduce((s, n) => s + (n.montant || 0), 0),
+    rembourse: mesNotes.filter(n => n.statut === 'paid').reduce((s, n) => s + (n.montant || 0), 0)
+  };
+
+  const displayNotes = tab === 'mes' ? mesNotes : tab === 'valider' ? notesAValider : tab === 'approuvees' ? notesApprouvees : notes;
+
+  const exportNotes = () => exportToExcel(displayNotes, [
+    {header: 'Référence', key: 'reference'},
+    {header: 'Date', key: 'date'},
+    {header: 'Type', getValue: r => EXPENSE_TYPES.find(t => t.value === r.type_frais)?.label || ''},
+    {header: 'Mission', getValue: r => r.projets?.code || ''},
+    {header: 'Description', key: 'description'},
+    {header: 'Montant', key: 'montant'},
+    {header: 'Justificatif', getValue: r => r.justificatif ? 'Oui' : 'Non'},
+    {header: 'Statut', getValue: r => EXPENSE_STATUS[r.statut]?.label || ''}
+  ], 'notes_frais');
+
+  return (
+    <div>
+      <PageHeader title="Notes de Frais" subtitle={`${mesNotes.length} notes • ${fmtMoney(stats.totalMes)} total`}
+        tabs={[
+          {key: 'mes', label: 'Mes notes', count: mesNotes.length},
+          {key: 'valider', label: 'À valider', count: notesAValider.length},
+          {key: 'approuvees', label: 'À rembourser', count: notesApprouvees.length},
+          {key: 'toutes', label: 'Toutes', count: notes.length}
+        ]}
+        activeTab={tab} onTabChange={setTab}
+        action={<div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={exportNotes} icon="📥">Export</Button>
+          <Button onClick={openNew} icon="➕">Nouvelle note</Button>
+        </div>}
+      />
+
+      {tab === 'mes' && (
+        <div className="grid grid-cols-4 gap-4 mb-6">
+          <StatCard title="Total soumis" value={fmtMoney(stats.totalMes)} icon="📋" color="blue" />
+          <StatCard title="En attente" value={fmtMoney(stats.enAttente)} icon="⏳" color="amber" />
+          <StatCard title="Approuvé" value={fmtMoney(stats.approuve)} icon="✅" color="green" />
+          <StatCard title="Remboursé" value={fmtMoney(stats.rembourse)} icon="💰" color="purple" />
+        </div>
+      )}
+
+      {loading ? <Loader /> : (
+        <Card>
+          <Table columns={[
+            {header: 'Référence', render: r => <div><div className="font-medium">{r.reference}</div><div className="text-xs text-slate-400">{fmtDate(r.date)}</div></div>},
+            {header: 'Type', render: r => {
+              const t = EXPENSE_TYPES.find(x => x.value === r.type_frais);
+              return <span>{t?.icon} {t?.label}</span>;
+            }},
+            {header: 'Mission', render: r => r.projets?.code || <span className="text-slate-400">-</span>},
+            {header: 'Description', render: r => <span className="text-sm truncate max-w-xs">{r.description || '-'}</span>},
+            {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant)}</span>},
+            {header: 'Justif.', render: r => r.justificatif ? <Badge color="green">✓</Badge> : <Badge color="gray">-</Badge>},
+            {header: 'Statut', render: r => <Badge color={EXPENSE_STATUS[r.statut]?.color}>{EXPENSE_STATUS[r.statut]?.label}</Badge>}
+          ]} data={displayNotes} actions={r => (
+            <div className="flex gap-1">
+              {r.statut === 'draft' && r.utilisateur_id === user.id && (<>
+                <Button variant="ghost" size="xs" onClick={() => openEdit(r)} title="Modifier">✏️</Button>
+                <Button variant="ghost" size="xs" onClick={() => submitNote(r)} title="Soumettre">📤</Button>
+                <Button variant="ghost" size="xs" onClick={() => deleteNote(r)} title="Supprimer">🗑️</Button>
+              </>)}
+              {r.statut === 'submitted' && tab === 'valider' && (<>
+                <Button variant="success" size="xs" onClick={() => approveNote(r)} title="Approuver">✓</Button>
+                <Button variant="danger" size="xs" onClick={() => rejectNote(r)} title="Refuser">✗</Button>
+              </>)}
+              {r.statut === 'approved' && tab === 'approuvees' && (
+                <Button variant="ghost" size="xs" onClick={() => markPaid(r)} title="Marquer remboursé">💰</Button>
+              )}
+            </div>
+          )} empty="Aucune note de frais" />
+        </Card>
+      )}
+
+      {/* Modal Note de frais */}
+      <Modal isOpen={modal === 'note'} onClose={() => setModal(null)} title={editItem ? 'Modifier note de frais' : 'Nouvelle note de frais'}>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Référence" value={form.reference} onChange={v => setForm(p => ({...p, reference: v}))} disabled={!!editItem} />
+            <Input label="Date" type="date" value={form.date} onChange={v => setForm(p => ({...p, date: v}))} required />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Select label="Type de frais" value={form.type_frais} onChange={v => setForm(p => ({...p, type_frais: v}))} options={EXPENSE_TYPES.map(t => ({value: t.value, label: t.icon + ' ' + t.label}))} />
+            <Select label="Mission (optionnel)" value={form.projet_id} onChange={v => setForm(p => ({...p, projet_id: v}))} options={missions.map(m => ({value: m.id, label: m.code + ' - ' + m.nom}))} placeholder="Non lié à une mission" />
+          </div>
+          <Input label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} placeholder="Ex: Taxi client SONATEL, Déjeuner équipe projet..." />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Montant (FCFA)" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} required />
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 rounded-xl cursor-pointer">
+                <input type="checkbox" checked={form.justificatif} onChange={e => setForm(p => ({...p, justificatif: e.target.checked}))} className="w-4 h-4" />
+                <span>Justificatif fourni</span>
+              </label>
+            </div>
+          </div>
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={save} loading={saving} className="flex-1">{editItem ? 'Modifier' : 'Créer'}</Button>
+          </div>
         </div>
       </Modal>
     </div>
@@ -3078,11 +3354,32 @@ const EquipePage = () => {
     setSaving(true);
     try {
       const grade = grades.find(g => g.id === form.grade_id);
-      const data = {...form, taux_journalier: grade?.taux_journalier || 0};
-      if (editItem?.id) await supabase.from('collaborateurs').update(data).eq('id', editItem.id);
-      else await supabase.from('collaborateurs').insert([{...data, organisation_id: org.id}]);
+      const data = {
+        code: form.code,
+        nom: form.nom,
+        prenom: form.prenom,
+        email: form.email || '',
+        telephone: form.telephone || '',
+        departement_id: form.departement_id || null,
+        grade_id: form.grade_id || null,
+        taux_journalier: grade?.taux_journalier || parseFloat(form.taux_journalier) || 0,
+        date_entree: form.date_entree || null,
+        actif: form.actif !== false
+      };
+      
+      let result;
+      if (editItem?.id) {
+        result = await supabase.from('collaborateurs').update(data).eq('id', editItem.id);
+      } else {
+        result = await supabase.from('collaborateurs').insert([{...data, organisation_id: org.id}]);
+      }
+      
+      if (result.error) throw result.error;
       setModal(null); loadData();
-    } catch(e) { alert(e.message); }
+    } catch(e) { 
+      console.error('Collab save error:', e);
+      alert('Erreur: ' + e.message); 
+    }
     setSaving(false);
   };
 
@@ -3105,13 +3402,28 @@ const EquipePage = () => {
   };
 
   const actifs = collaborateurs.filter(c => c.actif);
+  
+  const exportCollabs = () => exportToExcel(collaborateurs, [
+    {header: 'Code', key: 'code'},
+    {header: 'Prénom', key: 'prenom'},
+    {header: 'Nom', key: 'nom'},
+    {header: 'Email', key: 'email'},
+    {header: 'Téléphone', key: 'telephone'},
+    {header: 'Département', getValue: r => r.departements?.nom || ''},
+    {header: 'Grade', getValue: r => r.grades?.nom || ''},
+    {header: 'TJ', key: 'taux_journalier'},
+    {header: 'Statut', getValue: r => r.actif ? 'Actif' : 'Inactif'}
+  ], 'collaborateurs');
 
   return (
     <div>
       <PageHeader title="Équipe" subtitle={actifs.length + ' collaborateurs actifs'}
         tabs={[{key: 'collab', label: 'Collaborateurs', count: collaborateurs.length}, {key: 'grades', label: 'Passages de grade', icon: '🎖️'}]}
         activeTab={tab} onTabChange={setTab}
-        action={<Button onClick={openNewCollab} icon="➕">Collaborateur</Button>}
+        action={<div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={exportCollabs} icon="📥">Export</Button>
+          <Button onClick={openNewCollab} icon="➕">Collaborateur</Button>
+        </div>}
       />
 
       {loading ? <Loader /> : (<>
