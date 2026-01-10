@@ -1348,11 +1348,11 @@ const DashboardPage = () => {
     // Solde congés
     const congesApprouves = (mesConges.data || []).filter(c => c.statut === 'approved' && c.type_conge === 'conge_paye');
     const joursReportAnterieurs = (mesConges.data || []).find(c => c.type_conge === 'report_anterieur')?.nb_jours || 0;
-    const dateEntree = user.date_entree ? new Date(user.date_entree) : new Date(new Date().getFullYear(), 0, 1);
+    const dateEntree = collab?.date_entree ? new Date(collab.date_entree) : new Date(new Date().getFullYear(), 0, 1);
     const moisAnciennete = Math.floor((new Date() - dateEntree) / (1000 * 60 * 60 * 24 * 30));
     const joursAcquis = Math.min(moisAnciennete * 2, 24) + joursReportAnterieurs;
     const joursPris = congesApprouves.reduce((s, c) => s + (c.nb_jours || 0), 0);
-    const soldeConges = Math.max(0, joursAcquis - joursPris);
+    const soldeConges = joursAcquis - joursPris; // Peut être négatif (anticipation)
     
     // Notes de frais
     const fraisEnAttente = (mesFrais.data || []).filter(f => f.statut === 'submitted').reduce((s, f) => s + (f.montant || 0), 0);
@@ -2335,6 +2335,7 @@ const StaffingPage = () => {
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [filterDept, setFilterDept] = useState(''); // Filtre département
+  const [missionDetail, setMissionDetail] = useState(null); // Modal détails mission
   
   // Permissions: Manager+ peut modifier, Junior/Senior lecture seule
   const canEdit = isManager && !isCollaborateur;
@@ -2354,9 +2355,9 @@ const StaffingPage = () => {
 
   const loadData = async () => {
     const [a, c, m, d] = await Promise.all([
-      supabase.from('affectations').select('*,collaborateurs(nom,prenom,departement_id),projets(nom,code,clients(nom))').eq('organisation_id', org.id),
+      supabase.from('affectations').select('*,collaborateurs(nom,prenom,departement_id),projets(id,nom,code,description,date_debut,date_fin,statut,budget_heures,clients(nom))').eq('organisation_id', org.id),
       supabase.from('collaborateurs').select('*,grades:grade_id(nom,niveau),departements:departement_id(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
-      supabase.from('projets').select('id,nom,code,clients(nom)').eq('organisation_id', org.id).eq('statut', 'active'),
+      supabase.from('projets').select('id,nom,code,description,date_debut,date_fin,statut,budget_heures,clients(nom)').eq('organisation_id', org.id).eq('statut', 'active'),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id).order('nom')
     ]);
     setAffectations(a.data || []);
@@ -2517,9 +2518,16 @@ const StaffingPage = () => {
                           <td key={d.date} className="px-1 py-2 text-center">
                             {aff ? (
                               <div 
-                                className={cn("bg-blue-100 text-blue-700 rounded-lg p-2 text-xs", canEdit && "cursor-pointer hover:bg-blue-200")} 
-                                onClick={() => canEdit && deleteAffectation(aff)} 
-                                title={canEdit ? `${aff.projets?.nom} - ${aff.projets?.clients?.nom || 'Sans client'}\nCliquer pour supprimer` : `${aff.projets?.nom}`}
+                                className={cn("bg-blue-100 text-blue-700 rounded-lg p-2 text-xs cursor-pointer hover:bg-blue-200")} 
+                                onClick={() => {
+                                  if (canEdit) {
+                                    deleteAffectation(aff);
+                                  } else {
+                                    // Junior/Senior: ouvrir modal détails
+                                    setMissionDetail(aff.projets);
+                                  }
+                                }} 
+                                title={canEdit ? `${aff.projets?.nom} - ${aff.projets?.clients?.nom || 'Sans client'}\nCliquer pour supprimer` : `${aff.projets?.nom}\nCliquer pour voir les détails`}
                               >
                                 <div className="font-medium truncate" title={aff.projets?.nom}>{aff.projets?.code}</div>
                                 <div className="text-[10px] text-blue-500 truncate">{aff.projets?.clients?.nom || '-'}</div>
@@ -2563,6 +2571,55 @@ const StaffingPage = () => {
             <Button onClick={saveAffectation} loading={saving} className="flex-1">Enregistrer</Button>
           </div>
         </div>
+      </Modal>
+
+      {/* Modal Détails Mission (pour Junior/Senior) */}
+      <Modal isOpen={!!missionDetail} onClose={() => setMissionDetail(null)} title="Détails de la mission" size="md">
+        {missionDetail && (
+          <div className="space-y-4">
+            {/* En-tête */}
+            <div className="flex items-start gap-4 pb-4 border-b">
+              <div className="w-14 h-14 rounded-xl bg-blue-100 flex items-center justify-center text-2xl">📋</div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <Badge color="blue">{missionDetail.code}</Badge>
+                  <Badge color={missionDetail.statut === 'active' ? 'green' : 'gray'}>{missionDetail.statut === 'active' ? 'Active' : missionDetail.statut}</Badge>
+                </div>
+                <h3 className="text-xl font-bold text-slate-800 mt-1">{missionDetail.nom}</h3>
+                <p className="text-slate-500">{missionDetail.clients?.nom || 'Client non défini'}</p>
+              </div>
+            </div>
+            
+            {/* Infos */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-3 bg-slate-50 rounded-xl">
+                <div className="text-xs text-slate-500 mb-1">📅 Date de début</div>
+                <div className="font-medium">{missionDetail.date_debut ? fmtDate(missionDetail.date_debut) : 'Non définie'}</div>
+              </div>
+              <div className="p-3 bg-slate-50 rounded-xl">
+                <div className="text-xs text-slate-500 mb-1">🏁 Date de fin</div>
+                <div className="font-medium">{missionDetail.date_fin ? fmtDate(missionDetail.date_fin) : 'Non définie'}</div>
+              </div>
+              <div className="p-3 bg-slate-50 rounded-xl col-span-2">
+                <div className="text-xs text-slate-500 mb-1">⏱️ Budget heures</div>
+                <div className="font-medium">{missionDetail.budget_heures ? missionDetail.budget_heures + ' heures' : 'Non défini'}</div>
+              </div>
+            </div>
+            
+            {/* Description */}
+            {missionDetail.description && (
+              <div className="p-4 bg-blue-50 rounded-xl">
+                <div className="text-xs text-blue-600 mb-2 font-medium">📝 Description</div>
+                <p className="text-slate-700 text-sm whitespace-pre-wrap">{missionDetail.description}</p>
+              </div>
+            )}
+            
+            {/* Bouton fermer */}
+            <div className="pt-4">
+              <Button onClick={() => setMissionDetail(null)} className="w-full">Fermer</Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );
@@ -3033,12 +3090,12 @@ const CongesPage = () => {
   // Calcul du solde de congés
   // Acquisition: 2 jours par mois d'ancienneté (24 jours/an)
   // On utilise la date d'entrée de l'utilisateur ou défaut au 1er janvier de l'année
-  const dateEntree = user.date_entree ? new Date(user.date_entree) : new Date(new Date().getFullYear(), 0, 1);
+  const dateEntree = collab?.date_entree ? new Date(collab.date_entree) : new Date(new Date().getFullYear(), 0, 1);
   const maintenant = new Date();
   const moisAnciennete = Math.floor((maintenant - dateEntree) / (1000 * 60 * 60 * 24 * 30));
   const joursAcquis = Math.min(moisAnciennete * 2, 24) + joursReportAnterieurs; // Acquis + report antérieur
   const joursPris = congesApprouves.reduce((s, c) => s + (c.nb_jours || 0), 0);
-  const soldeConges = Math.max(0, joursAcquis - joursPris);
+  const soldeConges = joursAcquis - joursPris; // Peut être négatif (anticipation autorisée)
   const joursEnAttente = mesConges.filter(c => c.statut === 'pending' && c.type_conge === 'conge_paye').reduce((s, c) => s + (c.nb_jours || 0), 0);
 
   // Tabs dynamiques selon permissions
@@ -3068,11 +3125,11 @@ const CongesPage = () => {
         </div>
       )}
       <PageHeader title="Congés & Absences" 
-        subtitle={`Solde: ${soldeConges} jours disponibles`}
+        subtitle={`Solde: ${soldeConges} jours ${soldeConges < 0 ? '(anticipation)' : 'disponibles'}`}
         tabs={tabs}
         activeTab={tab} onTabChange={setTab}
         action={<div className="flex gap-2">
-          {!importDone && collab && <Button variant="secondary" size="sm" onClick={openImport} icon="📥">Import solde</Button>}
+          {isAdmin && <Button variant="secondary" size="sm" onClick={openImport} icon="📥">{importDone ? 'Modifier solde' : 'Import solde'}</Button>}
           <Button onClick={openNew} icon="➕" disabled={!collab}>Demander congé</Button>
         </div>}
       />
@@ -3084,7 +3141,7 @@ const CongesPage = () => {
           <StatCard title="Jours acquis" value={(joursAcquis - joursReportAnterieurs) + 'j'} icon="📅" color="blue" subtitle={`(${moisAnciennete} mois × 2j)`} />
           <StatCard title="Jours pris" value={joursPris + 'j'} icon="🏖️" color="amber" />
           <StatCard title="En attente" value={joursEnAttente + 'j'} icon="⏳" color="purple" />
-          <StatCard title="Solde disponible" value={soldeConges + 'j'} icon="✅" color="green" />
+          <StatCard title="Solde disponible" value={soldeConges + 'j'} icon={soldeConges < 0 ? '⚠️' : '✅'} color={soldeConges < 0 ? 'red' : 'green'} />
         </div>
       )}
 
