@@ -149,12 +149,45 @@ const useApp = () => useContext(AppContext);
 // ========== UTILITAIRES ==========
 const cn = (...classes) => classes.filter(Boolean).join(' ');
 const fmt = (n, dec = 0) => new Intl.NumberFormat('fr-FR', {maximumFractionDigits: dec}).format(n || 0);
+const fmtSimple = (n) => Math.round(n || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' '); // Pour PDF sans caractères spéciaux
 const fmtMoney = (n) => fmt(n) + ' FCFA';
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR') : '';
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('fr-FR') : '';
 const today = () => new Date().toISOString().split('T')[0];
 const genCode = (prefix) => prefix + Date.now().toString().slice(-6);
 const uuid = () => crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).substr(2, 9);
+
+// Fonction d'export Excel générique
+const exportToExcel = (data, columns, filename) => {
+  if (!data || data.length === 0) {
+    alert('Aucune donnée à exporter');
+    return;
+  }
+  
+  // Créer le contenu CSV
+  const headers = columns.map(c => c.header).join(';');
+  const rows = data.map(row => 
+    columns.map(c => {
+      let val = c.key ? row[c.key] : (c.getValue ? c.getValue(row) : '');
+      if (val === null || val === undefined) val = '';
+      // Échapper les guillemets et points-virgules
+      val = String(val).replace(/"/g, '""');
+      if (val.includes(';') || val.includes('"') || val.includes('\n')) {
+        val = '"' + val + '"';
+      }
+      return val;
+    }).join(';')
+  ).join('\n');
+  
+  const csv = '\uFEFF' + headers + '\n' + rows; // BOM pour Excel
+  const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename + '_' + today() + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+};
 
 const getWeekStart = (date = new Date()) => {
   const d = new Date(date);
@@ -1868,6 +1901,8 @@ const TimesheetPage = () => {
   const [commentModal, setCommentModal] = useState(null);
   const [comment, setComment] = useState('');
   const [clients, setClients] = useState([]);
+  const [showAddActivity, setShowAddActivity] = useState(false);
+  const [activityName, setActivityName] = useState('');
 
   const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((d, i) => ({
     label: d, 
@@ -2046,7 +2081,8 @@ const TimesheetPage = () => {
         </Card>
 
         {/* Tableau temps non-facturables */}
-        <Card title="📋 Temps non-facturables" collapsible defaultOpen={false}>
+        <Card title="📋 Temps non-facturables" collapsible defaultOpen={true} 
+          action={<Button variant="secondary" size="xs" onClick={() => setShowAddActivity(true)}>➕ Activité</Button>}>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -2062,7 +2098,11 @@ const TimesheetPage = () => {
               </thead>
               <tbody>
                 {missionsNonFact.length === 0 ? (
-                  <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">Aucune activité non-facturable</td></tr>
+                  <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">
+                    <div>Aucune activité non-facturable</div>
+                    <div className="text-xs mt-2">Créez des activités internes (Formation, Admin, Réunions...)</div>
+                    <Button size="sm" variant="secondary" className="mt-2" onClick={() => setShowAddActivity(true)}>➕ Créer une activité</Button>
+                  </td></tr>
                 ) : missionsNonFact.map(renderMissionRow)}
               </tbody>
             </table>
@@ -2092,6 +2132,33 @@ const TimesheetPage = () => {
           <div className="flex gap-3">
             <Button variant="secondary" onClick={() => setCommentModal(null)} className="flex-1">Annuler</Button>
             <Button onClick={saveComment} className="flex-1">Enregistrer</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal Nouvelle activité non-facturable */}
+      <Modal isOpen={showAddActivity} onClose={() => setShowAddActivity(false)} title="Nouvelle activité non-facturable">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-500">Créez une activité interne pour y saisir du temps non-facturable (Formation, Admin, Réunions internes...)</p>
+          <Input label="Nom de l'activité" value={activityName} onChange={setActivityName} placeholder="Ex: Formation Power BI, Réunion équipe..." required />
+          <div className="flex gap-3">
+            <Button variant="secondary" onClick={() => setShowAddActivity(false)} className="flex-1">Annuler</Button>
+            <Button onClick={async () => {
+              if (!activityName) return alert('Nom requis');
+              const {error} = await supabase.from('projets').insert([{
+                organisation_id: org.id,
+                code: genCode('INT'),
+                nom: activityName,
+                type_facturation: 'regie',
+                statut: 'active',
+                facturable: false,
+                budget_montant: 0
+              }]);
+              if (error) { alert('Erreur: ' + error.message); return; }
+              setShowAddActivity(false);
+              setActivityName('');
+              loadData();
+            }} className="flex-1">Créer</Button>
           </div>
         </div>
       </Modal>
@@ -2240,12 +2307,37 @@ const FacturationPage = () => {
     if (!form.client_id) return alert('Client requis');
     setSaving(true);
     try {
-      const tva = form.montant_ht * form.taux_tva / 100;
-      const data = {...form, montant_tva: tva, montant_total: parseFloat(form.montant_ht) + tva, projet_id: form.projet_id || null};
-      if (editItem?.id) await supabase.from('factures').update(data).eq('id', editItem.id);
-      else await supabase.from('factures').insert([{...data, organisation_id: org.id}]);
+      const montantHT = parseFloat(form.montant_ht) || 0;
+      const tauxTVA = parseFloat(form.taux_tva) || 18;
+      const tva = montantHT * tauxTVA / 100;
+      
+      const data = {
+        reference: form.reference,
+        client_id: form.client_id,
+        projet_id: form.projet_id || null,
+        type_facture: form.type_facture || 'standard',
+        date_emission: form.date_emission,
+        date_echeance: form.date_echeance,
+        montant_ht: montantHT,
+        taux_tva: tauxTVA,
+        montant_tva: tva,
+        montant_total: montantHT + tva,
+        statut: form.statut || 'draft'
+      };
+      
+      let result;
+      if (editItem?.id) {
+        result = await supabase.from('factures').update(data).eq('id', editItem.id);
+      } else {
+        result = await supabase.from('factures').insert([{...data, organisation_id: org.id}]);
+      }
+      
+      if (result.error) throw result.error;
       setModal(null); loadData();
-    } catch (e) { alert(e.message); }
+    } catch (e) { 
+      console.error('Facture save error:', e);
+      alert('Erreur: ' + e.message); 
+    }
     setSaving(false);
   };
 
@@ -2292,7 +2384,7 @@ const FacturationPage = () => {
     doc.text('FACTURE', 105, 25, {align: 'center'});
     
     doc.setFontSize(14);
-    doc.text(f.reference || '', 105, 35, {align: 'center'});
+    doc.text(String(f.reference || ''), 105, 35, {align: 'center'});
     
     doc.setDrawColor(200);
     doc.line(20, 45, 190, 45);
@@ -2300,26 +2392,26 @@ const FacturationPage = () => {
     doc.setFontSize(10);
     doc.text('Date: ' + fmtDate(f.date_emission), 20, 55);
     doc.text('Echeance: ' + fmtDate(f.date_echeance), 20, 62);
-    doc.text('Client: ' + (f.clients?.nom || '-'), 20, 69);
-    if (f.projets?.nom) doc.text('Mission: ' + (f.projets?.code || '') + ' - ' + f.projets.nom, 20, 76);
+    doc.text('Client: ' + String(f.clients?.nom || '-'), 20, 69);
+    if (f.projets?.nom) doc.text('Mission: ' + String(f.projets?.code || '') + ' - ' + String(f.projets.nom), 20, 76);
     
     doc.line(20, 85, 190, 85);
     
     doc.setFontSize(11);
     const y1 = 100;
     doc.text('Montant HT:', 110, y1);
-    doc.text(fmt(f.montant_ht || 0) + ' FCFA', 190, y1, {align: 'right'});
+    doc.text(fmtSimple(f.montant_ht) + ' FCFA', 190, y1, {align: 'right'});
     
-    doc.text('TVA (' + (f.taux_tva || 18) + '%):', 110, y1 + 10);
-    doc.text(fmt(f.montant_tva || 0) + ' FCFA', 190, y1 + 10, {align: 'right'});
+    doc.text('TVA (' + String(f.taux_tva || 18) + '%):', 110, y1 + 10);
+    doc.text(fmtSimple(f.montant_tva) + ' FCFA', 190, y1 + 10, {align: 'right'});
     
     doc.line(110, y1 + 15, 190, y1 + 15);
     
     doc.setFontSize(14);
     doc.text('TOTAL TTC:', 110, y1 + 25);
-    doc.text(fmt(f.montant_total || 0) + ' FCFA', 190, y1 + 25, {align: 'right'});
+    doc.text(fmtSimple(f.montant_total) + ' FCFA', 190, y1 + 25, {align: 'right'});
     
-    doc.save('Facture_' + f.reference + '.pdf');
+    doc.save('Facture_' + String(f.reference) + '.pdf');
   };
 
   const stats = {
@@ -2546,50 +2638,109 @@ const IntercoPage = () => {
   const [missions, setMissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
+  const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { loadData(); }, []);
   const loadData = async () => {
     const [t, d, m] = await Promise.all([
-      supabase.from('transactions_interco').select('*,projets(nom,code)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
+      supabase.from('transactions_interco').select('*').eq('organisation_id', org.id).order('created_at', {ascending: false}),
       supabase.from('departements').select('*').eq('organisation_id', org.id),
       supabase.from('projets').select('id,nom,code').eq('organisation_id', org.id)
     ]);
     setTransactions(t.data || []); setDepts(d.data || []); setMissions(m.data || []); setLoading(false);
   };
 
-  const openNew = () => { setForm({dept_vendeur: '', dept_acheteur: '', projet_id: '', description: '', montant: 0, date: today()}); setModal(true); };
+  const openNew = () => { 
+    setEditItem(null);
+    setForm({dept_vendeur: '', dept_acheteur: '', projet_id: '', description: '', montant: 0, date: today()}); 
+    setModal(true); 
+  };
+  
+  const openEdit = (t) => {
+    setEditItem(t);
+    setForm({
+      dept_vendeur: t.dept_vendeur || '',
+      dept_acheteur: t.dept_acheteur || '',
+      projet_id: t.projet_id || '',
+      description: t.description || '',
+      montant: t.montant || 0,
+      date: t.date || today()
+    });
+    setModal(true);
+  };
+  
   const save = async () => {
     if (!form.dept_vendeur || !form.dept_acheteur) return alert('Départements requis');
     setSaving(true);
     try { 
-      const data = {...form, projet_id: form.projet_id || null};
-      await supabase.from('transactions_interco').insert([{...data, organisation_id: org.id}]); 
+      const data = {
+        dept_vendeur: form.dept_vendeur,
+        dept_acheteur: form.dept_acheteur,
+        projet_id: form.projet_id || null,
+        description: form.description || '',
+        montant: parseFloat(form.montant) || 0,
+        date: form.date
+      };
+      
+      let result;
+      if (editItem?.id) {
+        result = await supabase.from('transactions_interco').update(data).eq('id', editItem.id);
+      } else {
+        result = await supabase.from('transactions_interco').insert([{...data, organisation_id: org.id}]);
+      }
+      
+      if (result.error) throw result.error;
       setModal(false); loadData(); 
     }
-    catch(e) { alert(e.message); }
+    catch(e) { alert('Erreur: ' + e.message); }
     setSaving(false);
+  };
+  
+  const deleteTransaction = async (t) => {
+    if (!confirm('Supprimer cette transaction ?')) return;
+    await supabase.from('transactions_interco').delete().eq('id', t.id);
+    loadData();
   };
 
   const totalVentes = transactions.reduce((s, t) => s + (t.montant || 0), 0);
 
   return (
     <div>
-      <PageHeader title="Ventes/Achats Interco" subtitle={`${transactions.length} transactions • Total: ${fmtMoney(totalVentes)}`} action={<Button onClick={openNew} icon="➕">Transaction</Button>} />
+      <PageHeader title="Ventes/Achats Interco" subtitle={`${transactions.length} transactions • Total: ${fmtMoney(totalVentes)}`} 
+        action={<div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={() => exportToExcel(transactions, [
+            {header: 'Vendeur', getValue: r => depts.find(d => d.id === r.dept_vendeur)?.nom || ''},
+            {header: 'Acheteur', getValue: r => depts.find(d => d.id === r.dept_acheteur)?.nom || ''},
+            {header: 'Description', key: 'description'},
+            {header: 'Montant', key: 'montant'},
+            {header: 'Date', key: 'date'}
+          ], 'interco')}>📥 Export</Button>
+          <Button onClick={openNew} icon="➕">Transaction</Button>
+        </div>} 
+      />
       {loading ? <Loader /> : (
         <Card>
           <Table columns={[
             {header: 'Vendeur', render: r => <Badge color="green">{depts.find(d => d.id === r.dept_vendeur)?.nom || '-'}</Badge>},
             {header: 'Acheteur', render: r => <Badge color="blue">{depts.find(d => d.id === r.dept_acheteur)?.nom || '-'}</Badge>},
-            {header: 'Mission', render: r => r.projets ? <span className="text-sm">{r.projets.code}</span> : '-'},
+            {header: 'Mission', render: r => {
+              const m = missions.find(x => x.id === r.projet_id);
+              return m ? <span className="text-sm">{m.code}</span> : '-';
+            }},
             {header: 'Description', key: 'description'},
             {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant)}</span>},
             {header: 'Date', render: r => fmtDate(r.date)}
-          ]} data={transactions} empty="Aucune transaction interco" />
+          ]} data={transactions} actions={r => (
+            <div className="flex gap-1">
+              <Button variant="ghost" size="xs" onClick={() => openEdit(r)}>✏️</Button>
+              <Button variant="ghost" size="xs" onClick={() => deleteTransaction(r)}>🗑️</Button>
+            </div>
+          )} empty="Aucune transaction interco" />
         </Card>
       )}
-      <Modal isOpen={modal} onClose={() => setModal(false)} title="Nouvelle transaction interco">
+      <Modal isOpen={modal} onClose={() => setModal(false)} title={editItem ? 'Modifier transaction' : 'Nouvelle transaction interco'}>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <Select label="Département vendeur" value={form.dept_vendeur} onChange={v => setForm(p => ({...p, dept_vendeur: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" required />
@@ -2601,7 +2752,7 @@ const IntercoPage = () => {
             <Input label="Montant (FCFA)" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} />
             <Input label="Date" type="date" value={form.date} onChange={v => setForm(p => ({...p, date: v}))} />
           </div>
-          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Créer</Button></div>
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">{editItem ? 'Modifier' : 'Créer'}</Button></div>
         </div>
       </Modal>
     </div>
