@@ -1815,23 +1815,41 @@ const DashboardPage = () => {
         supabase.from('clients').select('id, created_at').eq('organisation_id', org.id),
         supabase.from('projets').select('id, nom, code, statut, budget_montant, montant_facture, budget_heures, clients(nom)').eq('organisation_id', org.id),
         supabase.from('saisies_temps').select('heures, facturable, date, projet_id, utilisateur_id').eq('organisation_id', org.id),
-        supabase.from('factures').select('montant_total, montant_encaisse, statut, date_facture').eq('organisation_id', org.id),
+        supabase.from('factures').select('*').eq('organisation_id', org.id),
         supabase.from('collaborateurs').select('id, nom, prenom, actif, grade_id, grades(nom)').eq('organisation_id', org.id),
         supabase.from('affectations').select('*').eq('organisation_id', org.id)
       ]);
+      
+      // Debug: Afficher les factures brutes
+      console.log('=== DEBUG FACTURES ===');
+      console.log('Nombre de factures:', factures.data?.length);
+      console.log('Factures:', factures.data);
+      if (factures.error) console.error('Erreur factures:', factures.error);
 
       const projetsActifs = projets.data?.filter(p => p.statut === 'active') || [];
       const heuresTotal = temps.data?.reduce((s, t) => s + (t.heures || 0), 0) || 0;
       const heuresFact = temps.data?.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0) || 0;
       
-      // Debug: Afficher les factures
-      console.log('Factures brutes:', factures.data);
+      // Récupérer les factures
+      const allFactures = factures.data || [];
+      
+      // Debug détaillé
+      console.log('=== CALCUL CA ===');
+      allFactures.forEach((f, i) => {
+        console.log(`Facture ${i+1}: montant_total=${f.montant_total}, montant_encaisse=${f.montant_encaisse}, statut=${f.statut}`);
+      });
       
       // CA Facturé = somme de tous les montants des factures
-      const caFacture = (factures.data || []).reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
+      const caFacture = allFactures.reduce((s, f) => {
+        const montant = parseFloat(f.montant_total) || 0;
+        return s + montant;
+      }, 0);
       
       // CA Encaissé = somme de tous les montants_encaisse
-      const caEncaisse = (factures.data || []).reduce((s, f) => s + (parseFloat(f.montant_encaisse) || 0), 0);
+      const caEncaisse = allFactures.reduce((s, f) => {
+        const encaisse = parseFloat(f.montant_encaisse) || 0;
+        return s + encaisse;
+      }, 0);
       
       // CA en attente = CA facturé - CA encaissé
       const caEnAttente = caFacture - caEncaisse;
@@ -1842,14 +1860,11 @@ const DashboardPage = () => {
       // Reste à facturer = Budget - CA Facturé
       const resteFacturer = budgetTotal - caFacture;
       
-      console.log('Dashboard calculs:', { 
-        nbFactures: factures.data?.length,
-        caFacture, 
-        caEncaisse, 
-        caEnAttente,
-        budgetTotal,
-        resteFacturer
-      });
+      console.log('=== RÉSULTATS ===');
+      console.log('CA Facturé:', caFacture);
+      console.log('CA Encaissé:', caEncaisse);
+      console.log('CA En attente:', caEnAttente);
+      console.log('Budget total:', budgetTotal);
       
       // CA par mois (Janvier à Décembre de l'année courante)
       const now = new Date();
