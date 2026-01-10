@@ -3526,7 +3526,7 @@ const NotesFraisPage = () => {
       date_frais: today(),
       description: '',
       montant: 0,
-      justificatif: false,
+      justificatif_url: null,
       statut: 'draft'
     });
     setModal('note');
@@ -3550,7 +3550,6 @@ const NotesFraisPage = () => {
         date_frais: form.date_frais,
         description: form.description || '',
         montant: parseFloat(form.montant) || 0,
-        justificatif: form.justificatif || false,
         justificatif_url: form.justificatif_url || null,
         statut: form.statut || 'draft'
       };
@@ -3633,7 +3632,7 @@ const NotesFraisPage = () => {
     {header: 'Mission', getValue: r => r.projets?.code || ''},
     {header: 'Description', key: 'description'},
     {header: 'Montant', key: 'montant'},
-    {header: 'Justificatif', getValue: r => r.justificatif ? 'Oui' : 'Non'},
+    {header: 'Justificatif', getValue: r => r.justificatif_url ? 'Oui' : 'Non'},
     {header: 'Statut', getValue: r => EXPENSE_STATUS[r.statut]?.label || ''}
   ], 'notes_frais');
   
@@ -3682,7 +3681,7 @@ const NotesFraisPage = () => {
             {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant)}</span>},
             {header: 'Justif.', render: r => r.justificatif_url ? (
               <a href={r.justificatif_url} target="_blank" className="text-blue-600 hover:underline">📎 Voir</a>
-            ) : r.justificatif ? <Badge color="green">✓</Badge> : <Badge color="gray">-</Badge>},
+            ) : <Badge color="gray">-</Badge>},
             {header: 'Statut', render: r => <Badge color={EXPENSE_STATUS[r.statut]?.color}>{EXPENSE_STATUS[r.statut]?.label}</Badge>}
           ]} data={displayNotes} actions={r => (
             <div className="flex gap-1">
@@ -3733,7 +3732,7 @@ const NotesFraisPage = () => {
                     return;
                   }
                   const {data: urlData} = supabase.storage.from('justificatifs').getPublicUrl(fileName);
-                  setForm(p => ({...p, justificatif: true, justificatif_url: urlData.publicUrl}));
+                  setForm(p => ({...p, justificatif_url: urlData.publicUrl}));
                   alert('✅ Fichier uploadé !');
                 }}
                 className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-600 file:cursor-pointer"
