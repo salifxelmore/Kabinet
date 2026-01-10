@@ -2192,6 +2192,17 @@ const CongesPage = () => {
 
   const save = async () => {
     if (!form.date_debut || !form.date_fin) return alert('Dates requises');
+    
+    // Vérifier le solde si c'est un congé payé
+    if (form.type_conge === 'conge_paye') {
+      const jours = workingDaysBetween(form.date_debut, form.date_fin);
+      if (jours > soldeConges) {
+        if (!confirm(`⚠️ Vous demandez ${jours} jours mais votre solde est de ${soldeConges} jours.\n\nContinuer quand même ?`)) {
+          return;
+        }
+      }
+    }
+    
     setSaving(true);
     try {
       const jours = workingDaysBetween(form.date_debut, form.date_fin);
@@ -2215,20 +2226,47 @@ const CongesPage = () => {
     await supabase.from('conges').update({statut, date_validation: new Date().toISOString()}).eq('id', conge.id);
     loadData();
   };
+  
+  const deleteConge = async (c) => {
+    if (c.statut === 'approved') return alert('Impossible de supprimer un congé déjà approuvé');
+    if (!confirm('Supprimer cette demande de congé ?')) return;
+    await supabase.from('conges').delete().eq('id', c.id);
+    loadData();
+  };
 
   const mesConges = conges.filter(c => c.utilisateur_id === user.id);
   const congesAValider = conges.filter(c => c.statut === 'pending');
+  const congesApprouves = mesConges.filter(c => c.statut === 'approved' && c.type_conge === 'conge_paye');
 
-  // Solde congés (simplifié: 30j/an)
-  const soldeConges = 30 - mesConges.filter(c => c.statut === 'approved' && c.type_conge === 'conge_paye').reduce((s, c) => s + (c.nb_jours || 0), 0);
+  // Calcul du solde de congés
+  // Acquisition: 2 jours par mois d'ancienneté (24 jours/an)
+  // On utilise la date d'entrée de l'utilisateur ou défaut au 1er janvier de l'année
+  const dateEntree = user.date_entree ? new Date(user.date_entree) : new Date(new Date().getFullYear(), 0, 1);
+  const maintenant = new Date();
+  const moisAnciennete = Math.floor((maintenant - dateEntree) / (1000 * 60 * 60 * 24 * 30));
+  const joursAcquis = Math.min(moisAnciennete * 2, 24); // Max 24 jours/an
+  const joursPris = congesApprouves.reduce((s, c) => s + (c.nb_jours || 0), 0);
+  const soldeConges = Math.max(0, joursAcquis - joursPris);
+  const joursEnAttente = mesConges.filter(c => c.statut === 'pending' && c.type_conge === 'conge_paye').reduce((s, c) => s + (c.nb_jours || 0), 0);
 
   return (
     <div>
-      <PageHeader title="Congés & Absences" subtitle={`Solde: ${soldeConges} jours`}
+      <PageHeader title="Congés & Absences" 
+        subtitle={`Solde: ${soldeConges} jours disponibles`}
         tabs={[{key: 'mes', label: 'Mes congés', count: mesConges.length}, {key: 'valider', label: 'À valider', count: congesAValider.length}, {key: 'tous', label: 'Tous', count: conges.length}]}
         activeTab={tab} onTabChange={setTab}
         action={<Button onClick={openNew} icon="➕">Demander congé</Button>}
       />
+
+      {/* Carte récapitulative du solde */}
+      {tab === 'mes' && (
+        <div className="grid grid-cols-4 gap-4 mb-6">
+          <StatCard title="Jours acquis" value={joursAcquis + 'j'} icon="📅" color="blue" subtitle={`(${moisAnciennete} mois × 2j)`} />
+          <StatCard title="Jours pris" value={joursPris + 'j'} icon="🏖️" color="amber" />
+          <StatCard title="En attente" value={joursEnAttente + 'j'} icon="⏳" color="purple" />
+          <StatCard title="Solde disponible" value={soldeConges + 'j'} icon="✅" color="green" />
+        </div>
+      )}
 
       {loading ? <Loader /> : (
         <Card>
@@ -2239,12 +2277,17 @@ const CongesPage = () => {
             {header: 'Statut', render: r => <Badge color={LEAVE_STATUS[r.statut]?.color}>{LEAVE_STATUS[r.statut]?.label}</Badge>},
             {header: 'Motif', render: r => <span className="text-sm text-slate-500 truncate max-w-xs">{r.motif || '-'}</span>}
           ]} data={tab === 'mes' ? mesConges : tab === 'valider' ? congesAValider : conges}
-          actions={r => tab === 'valider' && r.statut === 'pending' ? (
+          actions={r => (
             <div className="flex gap-1">
-              <Button variant="success" size="xs" onClick={() => updateStatus(r, 'approved')}>✓</Button>
-              <Button variant="danger" size="xs" onClick={() => updateStatus(r, 'rejected')}>✗</Button>
+              {tab === 'valider' && r.statut === 'pending' && (<>
+                <Button variant="success" size="xs" onClick={() => updateStatus(r, 'approved')} title="Approuver">✓</Button>
+                <Button variant="danger" size="xs" onClick={() => updateStatus(r, 'rejected')} title="Refuser">✗</Button>
+              </>)}
+              {r.statut === 'pending' && r.utilisateur_id === user.id && (
+                <Button variant="ghost" size="xs" onClick={() => deleteConge(r)} title="Annuler">🗑️</Button>
+              )}
             </div>
-          ) : null} />
+          )} />
         </Card>
       )}
 
@@ -2288,7 +2331,7 @@ const FacturationPage = () => {
   const loadData = async () => {
     const [f, m, c] = await Promise.all([
       supabase.from('factures').select('*,clients(nom),projets(nom,code)').eq('organisation_id', org.id).order('date_emission', {ascending: false}),
-      supabase.from('projets').select('*,clients(nom)').eq('organisation_id', org.id),
+      supabase.from('projets').select('*,clients(nom),departements(nom)').eq('organisation_id', org.id),
       supabase.from('clients').select('id,nom').eq('organisation_id', org.id)
     ]);
     setFactures(f.data || []);
@@ -2470,9 +2513,47 @@ const FacturationPage = () => {
             <Select label="Type" value={form.type_facture} onChange={v => setForm(p => ({...p, type_facture: v}))} options={[{value: 'standard', label: 'Standard'}, {value: 'acompte', label: 'Acompte'}, {value: 'solde', label: 'Solde'}, {value: 'avoir', label: 'Avoir'}]} />
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" required />
-            <Select label="Mission" value={form.projet_id} onChange={v => { const m = missions.find(x => x.id === v); setForm(p => ({...p, projet_id: v, client_id: m?.client_id || p.client_id})); }} options={missions.map(m => ({value: m.id, label: m.code + ' - ' + m.nom}))} placeholder="Sélectionner (optionnel)" />
+            <Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v, projet_id: ''}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" required />
+            <Select label="Mission" value={form.projet_id} onChange={v => { 
+              const m = missions.find(x => x.id === v); 
+              setForm(p => ({...p, projet_id: v, client_id: m?.client_id || p.client_id})); 
+            }} options={missions.filter(m => !form.client_id || m.client_id === form.client_id).map(m => ({value: m.id, label: m.code + ' - ' + m.nom + ' (' + (m.departements?.nom || 'Sans dept') + ')'}))} placeholder="Sélectionner (optionnel)" />
           </div>
+          
+          {/* Affichage du budget restant si mission sélectionnée */}
+          {form.projet_id && (() => {
+            const mission = missions.find(m => m.id === form.projet_id);
+            if (!mission) return null;
+            const facturesMission = factures.filter(f => f.projet_id === form.projet_id && f.id !== editItem?.id);
+            const dejaFacture = facturesMission.reduce((s, f) => s + (f.montant_ht || 0), 0);
+            const budgetRestant = (mission.budget_montant || 0) - dejaFacture;
+            const isDepassement = (parseFloat(form.montant_ht) || 0) > budgetRestant;
+            
+            return (
+              <div className={cn('p-4 rounded-xl', isDepassement ? 'bg-red-50 border border-red-200' : 'bg-blue-50')}>
+                <div className="grid grid-cols-3 gap-4 text-center text-sm">
+                  <div>
+                    <div className="text-slate-500">Budget mission</div>
+                    <div className="font-bold text-lg">{fmtMoney(mission.budget_montant)}</div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500">Déjà facturé</div>
+                    <div className="font-bold text-lg text-amber-600">{fmtMoney(dejaFacture)}</div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500">Reste à facturer</div>
+                    <div className={cn('font-bold text-lg', budgetRestant >= 0 ? 'text-green-600' : 'text-red-600')}>{fmtMoney(budgetRestant)}</div>
+                  </div>
+                </div>
+                {isDepassement && (
+                  <div className="mt-3 p-2 bg-red-100 rounded-lg text-red-700 text-sm text-center">
+                    ⚠️ Attention: Dépassement de {fmtMoney((parseFloat(form.montant_ht) || 0) - budgetRestant)} par rapport au budget restant
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+          
           <div className="grid grid-cols-2 gap-4">
             <Input label="Date émission" type="date" value={form.date_emission} onChange={v => setForm(p => ({...p, date_emission: v}))} />
             <Input label="Date échéance" type="date" value={form.date_echeance} onChange={v => setForm(p => ({...p, date_echeance: v}))} />
