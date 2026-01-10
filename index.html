@@ -2063,8 +2063,17 @@ const MissionsPage = () => {
           </div>
           <Input label="Nom de la mission" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
           <div className="grid grid-cols-2 gap-4">
-            <Select label="Département" value={form.departement_id} onChange={v => setForm(p => ({...p, departement_id: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" />
-            <Select label="Responsable (Manager+)" value={form.responsable_id} onChange={v => setForm(p => ({...p, responsable_id: v}))} options={managers.map(m => ({value: m.id, label: `${m.prenom} ${m.nom}`}))} placeholder="Sélectionner" />
+            <Select label="Département" value={form.departement_id} onChange={v => setForm(p => ({...p, departement_id: v, responsable_id: ''}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" />
+            <Select 
+              label="Responsable (Manager+)" 
+              value={form.responsable_id} 
+              onChange={v => setForm(p => ({...p, responsable_id: v}))} 
+              options={managers
+                .filter(m => !form.departement_id || m.departement_id === form.departement_id)
+                .map(m => ({value: m.id, label: `${m.prenom} ${m.nom}`}))} 
+              placeholder={form.departement_id ? "Sélectionner" : "Choisir d'abord un département"} 
+              disabled={!form.departement_id}
+            />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <Select label="Type facturation" value={form.type_facturation} onChange={v => setForm(p => ({...p, type_facturation: v}))} options={BILLING_TYPES} />
@@ -2125,46 +2134,61 @@ const MissionsPage = () => {
 
 // ========== STAFFING PAGE ==========
 const StaffingPage = () => {
-  const {org, collab, isManager, isAdmin} = useApp();
+  const {org, collab, isManager, isAdmin, isSuperAdmin, userDeptId} = useApp();
   const [affectations, setAffectations] = useState([]);
-  const [collaborateurs, setCollaborateurs] = useState([]);
+  const [allCollaborateurs, setAllCollaborateurs] = useState([]); // Tous les collabs
+  const [depts, setDepts] = useState([]);
   const [missions, setMissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [weekStart, setWeekStart] = useState(getWeekStart());
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [filterDept, setFilterDept] = useState(''); // Filtre département
   
   // Permissions: Manager+ peut modifier, Junior/Senior lecture seule
   const canEdit = isManager || isAdmin;
+  // Super Admin peut voir tous les départements, Manager+ seulement le leur
+  const canChooseDept = isSuperAdmin || isAdmin;
 
   useEffect(() => { loadData(); }, []);
+  
+  // Initialiser le filtre département pour les non-admin
+  useEffect(() => {
+    if (!canChooseDept && userDeptId) {
+      setFilterDept(userDeptId);
+    }
+  }, [userDeptId, canChooseDept]);
 
   const loadData = async () => {
-    const [a, c, m] = await Promise.all([
-      supabase.from('affectations').select('*,collaborateurs(nom,prenom),projets(nom,code,clients(nom))').eq('organisation_id', org.id),
-      supabase.from('collaborateurs').select('*,grades(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
-      supabase.from('projets').select('id,nom,code,clients(nom)').eq('organisation_id', org.id).eq('statut', 'active')
+    const [a, c, m, d] = await Promise.all([
+      supabase.from('affectations').select('*,collaborateurs(nom,prenom,departement_id),projets(nom,code,clients(nom))').eq('organisation_id', org.id),
+      supabase.from('collaborateurs').select('*,grades(nom,niveau),departements(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
+      supabase.from('projets').select('id,nom,code,clients(nom)').eq('organisation_id', org.id).eq('statut', 'active'),
+      supabase.from('departements').select('id,nom').eq('organisation_id', org.id).order('nom')
     ]);
     setAffectations(a.data || []);
-    
-    // Filtrer les collaborateurs selon permissions
-    let filteredCollabs = c.data || [];
-    if (!canEdit && collab?.id) {
-      // Junior/Senior: ne voit que sa propre ligne
-      filteredCollabs = filteredCollabs.filter(col => col.id === collab.id);
-    }
-    setCollaborateurs(filteredCollabs);
+    setAllCollaborateurs(c.data || []);
     setMissions(m.data || []);
+    setDepts(d.data || []);
     setLoading(false);
   };
+  
+  // Filtrer les collaborateurs: Manager+ seulement, filtre département
+  const collaborateurs = allCollaborateurs.filter(c => {
+    // Exclure Juniors et Seniors (niveau < 3)
+    if (!c.grades?.niveau || c.grades.niveau < 3) return false;
+    // Appliquer filtre département
+    if (filterDept && c.departement_id !== filterDept) return false;
+    return true;
+  });
 
   const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven'].map((d, i) => ({label: d, date: addDays(weekStart, i)}));
 
   const getAffectation = (collabId, date) => affectations.find(a => a.collaborateur_id === collabId && a.date === date);
 
   const openNew = (collabId = '', date = '') => {
-    if (!canEdit) return; // Ne peut pas créer si pas Manager+
+    if (!canEdit) return;
     setForm({collaborateur_id: collabId, projet_id: '', date: date || today(), heures: 8});
     setModal(true);
   };
@@ -2227,7 +2251,7 @@ const StaffingPage = () => {
 
   return (
     <div>
-      <PageHeader title="Staffing" subtitle={canEdit ? "Planning des affectations" : "Mon planning (lecture seule)"}
+      <PageHeader title="Staffing" subtitle={canEdit ? "Planning des affectations (Manager+ uniquement)" : "Mon planning (lecture seule)"}
         action={<div className="flex gap-2">
           <Button variant="secondary" size="sm" onClick={exportStaffing} icon="📥">Export</Button>
           <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, -7))}>← Sem. préc.</Button>
@@ -2236,6 +2260,27 @@ const StaffingPage = () => {
           {canEdit && <Button onClick={() => openNew()} icon="➕">Affecter</Button>}
         </div>}
       />
+      
+      {/* Filtre département */}
+      {canEdit && (
+        <div className="mb-4 flex items-center gap-4">
+          <span className="text-sm font-medium text-slate-600">Département :</span>
+          {canChooseDept ? (
+            <div className="flex gap-2 items-center">
+              <Select 
+                value={filterDept} 
+                onChange={setFilterDept} 
+                options={depts.map(d => ({value: d.id, label: d.nom}))} 
+                placeholder="Tous les départements" 
+                className="w-64" 
+              />
+              {filterDept && <Button variant="ghost" size="sm" onClick={() => setFilterDept('')}>🔄 Tous</Button>}
+            </div>
+          ) : (
+            <Badge color="blue">{depts.find(d => d.id === filterDept)?.nom || 'Mon département'}</Badge>
+          )}
+        </div>
+      )}
       
       {!canEdit && (
         <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-sm">
@@ -2255,14 +2300,22 @@ const StaffingPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {collaborateurs.map(c => {
+                {collaborateurs.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="text-center py-12 text-slate-400">
+                      <div className="text-4xl mb-4">👤</div>
+                      <p>Aucun Manager ou grade supérieur dans {filterDept ? 'ce département' : 'l\'organisation'}</p>
+                      <p className="text-sm mt-2">Le staffing ne concerne que les Manager, Senior Manager et Associés</p>
+                    </td>
+                  </tr>
+                ) : collaborateurs.map(c => {
                   const load = getCollabLoad(c.id);
                   const loadPercent = Math.round((load / 40) * 100);
                   return (
                     <tr key={c.id} className="border-b border-slate-50">
                       <td className="px-4 py-2">
                         <div className="font-medium">{c.prenom} {c.nom}</div>
-                        <div className="text-xs text-slate-400">{c.grades?.nom}</div>
+                        <div className="text-xs text-slate-400">{c.grades?.nom} • {c.departements?.nom || '-'}</div>
                       </td>
                       {days.map(d => {
                         const aff = getAffectation(c.id, d.date);
@@ -4350,7 +4403,7 @@ const ParametresPage = () => {
       supabase.from('categories_taches').select('*').eq('organisation_id', org.id).order('nom'),
       supabase.from('jours_feries').select('*').eq('organisation_id', org.id).order('date'),
       supabase.from('collaborateurs').select('*,grades(nom,niveau),departements(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
-      supabase.from('validateurs').select('*,collaborateur:collaborateurs(nom,prenom),departement:departements(nom)').eq('organisation_id', org.id)
+      supabase.from('validateurs_departement').select('*,collaborateur:collaborateurs(nom,prenom),departement:departements(nom)').eq('organisation_id', org.id)
     ]);
     setDepts(d.data || []); 
     setGrades(g.data || []); 
