@@ -1082,7 +1082,7 @@ const LandingPage = ({onLogin, onRegister}) => (
             <h4 className="text-white font-semibold mb-4">Contact</h4>
             <ul className="space-y-2 text-sm">
               <li>📧 contact@missura.app</li>
-              <li>📞 +221 XX XXX XX XX</li>
+              <li>📞 +221 77 368 42 03</li>
               <li>📍 Dakar, Sénégal</li>
             </ul>
           </div>
@@ -1823,10 +1823,32 @@ const DashboardPage = () => {
       const projetsActifs = projets.data?.filter(p => p.statut === 'active') || [];
       const heuresTotal = temps.data?.reduce((s, t) => s + (t.heures || 0), 0) || 0;
       const heuresFact = temps.data?.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0) || 0;
-      const caEncaisse = factures.data?.filter(f => f.statut === 'paid').reduce((s, f) => s + (f.montant_total || 0), 0) || 0;
-      const caEnAttente = factures.data?.filter(f => f.statut === 'sent').reduce((s, f) => s + ((f.montant_total || 0) - (f.montant_encaisse || 0)), 0) || 0;
+      
+      // CA encaissé = montant_encaisse de toutes les factures OU montant_total des factures payées
+      const caEncaisse = factures.data?.reduce((s, f) => {
+        // Si montant_encaisse existe, on l'utilise
+        if (f.montant_encaisse && f.montant_encaisse > 0) {
+          return s + f.montant_encaisse;
+        }
+        // Sinon, si la facture est payée, on prend le montant total
+        if (f.statut === 'paid') {
+          return s + (f.montant_total || 0);
+        }
+        return s;
+      }, 0) || 0;
+      
+      // CA en attente = factures envoyées non encore encaissées
+      const caEnAttente = factures.data?.filter(f => f.statut === 'sent' || f.statut === 'overdue').reduce((s, f) => s + ((f.montant_total || 0) - (f.montant_encaisse || 0)), 0) || 0;
       const budgetTotal = projets.data?.reduce((s, p) => s + (p.budget_montant || 0), 0) || 0;
       const caFacture = factures.data?.reduce((s, f) => s + (f.montant_total || 0), 0) || 0;
+      
+      console.log('Dashboard stats:', { 
+        facturesCount: factures.data?.length, 
+        caEncaisse, 
+        caEnAttente, 
+        caFacture,
+        facturesStatuts: factures.data?.map(f => ({statut: f.statut, montant: f.montant_total, encaisse: f.montant_encaisse}))
+      });
       
       // CA par mois (Janvier à Décembre de l'année courante)
       const now = new Date();
@@ -3549,7 +3571,7 @@ const TimesheetPage = () => {
       supabase.from('projets').select('*,clients(id,nom)').eq('organisation_id', org.id).in('statut', ['active', 'draft']),
       supabase.from('categories_taches').select('*').eq('organisation_id', org.id),
       supabase.from('jours_feries').select('date,nom').eq('organisation_id', org.id),
-      supabase.from('conges').select('*').eq('collaborateur_id', user.id).eq('statut', 'approved'),
+      supabase.from('conges').select('*').eq('utilisateur_id', user.id).eq('statut', 'approved'),
       supabase.from('clients').select('id,nom').eq('organisation_id', org.id)
     ]);
     setEntries(t.data || []);
@@ -3996,13 +4018,32 @@ const CongesPage = () => {
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    const [congesRes, validRes] = await Promise.all([
-      supabase.from('conges').select('*,collaborateurs:utilisateur_id(nom,prenom,departement_id)').eq('organisation_id', org.id).order('date_debut', {ascending: false}),
-      supabase.from('validateurs_departement').select('*').eq('organisation_id', org.id).eq('type_validation', 'conges')
+    // D'abord charger les congés et collaborateurs séparément
+    const [congesRes, validRes, collabsRes] = await Promise.all([
+      supabase.from('conges').select('*').eq('organisation_id', org.id).order('date_debut', {ascending: false}),
+      supabase.from('validateurs_departement').select('*').eq('organisation_id', org.id).eq('type_validation', 'conges'),
+      supabase.from('collaborateurs').select('id,nom,prenom,email,departement_id').eq('organisation_id', org.id)
     ]);
     
     if (congesRes.error) console.error('Conges error:', congesRes.error);
-    setConges(congesRes.data || []);
+    
+    // Enrichir les congés avec les infos collaborateur
+    const collabsMap = {};
+    (collabsRes.data || []).forEach(c => {
+      collabsMap[c.email] = c;
+    });
+    
+    // Associer chaque congé au collaborateur via utilisateur_id -> email
+    const congesEnrichis = (congesRes.data || []).map(c => {
+      // Trouver le collaborateur correspondant
+      const collab = (collabsRes.data || []).find(col => col.id === c.utilisateur_id || col.email === c.utilisateur_email);
+      return {
+        ...c,
+        collaborateurs: collab || null
+      };
+    });
+    
+    setConges(congesEnrichis);
     setValidateurs(validRes.data || []);
     
     // Vérifier si l'utilisateur courant est validateur
@@ -5800,7 +5841,8 @@ const RapportsPage = () => {
       nbClients: clients.data?.length || 0,
       topClients, topMissions, joursConges, tauxMoyen,
       caParMois, heuresParMois, collabPerf, deptPerf, missionsByStatus,
-      joursTravailles, productiviteMoyenne, caMoyenMission
+      joursTravailles, productiviteMoyenne, caMoyenMission,
+      nbFactures: fPeriod.length
     });
     setLoading(false);
   };
@@ -5852,7 +5894,7 @@ const RapportsPage = () => {
           <div className="card p-4 bg-gradient-to-br from-purple-500 to-indigo-500 text-white">
             <div className="text-purple-100 text-sm">CA facturé</div>
             <div className="text-2xl font-bold">{fmtMoney(data.caTotal)}</div>
-            <div className="text-purple-200 text-xs">{fPeriod?.length || 0} factures</div>
+            <div className="text-purple-200 text-xs">{data.nbFactures || 0} factures</div>
           </div>
           <div className="card p-4 bg-gradient-to-br from-amber-500 to-orange-500 text-white">
             <div className="text-amber-100 text-sm">CA encaissé</div>
