@@ -1231,42 +1231,169 @@ const SuperAdminApp = ({user, onLogout, onSwitchToOrg, hasOrg = true}) => {
 };
 // ========== DASHBOARD PAGE ==========
 const DashboardPage = () => {
-  const {org, user} = useApp();
+  const {org, user, collab, isManager, isAdmin, setPage} = useApp();
   const [stats, setStats] = useState({});
+  const [myStats, setMyStats] = useState({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { loadStats(); }, []);
 
   const loadStats = async () => {
-    const [clients, projets, temps, factures, collab] = await Promise.all([
-      supabase.from('clients').select('id').eq('organisation_id', org.id),
-      supabase.from('projets').select('id, statut, budget_montant, montant_facture').eq('organisation_id', org.id),
-      supabase.from('saisies_temps').select('heures, facturable').eq('organisation_id', org.id),
-      supabase.from('factures').select('montant_total, statut').eq('organisation_id', org.id),
-      supabase.from('collaborateurs').select('id, actif').eq('organisation_id', org.id)
-    ]);
+    // Stats globales (pour managers+)
+    if (isManager || isAdmin) {
+      const [clients, projets, temps, factures, collabList] = await Promise.all([
+        supabase.from('clients').select('id').eq('organisation_id', org.id),
+        supabase.from('projets').select('id, statut, budget_montant, montant_facture').eq('organisation_id', org.id),
+        supabase.from('saisies_temps').select('heures, facturable').eq('organisation_id', org.id),
+        supabase.from('factures').select('montant_total, statut').eq('organisation_id', org.id),
+        supabase.from('collaborateurs').select('id, actif').eq('organisation_id', org.id)
+      ]);
 
-    const projetsActifs = projets.data?.filter(p => p.statut === 'active') || [];
-    const heuresTotal = temps.data?.reduce((s, t) => s + (t.heures || 0), 0) || 0;
-    const heuresFact = temps.data?.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0) || 0;
-    const caEncaisse = factures.data?.filter(f => f.statut === 'paid').reduce((s, f) => s + (f.montant_total || 0), 0) || 0;
-    const budgetTotal = projets.data?.reduce((s, p) => s + (p.budget_montant || 0), 0) || 0;
-    const caFacture = factures.data?.reduce((s, f) => s + (f.montant_total || 0), 0) || 0;
+      const projetsActifs = projets.data?.filter(p => p.statut === 'active') || [];
+      const heuresTotal = temps.data?.reduce((s, t) => s + (t.heures || 0), 0) || 0;
+      const heuresFact = temps.data?.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0) || 0;
+      const caEncaisse = factures.data?.filter(f => f.statut === 'paid').reduce((s, f) => s + (f.montant_total || 0), 0) || 0;
+      const budgetTotal = projets.data?.reduce((s, p) => s + (p.budget_montant || 0), 0) || 0;
+      const caFacture = factures.data?.reduce((s, f) => s + (f.montant_total || 0), 0) || 0;
+      
+      setStats({
+        clients: clients.data?.length || 0,
+        projetsActifs: projetsActifs.length,
+        heuresTotal, heuresFact,
+        tauxCharge: heuresTotal > 0 ? Math.round((heuresFact / heuresTotal) * 100) : 0,
+        caEncaisse, budgetTotal, caFacture,
+        resteFacturer: budgetTotal - caFacture,
+        collaborateurs: collabList.data?.filter(c => c.actif).length || 0
+      });
+    }
     
-    setStats({
-      clients: clients.data?.length || 0,
-      projetsActifs: projetsActifs.length,
-      heuresTotal, heuresFact,
-      tauxCharge: heuresTotal > 0 ? Math.round((heuresFact / heuresTotal) * 100) : 0,
-      caEncaisse, budgetTotal, caFacture,
-      resteFacturer: budgetTotal - caFacture,
-      collaborateurs: collab.data?.filter(c => c.actif).length || 0
+    // Stats personnelles (pour tous)
+    const [mesTemps, mesConges, mesFrais, mesMissions] = await Promise.all([
+      supabase.from('saisies_temps').select('heures, facturable, projet_id').eq('utilisateur_id', user.id),
+      supabase.from('conges').select('*').eq('utilisateur_id', user.id),
+      supabase.from('notes_frais').select('*').eq('utilisateur_id', user.id),
+      supabase.from('affectations').select('projet_id').eq('collaborateur_id', collab?.id)
+    ]);
+    
+    const mesHeuresTotal = mesTemps.data?.reduce((s, t) => s + (t.heures || 0), 0) || 0;
+    const mesHeuresFact = mesTemps.data?.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0) || 0;
+    const mesHeuresNonFact = mesHeuresTotal - mesHeuresFact;
+    
+    // Missions uniques sur lesquelles j'ai travaillé
+    const missionIds = [...new Set(mesTemps.data?.map(t => t.projet_id).filter(Boolean) || [])];
+    
+    // Solde congés
+    const congesApprouves = (mesConges.data || []).filter(c => c.statut === 'approved' && c.type_conge === 'conge_paye');
+    const joursReportAnterieurs = (mesConges.data || []).find(c => c.type_conge === 'report_anterieur')?.nb_jours || 0;
+    const dateEntree = user.date_entree ? new Date(user.date_entree) : new Date(new Date().getFullYear(), 0, 1);
+    const moisAnciennete = Math.floor((new Date() - dateEntree) / (1000 * 60 * 60 * 24 * 30));
+    const joursAcquis = Math.min(moisAnciennete * 2, 24) + joursReportAnterieurs;
+    const joursPris = congesApprouves.reduce((s, c) => s + (c.nb_jours || 0), 0);
+    const soldeConges = Math.max(0, joursAcquis - joursPris);
+    
+    // Notes de frais
+    const fraisEnAttente = (mesFrais.data || []).filter(f => f.statut === 'submitted').reduce((s, f) => s + (f.montant || 0), 0);
+    const fraisApprouves = (mesFrais.data || []).filter(f => f.statut === 'approved').reduce((s, f) => s + (f.montant || 0), 0);
+    
+    setMyStats({
+      nbMissions: missionIds.length,
+      heuresTotal: mesHeuresTotal,
+      heuresFact: mesHeuresFact,
+      heuresNonFact: mesHeuresNonFact,
+      tauxCharge: mesHeuresTotal > 0 ? Math.round((mesHeuresFact / mesHeuresTotal) * 100) : 0,
+      soldeConges,
+      fraisEnAttente,
+      fraisApprouves,
+      nbFrais: (mesFrais.data || []).length
     });
+    
     setLoading(false);
   };
 
   if (loading) return <Loader text="Chargement..." />;
 
+  // Dashboard Collaborateur (Junior/Senior)
+  if (!isManager && !isAdmin) {
+    return (
+      <div>
+        <PageHeader title="Mon espace" subtitle={`Bienvenue, ${user.prenom} !`} />
+        
+        {/* Stats personnelles */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <StatCard title="Missions travaillées" value={myStats.nbMissions} icon="📋" color="blue" />
+          <StatCard title="Heures facturables" value={fmt(myStats.heuresFact) + 'h'} subtitle={`${myStats.tauxCharge}% du total`} icon="✅" color="green" />
+          <StatCard title="Heures non fact." value={fmt(myStats.heuresNonFact) + 'h'} icon="⏱️" color="slate" />
+          <StatCard title="Solde congés" value={myStats.soldeConges + 'j'} icon="🏖️" color="purple" />
+        </div>
+        
+        <div className="grid lg:grid-cols-2 gap-6">
+          {/* Mes indicateurs */}
+          <Card title="📊 Mes indicateurs">
+            <div className="space-y-4">
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span>Taux de chargeabilité</span>
+                  <span className="font-medium">{myStats.tauxCharge}%</span>
+                </div>
+                <ProgressBar value={myStats.heuresFact} max={myStats.heuresTotal || 1} color="green" showLabel={false} />
+              </div>
+              <div className="grid grid-cols-2 gap-4 pt-4 border-t">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-600">{fmt(myStats.heuresFact)}h</div>
+                  <div className="text-sm text-slate-500">Heures facturables</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-slate-400">{fmt(myStats.heuresNonFact)}h</div>
+                  <div className="text-sm text-slate-500">Heures non fact.</div>
+                </div>
+              </div>
+            </div>
+          </Card>
+          
+          {/* Notes de frais */}
+          <Card title="🧾 Mes notes de frais">
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-amber-50 rounded-xl text-center">
+                  <div className="text-2xl font-bold text-amber-600">{fmtMoney(myStats.fraisEnAttente)}</div>
+                  <div className="text-sm text-amber-700">En attente</div>
+                </div>
+                <div className="p-4 bg-green-50 rounded-xl text-center">
+                  <div className="text-2xl font-bold text-green-600">{fmtMoney(myStats.fraisApprouves)}</div>
+                  <div className="text-sm text-green-700">Approuvés</div>
+                </div>
+              </div>
+              <div className="text-center text-slate-500 text-sm">{myStats.nbFrais} note(s) de frais au total</div>
+            </div>
+          </Card>
+        </div>
+        
+        {/* Actions rapides */}
+        <Card title="🎯 Actions rapides" className="mt-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <button onClick={() => setPage('timesheet')} className="p-4 bg-blue-50 rounded-xl text-left hover:bg-blue-100 transition-colors">
+              <div className="text-2xl mb-2">⏱️</div>
+              <div className="font-medium">Saisir mes temps</div>
+            </button>
+            <button onClick={() => setPage('conges')} className="p-4 bg-purple-50 rounded-xl text-left hover:bg-purple-100 transition-colors">
+              <div className="text-2xl mb-2">🏖️</div>
+              <div className="font-medium">Demander congé</div>
+            </button>
+            <button onClick={() => setPage('frais')} className="p-4 bg-amber-50 rounded-xl text-left hover:bg-amber-100 transition-colors">
+              <div className="text-2xl mb-2">🧾</div>
+              <div className="font-medium">Note de frais</div>
+            </button>
+            <button onClick={() => setPage('staffing')} className="p-4 bg-green-50 rounded-xl text-left hover:bg-green-100 transition-colors">
+              <div className="text-2xl mb-2">📅</div>
+              <div className="font-medium">Mon planning</div>
+            </button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  // Dashboard Manager/Admin
   return (
     <div>
       <PageHeader title="Tableau de bord" subtitle={`Bienvenue, ${user.prenom} !`} />
@@ -1286,10 +1413,10 @@ const DashboardPage = () => {
         </Card>
         <Card title="🎯 Actions rapides">
           <div className="grid grid-cols-2 gap-3">
-            <button className="p-4 bg-blue-50 rounded-xl text-left hover:bg-blue-100 transition-colors"><div className="text-2xl mb-2">➕</div><div className="font-medium">Nouvelle mission</div></button>
-            <button className="p-4 bg-green-50 rounded-xl text-left hover:bg-green-100 transition-colors"><div className="text-2xl mb-2">⏱️</div><div className="font-medium">Saisir mes temps</div></button>
-            <button className="p-4 bg-purple-50 rounded-xl text-left hover:bg-purple-100 transition-colors"><div className="text-2xl mb-2">💰</div><div className="font-medium">Créer facture</div></button>
-            <button className="p-4 bg-amber-50 rounded-xl text-left hover:bg-amber-100 transition-colors"><div className="text-2xl mb-2">🏖️</div><div className="font-medium">Demander congé</div></button>
+            <button onClick={() => setPage('missions')} className="p-4 bg-blue-50 rounded-xl text-left hover:bg-blue-100 transition-colors"><div className="text-2xl mb-2">➕</div><div className="font-medium">Nouvelle mission</div></button>
+            <button onClick={() => setPage('timesheet')} className="p-4 bg-green-50 rounded-xl text-left hover:bg-green-100 transition-colors"><div className="text-2xl mb-2">⏱️</div><div className="font-medium">Saisir mes temps</div></button>
+            <button onClick={() => setPage('facturation')} className="p-4 bg-purple-50 rounded-xl text-left hover:bg-purple-100 transition-colors"><div className="text-2xl mb-2">💰</div><div className="font-medium">Créer facture</div></button>
+            <button onClick={() => setPage('conges')} className="p-4 bg-amber-50 rounded-xl text-left hover:bg-amber-100 transition-colors"><div className="text-2xl mb-2">🏖️</div><div className="font-medium">Demander congé</div></button>
           </div>
         </Card>
       </div>
@@ -2134,7 +2261,7 @@ const MissionsPage = () => {
 
 // ========== STAFFING PAGE ==========
 const StaffingPage = () => {
-  const {org, collab, isManager, isAdmin, isSuperAdmin, userDeptId} = useApp();
+  const {org, collab, isManager, isAdmin, isSuperAdmin, userDeptId, gradeNiveau} = useApp();
   const [affectations, setAffectations] = useState([]);
   const [allCollaborateurs, setAllCollaborateurs] = useState([]); // Tous les collabs
   const [depts, setDepts] = useState([]);
@@ -2150,15 +2277,17 @@ const StaffingPage = () => {
   const canEdit = isManager || isAdmin;
   // Super Admin peut voir tous les départements, Manager+ seulement le leur
   const canChooseDept = isSuperAdmin || isAdmin;
+  // Junior/Senior ne voit que sa propre ligne
+  const isJuniorSenior = gradeNiveau < 3 && !isAdmin;
 
   useEffect(() => { loadData(); }, []);
   
   // Initialiser le filtre département pour les non-admin
   useEffect(() => {
-    if (!canChooseDept && userDeptId) {
+    if (!canChooseDept && userDeptId && !isJuniorSenior) {
       setFilterDept(userDeptId);
     }
-  }, [userDeptId, canChooseDept]);
+  }, [userDeptId, canChooseDept, isJuniorSenior]);
 
   const loadData = async () => {
     const [a, c, m, d] = await Promise.all([
@@ -2174,11 +2303,13 @@ const StaffingPage = () => {
     setLoading(false);
   };
   
-  // Filtrer les collaborateurs: Manager+ seulement, filtre département
+  // Filtrer les collaborateurs selon le profil
   const collaborateurs = allCollaborateurs.filter(c => {
-    // Exclure Juniors et Seniors (niveau < 3)
-    if (!c.grades?.niveau || c.grades.niveau < 3) return false;
-    // Appliquer filtre département
+    // Junior/Senior: uniquement sa propre ligne
+    if (isJuniorSenior) {
+      return c.id === collab?.id;
+    }
+    // Manager+: tous les collaborateurs (avec filtre département si actif)
     if (filterDept && c.departement_id !== filterDept) return false;
     return true;
   });
@@ -2251,18 +2382,18 @@ const StaffingPage = () => {
 
   return (
     <div>
-      <PageHeader title="Staffing" subtitle={canEdit ? "Planning des affectations (Manager+ uniquement)" : "Mon planning (lecture seule)"}
+      <PageHeader title={isJuniorSenior ? "Mon planning" : "Staffing"} subtitle={isJuniorSenior ? "Vos affectations de la semaine" : (canEdit ? "Planning des affectations" : "Lecture seule")}
         action={<div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={exportStaffing} icon="📥">Export</Button>
+          {!isJuniorSenior && <Button variant="secondary" size="sm" onClick={exportStaffing} icon="📥">Export</Button>}
           <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, -7))}>← Sem. préc.</Button>
           <Button variant="secondary" onClick={() => setWeekStart(getWeekStart())}>Aujourd'hui</Button>
           <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, 7))}>Sem. suiv. →</Button>
-          {canEdit && <Button onClick={() => openNew()} icon="➕">Affecter</Button>}
+          {canEdit && !isJuniorSenior && <Button onClick={() => openNew()} icon="➕">Affecter</Button>}
         </div>}
       />
       
-      {/* Filtre département */}
-      {canEdit && (
+      {/* Filtre département - uniquement pour managers+ */}
+      {canEdit && !isJuniorSenior && (
         <div className="mb-4 flex items-center gap-4">
           <span className="text-sm font-medium text-slate-600">Département :</span>
           {canChooseDept ? (
@@ -2282,9 +2413,9 @@ const StaffingPage = () => {
         </div>
       )}
       
-      {!canEdit && (
+      {isJuniorSenior && (
         <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-sm">
-          ℹ️ Vous consultez votre planning en lecture seule. Seuls les managers peuvent modifier les affectations.
+          📅 Voici vos affectations pour la semaine. Contactez votre manager pour toute modification.
         </div>
       )}
 
@@ -3331,6 +3462,7 @@ const NotesFraisPage = () => {
         description: form.description || '',
         montant: parseFloat(form.montant) || 0,
         justificatif: form.justificatif || false,
+        justificatif_url: form.justificatif_url || null,
         statut: form.statut || 'draft'
       };
 
@@ -3459,7 +3591,9 @@ const NotesFraisPage = () => {
             {header: 'Mission', render: r => r.projets?.code || <span className="text-slate-400">-</span>},
             {header: 'Description', render: r => <span className="text-sm truncate max-w-xs">{r.description || '-'}</span>},
             {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant)}</span>},
-            {header: 'Justif.', render: r => r.justificatif ? <Badge color="green">✓</Badge> : <Badge color="gray">-</Badge>},
+            {header: 'Justif.', render: r => r.justificatif_url ? (
+              <a href={r.justificatif_url} target="_blank" className="text-blue-600 hover:underline">📎 Voir</a>
+            ) : r.justificatif ? <Badge color="green">✓</Badge> : <Badge color="gray">-</Badge>},
             {header: 'Statut', render: r => <Badge color={EXPENSE_STATUS[r.statut]?.color}>{EXPENSE_STATUS[r.statut]?.label}</Badge>}
           ]} data={displayNotes} actions={r => (
             <div className="flex gap-1">
@@ -3494,11 +3628,30 @@ const NotesFraisPage = () => {
           <Input label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} placeholder="Ex: Taxi client SONATEL, Déjeuner équipe projet..." />
           <div className="grid grid-cols-2 gap-4">
             <Input label="Montant (FCFA)" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} required />
-            <div className="flex items-end">
-              <label className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 rounded-xl cursor-pointer">
-                <input type="checkbox" checked={form.justificatif} onChange={e => setForm(p => ({...p, justificatif: e.target.checked}))} className="w-4 h-4" />
-                <span>Justificatif fourni</span>
-              </label>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Justificatif (image/PDF)</label>
+              <input 
+                type="file" 
+                accept="image/*,.pdf"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  // Upload vers Supabase Storage
+                  const fileName = `${org.id}/${user.id}/${Date.now()}_${file.name}`;
+                  const {data, error} = await supabase.storage.from('justificatifs').upload(fileName, file);
+                  if (error) {
+                    alert('Erreur upload: ' + error.message);
+                    return;
+                  }
+                  const {data: urlData} = supabase.storage.from('justificatifs').getPublicUrl(fileName);
+                  setForm(p => ({...p, justificatif: true, justificatif_url: urlData.publicUrl}));
+                  alert('✅ Fichier uploadé !');
+                }}
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-600 file:cursor-pointer"
+              />
+              {form.justificatif_url && (
+                <a href={form.justificatif_url} target="_blank" className="text-xs text-blue-600 hover:underline mt-1 block">📎 Voir le fichier</a>
+              )}
             </div>
           </div>
           <div className="flex gap-3 pt-4">
@@ -4002,7 +4155,8 @@ const EquipePage = () => {
         grade_id: form.grade_id || null,
         taux_journalier: grade?.taux_journalier || parseFloat(form.taux_journalier) || 0,
         date_entree: form.date_entree || null,
-        actif: form.actif !== false
+        actif: form.actif !== false,
+        photo_url: form.photo_url || null
       };
       
       let result;
@@ -4159,6 +4313,35 @@ const EquipePage = () => {
               Un compte de connexion sera créé avec le mot de passe par défaut : <code className="bg-blue-100 px-1 rounded">Kabinet2024!</code>
             </div>
           )}
+          
+          {/* Photo du collaborateur */}
+          <div className="flex items-center gap-4">
+            {form.photo_url ? (
+              <img src={form.photo_url} alt="Photo" className="w-16 h-16 rounded-full object-cover border-2 border-slate-200" />
+            ) : (
+              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xl font-bold">
+                {form.prenom?.[0]}{form.nom?.[0]}
+              </div>
+            )}
+            <div>
+              <label className="text-sm font-medium text-slate-700">Photo (optionnel)</label>
+              <input 
+                type="file" 
+                accept="image/*"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const fileName = `photos/${org.id}/${Date.now()}_${file.name}`;
+                  const {error} = await supabase.storage.from('collaborateurs').upload(fileName, file);
+                  if (error) { alert('Erreur: ' + error.message); return; }
+                  const {data: urlData} = supabase.storage.from('collaborateurs').getPublicUrl(fileName);
+                  setForm(p => ({...p, photo_url: urlData.publicUrl}));
+                }}
+                className="block text-sm file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-600 file:cursor-pointer"
+              />
+            </div>
+          </div>
+          
           <div className="grid grid-cols-3 gap-4">
             <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
             <Input label="Prénom" value={form.prenom} onChange={v => setForm(p => ({...p, prenom: v}))} required />
@@ -4526,7 +4709,7 @@ const ParametresPage = () => {
   const [editModal, setEditModal] = useState(null);
   const [editForm, setEditForm] = useState({});
 
-  useEffect(() => { setForm({nom: org.nom, adresse: org.adresse || '', ville: org.ville || '', email: org.email || '', telephone: org.telephone || ''}); loadParams(); }, [org]);
+  useEffect(() => { setForm({nom: org.nom, adresse: org.adresse || '', ville: org.ville || '', email: org.email || '', telephone: org.telephone || '', logo_url: org.logo_url || ''}); loadParams(); }, [org]);
 
   const loadParams = async () => {
     const [d, g, c, h, col, val] = await Promise.all([
@@ -4662,6 +4845,34 @@ const ParametresPage = () => {
         {tab === 'org' && (
           <Card title="Informations de l'organisation">
             <div className="space-y-4 max-w-xl">
+              {/* Logo */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Logo de l'organisation</label>
+                <div className="flex items-center gap-4">
+                  {form.logo_url ? (
+                    <img src={form.logo_url} alt="Logo" className="w-20 h-20 rounded-xl object-cover border border-slate-200" />
+                  ) : (
+                    <div className="w-20 h-20 rounded-xl bg-slate-100 flex items-center justify-center text-3xl text-slate-400">🏢</div>
+                  )}
+                  <div>
+                    <input 
+                      type="file" 
+                      accept="image/*"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const fileName = `logos/${org.id}_${Date.now()}.${file.name.split('.').pop()}`;
+                        const {error} = await supabase.storage.from('organisations').upload(fileName, file, {upsert: true});
+                        if (error) { alert('Erreur: ' + error.message); return; }
+                        const {data: urlData} = supabase.storage.from('organisations').getPublicUrl(fileName);
+                        setForm(p => ({...p, logo_url: urlData.publicUrl}));
+                      }}
+                      className="text-sm file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-600 file:cursor-pointer"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">PNG, JPG jusqu'à 2MB</p>
+                  </div>
+                </div>
+              </div>
               <Input label="Nom du cabinet" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} />
               <Input label="Adresse" value={form.adresse} onChange={v => setForm(p => ({...p, adresse: v}))} />
               <div className="grid grid-cols-2 gap-4"><Input label="Ville" value={form.ville} onChange={v => setForm(p => ({...p, ville: v}))} /><Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} /></div>
