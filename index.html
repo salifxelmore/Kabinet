@@ -8,89 +8,568 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;background:#f8fafc}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f8fafc}
 .gradient-primary{background:linear-gradient(135deg,#2563eb,#0891b2)}
+.gradient-success{background:linear-gradient(135deg,#059669,#10b981)}
+.gradient-warning{background:linear-gradient(135deg,#d97706,#f59e0b)}
+.gradient-danger{background:linear-gradient(135deg,#dc2626,#ef4444)}
 .loader{border:3px solid #e2e8f0;border-top-color:#2563eb;border-radius:50%;width:24px;height:24px;animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.animate-fade{animation:fadeIn .3s ease-out}
 .card{background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.card:hover{box-shadow:0 4px 12px rgba(0,0,0,.1)}
+.nav-item{transition:all .2s}
 .nav-item:hover{background:#f1f5f9}
 .nav-item.active{background:#eff6ff;color:#2563eb;border-right:3px solid #2563eb}
-input:focus,select:focus,textarea:focus{outline:none;border-color:#2563eb}
+input:focus,select:focus,textarea:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+.btn{transition:all .2s}
+.btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.15)}
+.table-row:hover{background:#f8fafc}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#94a3b8}
 @media(max-width:1024px){.sidebar{position:fixed;z-index:50;transform:translateX(-100%)}.sidebar.open{transform:translateX(0)}}
+.collapsible-header{cursor:pointer;user-select:none}
+.collapsible-content{overflow:hidden;transition:max-height .3s ease-out}
+.cell-disabled{background:#f1f5f9;cursor:not-allowed}
+.cell-holiday{background:#fef3c7}
+.cell-weekend{background:#f1f5f9}
+.pipeline-stage{min-width:280px}
+.kanban-card{cursor:grab}
+.kanban-card:active{cursor:grabbing}
+.progress-bar{height:8px;border-radius:4px;background:#e2e8f0;overflow:hidden}
+.progress-fill{height:100%;border-radius:4px;transition:width .3s ease}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const {useState, useEffect, createContext, useContext} = React;
+const {useState, useEffect, useRef, useMemo, useCallback, createContext, useContext} = React;
 
+// ========== CONFIGURATION ==========
 const SUPABASE_URL = 'https://uttiaboublcmwuzvdjxz.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0dGlhYm91YmxjbXd1enZkanh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc5ODg0MTMsImV4cCI6MjA4MzU2NDQxM30.67uuDVwa3uAclqDfxOOzcFi3K6KT4VW2OHytqEoa5Lo';
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const SUPER_ADMINS = ['sawadgsalif@gmail.com', 'admin@kabinet.sn'];
-const PLANS = {trial: {nom: 'Essai', prix: 0, icon: '🎁'}, standard: {nom: 'Standard', prix: 25000, icon: '⭐'}, premium: {nom: 'Premium', prix: 75000, icon: '👑'}};
 
+// ========== CONSTANTES ==========
+const PLANS = {
+  trial: {nom: 'Essai', prix: 0, icon: '🎁', color: 'slate'},
+  standard: {nom: 'Standard', prix: 25000, icon: '⭐', color: 'blue'},
+  premium: {nom: 'Premium', prix: 75000, icon: '👑', color: 'amber'}
+};
+
+const CLIENT_TYPES = [
+  {value: 'entreprise', label: 'Entreprise'},
+  {value: 'particulier', label: 'Particulier'},
+  {value: 'association', label: 'Association'},
+  {value: 'administration', label: 'Administration publique'},
+  {value: 'ong', label: 'ONG'}
+];
+
+const OPPORTUNITY_STAGES = [
+  {id: 'prospect', nom: 'Prospect', color: 'slate', order: 1},
+  {id: 'qualification', nom: 'Qualification', color: 'blue', order: 2},
+  {id: 'proposition', nom: 'Proposition', color: 'purple', order: 3},
+  {id: 'negociation', nom: 'Négociation', color: 'amber', order: 4},
+  {id: 'gagne', nom: 'Gagné', color: 'green', order: 5},
+  {id: 'perdu', nom: 'Perdu', color: 'red', order: 6}
+];
+
+const MISSION_STATUS = {
+  draft: {label: 'Brouillon', color: 'gray'},
+  active: {label: 'En cours', color: 'green'},
+  completed: {label: 'Terminé', color: 'blue'},
+  cancelled: {label: 'Annulé', color: 'red'},
+  on_hold: {label: 'En pause', color: 'yellow'}
+};
+
+const BILLING_TYPES = [
+  {value: 'regie', label: 'Régie (temps passé)'},
+  {value: 'forfait', label: 'Forfait'},
+  {value: 'abonnement', label: 'Abonnement'},
+  {value: 'mixte', label: 'Mixte'}
+];
+
+const INVOICE_STATUS = {
+  draft: {label: 'Brouillon', color: 'gray'},
+  sent: {label: 'Envoyée', color: 'blue'},
+  paid: {label: 'Payée', color: 'green'},
+  partial: {label: 'Partielle', color: 'yellow'},
+  overdue: {label: 'En retard', color: 'red'},
+  cancelled: {label: 'Annulée', color: 'gray'}
+};
+
+const LEAVE_TYPES = [
+  {value: 'conge_paye', label: 'Congé payé', color: 'green'},
+  {value: 'conge_sans_solde', label: 'Congé sans solde', color: 'amber'},
+  {value: 'maladie', label: 'Maladie', color: 'red'},
+  {value: 'maternite', label: 'Maternité', color: 'pink'},
+  {value: 'paternite', label: 'Paternité', color: 'blue'},
+  {value: 'formation', label: 'Formation', color: 'purple'},
+  {value: 'autre', label: 'Autre', color: 'gray'}
+];
+
+const LEAVE_STATUS = {
+  draft: {label: 'Brouillon', color: 'gray'},
+  pending: {label: 'En attente', color: 'yellow'},
+  approved: {label: 'Approuvé', color: 'green'},
+  rejected: {label: 'Refusé', color: 'red'}
+};
+
+const NON_BILLABLE_CATEGORIES = [
+  {code: 'FORMATION', nom: 'Formation', icon: '📚'},
+  {code: 'DEPLACEMENT', nom: 'Voyage/Déplacement', icon: '✈️'},
+  {code: 'COMMERCIAL', nom: 'Développement commercial', icon: '🤝'},
+  {code: 'REUNION', nom: 'Réunion interne', icon: '👥'},
+  {code: 'ADMIN', nom: 'Administration', icon: '📋'},
+  {code: 'SEMINAIRE', nom: 'Séminaire', icon: '🎓'},
+  {code: 'PROJET_INTERNE', nom: 'Projet interne', icon: '🏠'}
+];
+
+// Jours fériés Sénégal 2024-2025
+const DEFAULT_HOLIDAYS = [
+  '2024-01-01', '2024-04-04', '2024-04-10', '2024-04-11', '2024-05-01',
+  '2024-06-17', '2024-06-18', '2024-08-15', '2024-09-16', '2024-11-01',
+  '2024-12-25', '2025-01-01', '2025-03-31', '2025-04-01', '2025-04-04',
+  '2025-05-01', '2025-06-06', '2025-06-07', '2025-08-15', '2025-09-05',
+  '2025-11-01', '2025-12-25'
+];
+
+// ========== CONTEXT ==========
 const AppContext = createContext();
 const useApp = () => useContext(AppContext);
-const cn = (...c) => c.filter(Boolean).join(' ');
-const fmt = n => new Intl.NumberFormat('fr-FR').format(n || 0);
-const fmtMoney = n => fmt(n) + ' FCFA';
-const fmtDate = d => d ? new Date(d).toLocaleDateString('fr-FR') : '';
+
+// ========== UTILITAIRES ==========
+const cn = (...classes) => classes.filter(Boolean).join(' ');
+const fmt = (n, dec = 0) => new Intl.NumberFormat('fr-FR', {maximumFractionDigits: dec}).format(n || 0);
+const fmtMoney = (n) => fmt(n) + ' FCFA';
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR') : '';
+const fmtDateTime = (d) => d ? new Date(d).toLocaleString('fr-FR') : '';
 const today = () => new Date().toISOString().split('T')[0];
-const genCode = (p) => p + Date.now().toString().slice(-6);
-const getWeekStart = () => { const d = new Date(); const day = d.getDay(); const diff = d.getDate() - day + (day === 0 ? -6 : 1); return new Date(d.setDate(diff)).toISOString().split('T')[0]; };
-const addDays = (date, n) => { const d = new Date(date); d.setDate(d.getDate() + n); return d.toISOString().split('T')[0]; };
+const genCode = (prefix) => prefix + Date.now().toString().slice(-6);
+const uuid = () => crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).substr(2, 9);
 
-const Loader = () => <div className="flex justify-center p-8"><div className="loader"></div></div>;
-const Badge = ({children, color = 'gray'}) => { const colors = {gray: 'bg-slate-100 text-slate-600', blue: 'bg-blue-100 text-blue-600', green: 'bg-emerald-100 text-emerald-600', red: 'bg-red-100 text-red-600', yellow: 'bg-amber-100 text-amber-600', purple: 'bg-purple-100 text-purple-600'}; return <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', colors[color])}>{children}</span>; };
-const Button = ({children, onClick, variant = 'primary', loading, disabled, icon, className, type = 'button'}) => { const variants = {primary: 'gradient-primary text-white hover:shadow-lg', secondary: 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50', danger: 'bg-red-500 text-white hover:bg-red-600', ghost: 'text-slate-600 hover:bg-slate-100'}; return <button type={type} onClick={onClick} disabled={disabled || loading} className={cn('px-4 py-2.5 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50', variants[variant], className)}>{loading ? <div className="loader" style={{width: 16, height: 16}}></div> : icon}{children}</button>; };
-const Input = ({label, type = 'text', value, onChange, placeholder, required, disabled, className, ...props}) => <div className={className}>{label && <label className="block text-sm font-medium text-slate-700 mb-1.5">{label}{required && <span className="text-red-500">*</span>}</label>}<input type={type} value={value ?? ''} onChange={e => onChange(type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value)} placeholder={placeholder} disabled={disabled} className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl disabled:bg-slate-50" {...props} /></div>;
-const Select = ({label, value, onChange, options = [], placeholder, className}) => <div className={className}>{label && <label className="block text-sm font-medium text-slate-700 mb-1.5">{label}</label>}<select value={value ?? ''} onChange={e => onChange(e.target.value)} className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl">{placeholder && <option value="">{placeholder}</option>}{options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div>;
-const Modal = ({isOpen, onClose, title, children, size = 'md'}) => { if (!isOpen) return null; const sizes = {sm: 'max-w-md', md: 'max-w-2xl', lg: 'max-w-4xl'}; return <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}><div className={cn('bg-white rounded-2xl w-full max-h-[90vh] overflow-auto', sizes[size])} onClick={e => e.stopPropagation()}><div className="flex items-center justify-between px-6 py-4 border-b"><h2 className="text-xl font-bold">{title}</h2><button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg text-xl">×</button></div><div className="p-6">{children}</div></div></div>; };
-const Card = ({title, children, action, className}) => <div className={cn('card', className)}>{title && <div className="flex items-center justify-between px-6 py-4 border-b"><h3 className="font-bold">{title}</h3>{action}</div>}<div className="p-6">{children}</div></div>;
-const StatCard = ({title, value, icon, color = 'blue'}) => { const colors = {blue: 'bg-blue-500', green: 'bg-emerald-500', purple: 'bg-purple-500', amber: 'bg-amber-500'}; return <div className="card p-6"><div className="flex justify-between"><div><p className="text-slate-500 text-sm">{title}</p><p className="text-2xl font-bold mt-1">{value}</p></div><div className={cn('w-12 h-12 rounded-xl flex items-center justify-center text-white text-xl', colors[color])}>{icon}</div></div></div>; };
-const Table = ({columns, data, loading, empty = 'Aucune donnée'}) => { if (loading) return <Loader />; return <div className="overflow-x-auto"><table className="w-full"><thead><tr className="border-b">{columns.map((c, i) => <th key={i} className="px-4 py-3 text-left text-sm font-semibold text-slate-600">{c.header}</th>)}</tr></thead><tbody>{data.length === 0 ? <tr><td colSpan={columns.length} className="px-4 py-12 text-center text-slate-400">{empty}</td></tr> : data.map((r, i) => <tr key={r.id || i} className="border-b border-slate-50 hover:bg-slate-50">{columns.map((c, j) => <td key={j} className="px-4 py-3 text-sm">{c.render ? c.render(r) : r[c.key]}</td>)}</tr>)}</tbody></table></div>; };
+const getWeekStart = (date = new Date()) => {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  return new Date(d.setDate(diff)).toISOString().split('T')[0];
+};
 
+const addDays = (date, n) => {
+  const d = new Date(date);
+  d.setDate(d.getDate() + n);
+  return d.toISOString().split('T')[0];
+};
+
+const isWeekend = (date) => {
+  const d = new Date(date);
+  return d.getDay() === 0 || d.getDay() === 6;
+};
+
+const isHoliday = (date, holidays = []) => holidays.includes(date);
+
+const daysBetween = (start, end) => {
+  const s = new Date(start);
+  const e = new Date(end);
+  return Math.ceil((e - s) / (1000 * 60 * 60 * 24));
+};
+
+const workingDaysBetween = (start, end, holidays = []) => {
+  let count = 0;
+  let current = new Date(start);
+  const endDate = new Date(end);
+  while (current <= endDate) {
+    const dateStr = current.toISOString().split('T')[0];
+    if (!isWeekend(dateStr) && !isHoliday(dateStr, holidays)) {
+      count++;
+    }
+    current.setDate(current.getDate() + 1);
+  }
+  return count;
+};
+
+// ========== COMPOSANTS UI DE BASE ==========
+const Loader = ({text}) => (
+  <div className="flex flex-col items-center justify-center p-8">
+    <div className="loader mb-2"></div>
+    {text && <span className="text-sm text-slate-500">{text}</span>}
+  </div>
+);
+
+const Badge = ({children, color = 'gray', size = 'sm'}) => {
+  const colors = {
+    gray: 'bg-slate-100 text-slate-600',
+    blue: 'bg-blue-100 text-blue-600',
+    green: 'bg-emerald-100 text-emerald-600',
+    red: 'bg-red-100 text-red-600',
+    yellow: 'bg-amber-100 text-amber-600',
+    purple: 'bg-purple-100 text-purple-600',
+    pink: 'bg-pink-100 text-pink-600',
+    cyan: 'bg-cyan-100 text-cyan-600',
+    amber: 'bg-amber-100 text-amber-700',
+    slate: 'bg-slate-100 text-slate-600'
+  };
+  const sizes = {sm: 'text-xs px-2 py-0.5', md: 'text-sm px-2.5 py-1'};
+  return <span className={cn('rounded-full font-medium', colors[color], sizes[size])}>{children}</span>;
+};
+
+const Button = ({children, onClick, variant = 'primary', size = 'md', loading, disabled, icon, className, type = 'button'}) => {
+  const variants = {
+    primary: 'gradient-primary text-white',
+    secondary: 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50',
+    success: 'gradient-success text-white',
+    danger: 'bg-red-500 text-white hover:bg-red-600',
+    warning: 'gradient-warning text-white',
+    ghost: 'text-slate-600 hover:bg-slate-100'
+  };
+  const sizes = {xs: 'px-2 py-1 text-xs', sm: 'px-3 py-1.5 text-sm', md: 'px-4 py-2.5', lg: 'px-6 py-3 text-lg'};
+  return (
+    <button type={type} onClick={onClick} disabled={disabled || loading}
+      className={cn('btn rounded-xl font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed', variants[variant], sizes[size], className)}>
+      {loading ? <div className="loader" style={{width: 16, height: 16}}></div> : icon}
+      {children}
+    </button>
+  );
+};
+
+const Input = ({label, type = 'text', value, onChange, placeholder, required, disabled, error, className, prefix, suffix, ...props}) => (
+  <div className={className}>
+    {label && <label className="block text-sm font-medium text-slate-700 mb-1.5">{label}{required && <span className="text-red-500 ml-1">*</span>}</label>}
+    <div className="relative">
+      {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">{prefix}</span>}
+      <input type={type} value={value ?? ''} onChange={e => onChange(type === 'number' ? (parseFloat(e.target.value) || 0) : e.target.value)}
+        placeholder={placeholder} disabled={disabled}
+        className={cn('w-full px-4 py-2.5 bg-white border rounded-xl text-slate-800 placeholder-slate-400 disabled:bg-slate-50 disabled:cursor-not-allowed',
+          error ? 'border-red-300' : 'border-slate-200', prefix && 'pl-10', suffix && 'pr-10')} {...props} />
+      {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">{suffix}</span>}
+    </div>
+    {error && <p className="text-red-500 text-xs mt-1">{error}</p>}
+  </div>
+);
+
+const Select = ({label, value, onChange, options = [], placeholder, required, disabled, className, multiple}) => (
+  <div className={className}>
+    {label && <label className="block text-sm font-medium text-slate-700 mb-1.5">{label}{required && <span className="text-red-500 ml-1">*</span>}</label>}
+    <select value={value ?? ''} onChange={e => onChange(multiple ? Array.from(e.target.selectedOptions, o => o.value) : e.target.value)} 
+      disabled={disabled} multiple={multiple}
+      className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-800 disabled:bg-slate-50 disabled:cursor-not-allowed">
+      {placeholder && <option value="">{placeholder}</option>}
+      {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  </div>
+);
+
+const TextArea = ({label, value, onChange, placeholder, rows = 3, disabled, className, required}) => (
+  <div className={className}>
+    {label && <label className="block text-sm font-medium text-slate-700 mb-1.5">{label}{required && <span className="text-red-500 ml-1">*</span>}</label>}
+    <textarea value={value ?? ''} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      rows={rows} disabled={disabled}
+      className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 resize-none disabled:bg-slate-50" />
+  </div>
+);
+
+const Checkbox = ({label, checked, onChange, disabled}) => (
+  <label className="flex items-center gap-2 cursor-pointer">
+    <input type="checkbox" checked={checked || false} onChange={e => onChange(e.target.checked)} disabled={disabled}
+      className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500" />
+    <span className="text-sm text-slate-700">{label}</span>
+  </label>
+);
+
+const Modal = ({isOpen, onClose, title, children, size = 'md', footer}) => {
+  if (!isOpen) return null;
+  const sizes = {sm: 'max-w-md', md: 'max-w-2xl', lg: 'max-w-4xl', xl: 'max-w-6xl', full: 'max-w-[95vw]'};
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 animate-fade" onClick={onClose}>
+      <div className={cn('bg-white rounded-2xl w-full max-h-[90vh] flex flex-col shadow-2xl', sizes[size])} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
+          <h2 className="text-xl font-bold text-slate-800">{title}</h2>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-400 hover:text-slate-600 text-xl">×</button>
+        </div>
+        <div className="p-6 overflow-y-auto flex-1">{children}</div>
+        {footer && <div className="px-6 py-4 border-t border-slate-100 flex-shrink-0 bg-slate-50 rounded-b-2xl">{footer}</div>}
+      </div>
+    </div>
+  );
+};
+
+const Card = ({title, subtitle, children, action, className, collapsible, defaultOpen = true}) => {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+  return (
+    <div className={cn('card', className)}>
+      {(title || action) && (
+        <div className={cn('flex items-center justify-between px-6 py-4 border-b border-slate-100', collapsible && 'collapsible-header')}
+          onClick={collapsible ? () => setIsOpen(!isOpen) : undefined}>
+          <div className="flex items-center gap-3">
+            {collapsible && <span className={cn('transition-transform', isOpen ? 'rotate-90' : '')}>▶</span>}
+            <div>
+              {title && <h3 className="font-bold text-slate-800">{title}</h3>}
+              {subtitle && <p className="text-sm text-slate-500">{subtitle}</p>}
+            </div>
+          </div>
+          {action && <div onClick={e => e.stopPropagation()}>{action}</div>}
+        </div>
+      )}
+      {(!collapsible || isOpen) && <div className="p-6">{children}</div>}
+    </div>
+  );
+};
+
+const StatCard = ({title, value, subtitle, icon, color = 'blue', trend, onClick}) => {
+  const colors = {blue: 'bg-blue-500', green: 'bg-emerald-500', purple: 'bg-purple-500', amber: 'bg-amber-500', red: 'bg-red-500', cyan: 'bg-cyan-500', slate: 'bg-slate-500'};
+  return (
+    <div className={cn('card p-6 transition-all hover:shadow-lg', onClick && 'cursor-pointer')} onClick={onClick}>
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-slate-500 text-sm font-medium">{title}</p>
+          <p className="text-2xl font-bold text-slate-800 mt-1">{value}</p>
+          {subtitle && <p className="text-slate-400 text-sm mt-1">{subtitle}</p>}
+          {trend !== undefined && (
+            <div className={cn('flex items-center gap-1 mt-2 text-sm font-medium', trend >= 0 ? 'text-emerald-500' : 'text-red-500')}>
+              <span>{trend >= 0 ? '↑' : '↓'}</span>
+              <span>{Math.abs(trend)}%</span>
+            </div>
+          )}
+        </div>
+        <div className={cn('w-12 h-12 rounded-xl flex items-center justify-center text-white text-xl', colors[color])}>{icon}</div>
+      </div>
+    </div>
+  );
+};
+
+const ProgressBar = ({value, max, color = 'blue', showLabel = true, size = 'md'}) => {
+  const percent = max > 0 ? Math.min((value / max) * 100, 100) : 0;
+  const colors = {blue: 'bg-blue-500', green: 'bg-emerald-500', red: 'bg-red-500', amber: 'bg-amber-500', purple: 'bg-purple-500'};
+  const heights = {sm: 'h-1', md: 'h-2', lg: 'h-3'};
+  return (
+    <div className="w-full">
+      <div className={cn('progress-bar', heights[size])}>
+        <div className={cn('progress-fill', colors[color])} style={{width: `${percent}%`}}></div>
+      </div>
+      {showLabel && <div className="flex justify-between text-xs text-slate-500 mt-1"><span>{fmt(value)}</span><span>{fmt(max)}</span></div>}
+    </div>
+  );
+};
+
+const Table = ({columns, data, loading, empty = 'Aucune donnée', onRowClick, actions}) => {
+  if (loading) return <Loader />;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-slate-100">
+            {columns.map((col, i) => <th key={i} className={cn('px-4 py-3 text-left text-sm font-semibold text-slate-600', col.className)}>{col.header}</th>)}
+            {actions && <th className="px-4 py-3 text-right text-sm font-semibold text-slate-600">Actions</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {data.length === 0 ? (
+            <tr><td colSpan={columns.length + (actions ? 1 : 0)} className="px-4 py-12 text-center text-slate-400">{empty}</td></tr>
+          ) : (
+            data.map((row, i) => (
+              <tr key={row.id || i} onClick={() => onRowClick?.(row)} className={cn('border-b border-slate-50 table-row transition-colors', onRowClick && 'cursor-pointer')}>
+                {columns.map((col, j) => <td key={j} className={cn('px-4 py-3 text-sm text-slate-600', col.className)}>{col.render ? col.render(row) : row[col.key]}</td>)}
+                {actions && <td className="px-4 py-3 text-right">{actions(row)}</td>}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+const Tabs = ({tabs, active, onChange}) => (
+  <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
+    {tabs.map(t => (
+      <button key={t.key} onClick={() => onChange(t.key)}
+        className={cn('px-4 py-3 text-sm font-medium transition-colors -mb-px whitespace-nowrap flex items-center gap-2',
+          active === t.key ? 'border-b-2 border-blue-500 text-blue-600' : 'text-slate-500 hover:text-slate-700')}>
+        {t.icon && <span>{t.icon}</span>}
+        {t.label}
+        {t.count !== undefined && <Badge color={active === t.key ? 'blue' : 'gray'} size="sm">{t.count}</Badge>}
+      </button>
+    ))}
+  </div>
+);
+
+const SearchInput = ({value, onChange, placeholder = 'Rechercher...'}) => (
+  <div className="relative">
+    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+    <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:bg-white" />
+  </div>
+);
+
+const EmptyState = ({icon, title, description, action}) => (
+  <div className="text-center py-12">
+    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">{icon}</div>
+    <h3 className="text-lg font-semibold text-slate-800 mb-2">{title}</h3>
+    <p className="text-slate-500 mb-6 max-w-md mx-auto">{description}</p>
+    {action}
+  </div>
+);
+
+const ConfirmDialog = ({isOpen, onClose, onConfirm, title, message, confirmText = 'Confirmer', confirmVariant = 'danger', loading}) => (
+  <Modal isOpen={isOpen} onClose={onClose} title={title} size="sm">
+    <p className="text-slate-600 mb-6">{message}</p>
+    <div className="flex gap-3">
+      <Button variant="secondary" onClick={onClose} className="flex-1">Annuler</Button>
+      <Button variant={confirmVariant} onClick={onConfirm} loading={loading} className="flex-1">{confirmText}</Button>
+    </div>
+  </Modal>
+);
+
+const PageHeader = ({title, subtitle, action, tabs, activeTab, onTabChange}) => (
+  <div className="mb-6">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-800">{title}</h1>
+        {subtitle && <p className="text-slate-500 mt-1">{subtitle}</p>}
+      </div>
+      {action}
+    </div>
+    {tabs && <Tabs tabs={tabs} active={activeTab} onChange={onTabChange} />}
+  </div>
+);
+
+// ========== GRAPHIQUES ==========
+const ChartComponent = ({type, data, options = {}, height = 300}) => {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!canvasRef.current || !data) return;
+    if (chartRef.current) chartRef.current.destroy();
+    
+    const ctx = canvasRef.current.getContext('2d');
+    chartRef.current = new Chart(ctx, {
+      type,
+      data,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {position: 'bottom', labels: {padding: 20, usePointStyle: true}},
+          ...options.plugins
+        },
+        ...options
+      }
+    });
+    
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
+  }, [type, data, options]);
+
+  return <div style={{height}}><canvas ref={canvasRef}></canvas></div>;
+};
+// ========== LANDING PAGE ==========
 const LandingPage = ({onLogin, onRegister}) => (
   <div className="min-h-screen bg-white">
     <header className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur border-b border-slate-100">
       <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-2"><div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold">K</div><span className="text-xl font-bold">KabiNet</span></div>
-        <div className="flex gap-3"><button onClick={onLogin} className="px-4 py-2 text-slate-600 font-medium">Connexion</button><button onClick={onRegister} className="px-5 py-2.5 gradient-primary text-white rounded-xl font-semibold">S'inscrire</button></div>
+        <div className="flex items-center gap-2">
+          <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold">K</div>
+          <span className="text-xl font-bold">KabiNet</span>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={onLogin} className="px-4 py-2 text-slate-600 font-medium hover:text-slate-800">Connexion</button>
+          <button onClick={onRegister} className="px-5 py-2.5 gradient-primary text-white rounded-xl font-semibold hover:shadow-lg transition-all">S'inscrire</button>
+        </div>
       </div>
     </header>
     <section className="pt-32 pb-20 px-4 text-center">
-      <h1 className="text-4xl md:text-5xl font-bold mb-6">Gérez votre cabinet<br /><span className="text-blue-600">en toute simplicité</span></h1>
-      <p className="text-xl text-slate-500 mb-8 max-w-2xl mx-auto">KabiNet centralise vos missions, équipes, temps et facturation.</p>
-      <div className="flex flex-col sm:flex-row justify-center gap-4">
-        <button onClick={onRegister} className="px-8 py-4 gradient-primary text-white rounded-xl font-bold text-lg">🚀 Essai gratuit 14 jours</button>
-        <button onClick={onLogin} className="px-8 py-4 bg-slate-100 rounded-xl font-bold text-lg">Se connecter</button>
+      <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 rounded-full text-blue-600 text-sm font-medium mb-6">
+        <span>✨</span> Solution complète pour cabinets de conseil
       </div>
+      <h1 className="text-4xl md:text-5xl font-bold mb-6">
+        Gérez votre cabinet<br /><span className="text-transparent bg-clip-text gradient-primary">en toute simplicité</span>
+      </h1>
+      <p className="text-xl text-slate-500 mb-8 max-w-2xl mx-auto">
+        CRM, Missions, Timesheet, Facturation, Staffing, Congés - tout en un seul outil.
+      </p>
+      <div className="flex flex-col sm:flex-row justify-center gap-4">
+        <button onClick={onRegister} className="px-8 py-4 gradient-primary text-white rounded-xl font-bold text-lg hover:shadow-xl transition-all">
+          🚀 Essai gratuit 14 jours
+        </button>
+        <button onClick={onLogin} className="px-8 py-4 bg-slate-100 text-slate-700 rounded-xl font-bold text-lg hover:bg-slate-200 transition-all">
+          Se connecter
+        </button>
+      </div>
+      <p className="text-slate-400 text-sm mt-4">Aucune carte bancaire requise</p>
     </section>
     <section className="py-20 px-4 bg-slate-50">
-      <div className="max-w-6xl mx-auto grid md:grid-cols-3 gap-6">
-        {[{i: '📊', t: 'Dashboard', d: 'Vue temps réel'}, {i: '⏱️', t: 'Timesheet', d: 'Saisie des temps'}, {i: '💰', t: 'Facturation', d: 'Génération auto'}, {i: '👥', t: 'Équipe', d: 'Gestion RH'}, {i: '📋', t: 'Missions', d: 'Forfait/Régie'}, {i: '📈', t: 'Rapports', d: 'KPIs et analyses'}].map((f, i) => <div key={i} className="card p-6"><div className="text-3xl mb-4">{f.i}</div><h3 className="font-bold mb-2">{f.t}</h3><p className="text-slate-500 text-sm">{f.d}</p></div>)}
+      <div className="max-w-6xl mx-auto">
+        <h2 className="text-3xl font-bold text-center mb-12">Fonctionnalités complètes</h2>
+        <div className="grid md:grid-cols-3 lg:grid-cols-4 gap-6">
+          {[
+            {i: '🏢', t: 'CRM', d: 'Clients, Contacts, Opportunités, Pipeline'},
+            {i: '📋', t: 'Missions', d: 'Forfait/Régie, Budget, Acomptes'},
+            {i: '⏱️', t: 'Timesheet', d: 'Saisie temps, Commentaires, Non-facturable'},
+            {i: '📅', t: 'Staffing', d: 'Planning, Affectations, Disponibilités'},
+            {i: '🏖️', t: 'Congés', d: 'Demandes, Validation, Soldes'},
+            {i: '💰', t: 'Facturation', d: 'Acomptes, PDF, Suivi paiements'},
+            {i: '👥', t: 'Équipe', d: 'Collaborateurs, Grades, Passages'},
+            {i: '📈', t: 'Rapports', d: 'Chargeabilité, Rentabilité, KPIs'}
+          ].map((f, i) => (
+            <div key={i} className="card p-6 hover:shadow-lg transition-all">
+              <div className="text-3xl mb-4">{f.i}</div>
+              <h3 className="font-bold text-slate-800 mb-2">{f.t}</h3>
+              <p className="text-slate-500 text-sm">{f.d}</p>
+            </div>
+          ))}
+        </div>
       </div>
     </section>
-    <footer className="py-8 px-4 border-t text-center text-slate-400 text-sm">© 2025 KabiNet</footer>
+    <footer className="py-8 px-4 border-t text-center text-slate-400 text-sm">© 2025 KabiNet. Tous droits réservés.</footer>
   </div>
 );
 
+// ========== AUTH PAGES ==========
 const LoginPage = ({onLogin, onRegister, onBack}) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const handleSubmit = async (e) => { e.preventDefault(); if (!email || !password) return setError('Champs requis'); setLoading(true); setError(''); try { const {data, error: err} = await supabase.auth.signInWithPassword({email: email.toLowerCase().trim(), password}); if (err) throw err; onLogin(data.user); } catch (e) { setError(e.message === 'Invalid login credentials' ? 'Identifiants incorrects' : e.message); } setLoading(false); };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!email || !password) return setError('Email et mot de passe requis');
+    setLoading(true); setError('');
+    try {
+      const {data, error: err} = await supabase.auth.signInWithPassword({email: email.toLowerCase().trim(), password});
+      if (err) throw err;
+      onLogin(data.user);
+    } catch (e) {
+      setError(e.message === 'Invalid login credentials' ? 'Email ou mot de passe incorrect' : e.message);
+    }
+    setLoading(false);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8"><button onClick={onBack} className="text-slate-400 text-sm mb-4">← Retour</button><div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center text-white font-bold text-3xl mx-auto mb-4">K</div><h1 className="text-2xl font-bold">Connexion</h1></div>
-        <form onSubmit={handleSubmit} className="card p-6 space-y-4">{error && <div className="p-3 bg-red-50 text-red-600 rounded-xl text-sm">{error}</div>}<Input label="Email" type="email" value={email} onChange={setEmail} required /><Input label="Mot de passe" type="password" value={password} onChange={setPassword} required /><Button type="submit" loading={loading} className="w-full">Se connecter</Button></form>
-        <p className="text-center mt-6 text-slate-500">Pas de compte? <button onClick={onRegister} className="text-blue-600 font-semibold">S'inscrire</button></p>
+        <div className="text-center mb-8">
+          <button onClick={onBack} className="text-slate-400 hover:text-slate-600 text-sm mb-4">← Retour à l'accueil</button>
+          <div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center text-white font-bold text-3xl shadow-lg mx-auto mb-4">K</div>
+          <h1 className="text-2xl font-bold text-slate-800">Connexion</h1>
+        </div>
+        <form onSubmit={handleSubmit} className="card p-6 space-y-4">
+          {error && <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm">{error}</div>}
+          <Input label="Email" type="email" value={email} onChange={setEmail} placeholder="votre@email.com" required />
+          <Input label="Mot de passe" type="password" value={password} onChange={setPassword} placeholder="••••••••" required />
+          <Button type="submit" loading={loading} className="w-full">Se connecter</Button>
+        </form>
+        <p className="text-center text-slate-500 mt-6">
+          Pas encore de compte ? <button onClick={onRegister} className="text-blue-600 font-semibold hover:underline">S'inscrire</button>
+        </p>
       </div>
     </div>
   );
@@ -101,28 +580,154 @@ const RegisterPage = ({onLogin, onBack, onConfirm}) => {
   const [form, setForm] = useState({cabinet: '', nom: '', prenom: '', email: '', password: ''});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
   const set = (k, v) => setForm(p => ({...p, [k]: v}));
-  const handleSubmit = async () => { if (!form.cabinet || !form.nom || !form.prenom || !form.email || !form.password) return setError('Tous les champs requis'); if (form.password.length < 6) return setError('Mot de passe: min 6 caractères'); setLoading(true); setError(''); try { const {data: auth, error: e1} = await supabase.auth.signUp({email: form.email.toLowerCase().trim(), password: form.password}); if (e1) throw e1; const {data: org, error: e2} = await supabase.from('organisations').insert([{nom: form.cabinet}]).select().single(); if (e2) throw e2; await supabase.from('utilisateurs').insert([{organisation_id: org.id, auth_id: auth.user?.id, nom: form.nom, prenom: form.prenom, email: form.email.toLowerCase().trim(), role: 'Admin'}]); const fin = new Date(); fin.setDate(fin.getDate() + 14); await supabase.from('abonnements').insert([{organisation_id: org.id, plan: 'trial', statut: 'actif', date_debut: new Date().toISOString(), date_fin: fin.toISOString()}]); await initOrgData(org.id); onConfirm(form.email); } catch (e) { setError(e.message?.includes('already registered') ? 'Email déjà utilisé' : e.message); } setLoading(false); };
+
+  const handleSubmit = async () => {
+    if (!form.cabinet || !form.nom || !form.prenom || !form.email || !form.password) return setError('Tous les champs sont requis');
+    if (form.password.length < 6) return setError('Le mot de passe doit contenir au moins 6 caractères');
+    setLoading(true); setError('');
+    try {
+      const {data: auth, error: e1} = await supabase.auth.signUp({email: form.email.toLowerCase().trim(), password: form.password});
+      if (e1) throw e1;
+      
+      const {data: org, error: e2} = await supabase.from('organisations').insert([{nom: form.cabinet}]).select().single();
+      if (e2) throw e2;
+      
+      await supabase.from('utilisateurs').insert([{
+        organisation_id: org.id, auth_id: auth.user?.id, nom: form.nom, prenom: form.prenom,
+        email: form.email.toLowerCase().trim(), role: 'Admin'
+      }]);
+      
+      const fin = new Date(); fin.setDate(fin.getDate() + 14);
+      await supabase.from('abonnements').insert([{
+        organisation_id: org.id, plan: 'trial', statut: 'actif',
+        date_debut: new Date().toISOString(), date_fin: fin.toISOString()
+      }]);
+      
+      await initOrgData(org.id);
+      onConfirm(form.email);
+    } catch (e) {
+      setError(e.message?.includes('already registered') ? 'Cet email est déjà utilisé' : e.message);
+    }
+    setLoading(false);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8"><button onClick={onBack} className="text-slate-400 text-sm mb-4">← Retour</button><div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center text-white font-bold text-3xl mx-auto mb-4">K</div><h1 className="text-2xl font-bold">Créer un compte</h1><p className="text-slate-500">14 jours d'essai gratuit</p></div>
-        <div className="card p-6 space-y-4">{error && <div className="p-3 bg-red-50 text-red-600 rounded-xl text-sm">{error}</div>}{step === 1 && <><Input label="🏢 Nom du cabinet" value={form.cabinet} onChange={v => set('cabinet', v)} placeholder="Mon Cabinet SARL" /><Button onClick={() => form.cabinet ? setStep(2) : setError('Nom requis')} className="w-full">Continuer →</Button></>}{step === 2 && <><div className="grid grid-cols-2 gap-3"><Input label="Prénom" value={form.prenom} onChange={v => set('prenom', v)} /><Input label="Nom" value={form.nom} onChange={v => set('nom', v)} /></div><Input label="Email" type="email" value={form.email} onChange={v => set('email', v)} /><Input label="Mot de passe" type="password" value={form.password} onChange={v => set('password', v)} placeholder="Min. 6 caractères" /><div className="flex gap-3"><Button variant="secondary" onClick={() => setStep(1)} className="flex-1">← Retour</Button><Button onClick={handleSubmit} loading={loading} className="flex-1">Créer</Button></div></>}</div>
-        <p className="text-center mt-6 text-slate-500">Déjà inscrit? <button onClick={onLogin} className="text-blue-600 font-semibold">Connexion</button></p>
+        <div className="text-center mb-8">
+          <button onClick={onBack} className="text-slate-400 hover:text-slate-600 text-sm mb-4">← Retour</button>
+          <div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center text-white font-bold text-3xl shadow-lg mx-auto mb-4">K</div>
+          <h1 className="text-2xl font-bold text-slate-800">Créer votre compte</h1>
+          <p className="text-slate-500 mt-2">14 jours d'essai gratuit</p>
+        </div>
+        
+        <div className="flex items-center justify-center gap-2 mb-6">
+          <div className={cn('w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm', step >= 1 ? 'gradient-primary text-white' : 'bg-slate-200 text-slate-500')}>1</div>
+          <div className={cn('w-12 h-1 rounded-full', step >= 2 ? 'gradient-primary' : 'bg-slate-200')}></div>
+          <div className={cn('w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm', step >= 2 ? 'gradient-primary text-white' : 'bg-slate-200 text-slate-500')}>2</div>
+        </div>
+
+        <div className="card p-6 space-y-4">
+          {error && <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm">{error}</div>}
+          
+          {step === 1 && (
+            <>
+              <Input label="🏢 Nom de votre cabinet" value={form.cabinet} onChange={v => set('cabinet', v)} placeholder="Ex: Mon Cabinet Conseil SARL" required />
+              <Button onClick={() => form.cabinet ? setStep(2) : setError('Nom du cabinet requis')} className="w-full">Continuer →</Button>
+            </>
+          )}
+          
+          {step === 2 && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="Prénom" value={form.prenom} onChange={v => set('prenom', v)} required />
+                <Input label="Nom" value={form.nom} onChange={v => set('nom', v)} required />
+              </div>
+              <Input label="Email" type="email" value={form.email} onChange={v => set('email', v)} required />
+              <Input label="Mot de passe" type="password" value={form.password} onChange={v => set('password', v)} placeholder="Min. 6 caractères" required />
+              <div className="flex gap-3">
+                <Button variant="secondary" onClick={() => setStep(1)} className="flex-1">← Retour</Button>
+                <Button onClick={handleSubmit} loading={loading} className="flex-1">Créer mon compte</Button>
+              </div>
+            </>
+          )}
+        </div>
+        <p className="text-center text-slate-500 mt-6">
+          Déjà inscrit ? <button onClick={onLogin} className="text-blue-600 font-semibold hover:underline">Se connecter</button>
+        </p>
       </div>
     </div>
   );
 };
 
-const ConfirmPage = ({email, onLogin}) => <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 text-center"><div><div className="text-6xl mb-4">📧</div><h1 className="text-2xl font-bold mb-2">Vérifiez votre email</h1><p className="text-slate-500 mb-4">Confirmation envoyée à <b className="text-blue-600">{email}</b></p><Button onClick={onLogin}>Aller à la connexion</Button></div></div>;
+const ConfirmPage = ({email, onLogin}) => (
+  <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+    <div className="w-full max-w-md text-center">
+      <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6 text-5xl">📧</div>
+      <h1 className="text-2xl font-bold text-slate-800 mb-4">Vérifiez votre email</h1>
+      <p className="text-slate-500 mb-2">Un email de confirmation a été envoyé à :</p>
+      <p className="text-blue-600 font-bold mb-6">{email}</p>
+      <div className="card p-4 text-left text-sm text-slate-600 mb-6">
+        <p className="font-medium mb-2">📌 Étapes suivantes :</p>
+        <ol className="list-decimal list-inside space-y-1">
+          <li>Ouvrez votre boîte email</li>
+          <li>Cliquez sur le lien de confirmation</li>
+          <li>Connectez-vous à KabiNet</li>
+        </ol>
+      </div>
+      <Button onClick={onLogin} className="w-full">Aller à la connexion</Button>
+    </div>
+  </div>
+);
 
+// ========== INIT ORG DATA ==========
 async function initOrgData(orgId) {
-  await supabase.from('departements').insert([{code: 'AUD', nom: 'Audit', facturable: true, organisation_id: orgId}, {code: 'TAX', nom: 'Tax & Legal', facturable: true, organisation_id: orgId}, {code: 'CON', nom: 'Consulting', facturable: true, organisation_id: orgId}]);
-  await supabase.from('grades').insert([{code: 'ASS', nom: 'Associé', niveau: 10, taux_journalier: 1500000, organisation_id: orgId}, {code: 'M', nom: 'Manager', niveau: 6, taux_journalier: 450000, organisation_id: orgId}, {code: 'S', nom: 'Senior', niveau: 4, taux_journalier: 250000, organisation_id: orgId}, {code: 'J', nom: 'Junior', niveau: 3, taux_journalier: 150000, organisation_id: orgId}]);
-  await supabase.from('categories_taches').insert([{code: 'AUDIT', nom: 'Audit', facturable: true, organisation_id: orgId}, {code: 'CONSEIL', nom: 'Conseil', facturable: true, organisation_id: orgId}, {code: 'ADMIN', nom: 'Administratif', facturable: false, organisation_id: orgId}]);
-  await supabase.from('types_frais').insert([{code: 'TAXI', nom: 'Taxi', organisation_id: orgId}, {code: 'HOTEL', nom: 'Hôtel', organisation_id: orgId}, {code: 'REPAS', nom: 'Repas', organisation_id: orgId}]);
+  // Départements
+  await supabase.from('departements').insert([
+    {code: 'AUD', nom: 'Audit', facturable: true, couleur: '#2563eb', organisation_id: orgId},
+    {code: 'TAX', nom: 'Tax & Legal', facturable: true, couleur: '#7c3aed', organisation_id: orgId},
+    {code: 'CON', nom: 'Consulting', facturable: true, couleur: '#059669', organisation_id: orgId},
+    {code: 'OUT', nom: 'Outsourcing', facturable: true, couleur: '#d97706', organisation_id: orgId}
+  ]);
+  
+  // Grades
+  await supabase.from('grades').insert([
+    {code: 'ASS', nom: 'Associé', niveau: 10, taux_journalier: 1500000, taux_cible: 40, organisation_id: orgId},
+    {code: 'DIR', nom: 'Directeur', niveau: 8, taux_journalier: 900000, taux_cible: 60, organisation_id: orgId},
+    {code: 'SM', nom: 'Senior Manager', niveau: 7, taux_journalier: 650000, taux_cible: 70, organisation_id: orgId},
+    {code: 'M', nom: 'Manager', niveau: 6, taux_journalier: 450000, taux_cible: 75, organisation_id: orgId},
+    {code: 'S', nom: 'Senior', niveau: 4, taux_journalier: 250000, taux_cible: 85, organisation_id: orgId},
+    {code: 'J', nom: 'Junior', niveau: 3, taux_journalier: 150000, taux_cible: 90, organisation_id: orgId}
+  ]);
+  
+  // Catégories de tâches
+  await supabase.from('categories_taches').insert([
+    {code: 'AUDIT', nom: 'Audit', facturable: true, couleur: '#2563eb', organisation_id: orgId},
+    {code: 'CONSEIL', nom: 'Conseil', facturable: true, couleur: '#059669', organisation_id: orgId},
+    {code: 'FORMATION', nom: 'Formation', facturable: false, couleur: '#7c3aed', organisation_id: orgId},
+    {code: 'ADMIN', nom: 'Administratif', facturable: false, couleur: '#6b7280', organisation_id: orgId},
+    {code: 'COMMERCIAL', nom: 'Commercial', facturable: false, couleur: '#d97706', organisation_id: orgId},
+    {code: 'INTERNE', nom: 'Projet interne', facturable: false, couleur: '#06b6d4', organisation_id: orgId}
+  ]);
+  
+  // Types de frais
+  await supabase.from('types_frais').insert([
+    {code: 'AVION', nom: 'Billet d\'avion', categorie: 'transport', organisation_id: orgId},
+    {code: 'TRAIN', nom: 'Train', categorie: 'transport', organisation_id: orgId},
+    {code: 'TAXI', nom: 'Taxi/VTC', categorie: 'transport', organisation_id: orgId},
+    {code: 'KM', nom: 'Indemnités kilométriques', categorie: 'transport', taux_km: 150, organisation_id: orgId},
+    {code: 'HOTEL', nom: 'Hôtel', categorie: 'hebergement', organisation_id: orgId},
+    {code: 'REPAS', nom: 'Repas', categorie: 'repas', montant_max: 15000, organisation_id: orgId}
+  ]);
+  
+  // Jours fériés par défaut
+  for (const date of DEFAULT_HOLIDAYS) {
+    await supabase.from('jours_feries').insert([{date, nom: 'Férié', organisation_id: orgId}]);
+  }
 }
-
+// ========== MAIN APP ==========
 const MainApp = ({user, onLogout}) => {
   const [userData, setUserData] = useState(null);
   const [orgData, setOrgData] = useState(null);
@@ -131,39 +736,110 @@ const MainApp = ({user, onLogout}) => {
   const [page, setPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const isSuperAdmin = SUPER_ADMINS.includes(user?.email);
-  
+
   useEffect(() => { loadUser(); }, [user]);
-  const loadUser = async () => { try { const {data: u} = await supabase.from('utilisateurs').select('*,organisations(*)').eq('auth_id', user.id).single(); const {data: a} = await supabase.from('abonnements').select('*').eq('organisation_id', u?.organisation_id).order('created_at', {ascending: false}).limit(1).single(); setUserData(u); setOrgData(u?.organisations); setAboData(a); } catch (e) { console.error(e); } setLoading(false); };
-  
-  if (loading) return <Loader />;
+
+  const loadUser = async () => {
+    try {
+      const {data: u} = await supabase.from('utilisateurs').select('*,organisations(*),departements(*),grades(*)').eq('auth_id', user.id).single();
+      if (u) {
+        const {data: a} = await supabase.from('abonnements').select('*').eq('organisation_id', u.organisation_id).order('created_at', {ascending: false}).limit(1).single();
+        setUserData(u);
+        setOrgData(u.organisations);
+        setAboData(a);
+      }
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  };
+
+  if (loading) return <Loader text="Chargement..." />;
   if (isSuperAdmin && !userData) return <SuperAdminApp user={user} onLogout={onLogout} />;
-  if (!userData || !orgData) return <div className="min-h-screen flex items-center justify-center">Erreur de chargement. <button onClick={onLogout} className="ml-2 text-blue-600 underline">Déconnexion</button></div>;
-  
-  const nav = [{k: 'dashboard', l: 'Dashboard', i: '📊'}, {k: 'clients', l: 'Clients', i: '🏢'}, {k: 'projects', l: 'Missions', i: '📋'}, {k: 'timesheet', l: 'Temps', i: '⏱️'}, {k: 'invoices', l: 'Factures', i: '💰'}, {k: 'expenses', l: 'Frais', i: '💳'}, {k: 'team', l: 'Équipe', i: '👥'}, {k: 'reports', l: 'Rapports', i: '📈'}, {k: 'settings', l: 'Paramètres', i: '⚙️'}];
+  if (!userData || !orgData) return (
+    <div className="min-h-screen flex items-center justify-center flex-col gap-4">
+      <p className="text-slate-600">Erreur de chargement des données utilisateur.</p>
+      <Button onClick={onLogout}>Déconnexion</Button>
+    </div>
+  );
+
+  const nav = [
+    {k: 'dashboard', l: 'Dashboard', i: '📊'},
+    {k: 'crm', l: 'CRM', i: '🏢', sub: ['clients', 'contacts', 'opportunites']},
+    {k: 'missions', l: 'Missions', i: '📋'},
+    {k: 'staffing', l: 'Staffing', i: '📅'},
+    {k: 'timesheet', l: 'Temps', i: '⏱️'},
+    {k: 'conges', l: 'Congés', i: '🏖️'},
+    {k: 'facturation', l: 'Facturation', i: '💰'},
+    {k: 'soustraitance', l: 'Sous-traitance', i: '🤝'},
+    {k: 'interco', l: 'Interco', i: '🔄'},
+    {k: 'equipe', l: 'Équipe', i: '👥'},
+    {k: 'rapports', l: 'Rapports', i: '📈'},
+    {k: 'parametres', l: 'Paramètres', i: '⚙️'}
+  ];
   if (isSuperAdmin) nav.push({k: 'admin', l: 'Admin', i: '🛡️'});
-  const ctx = {user: userData, org: orgData, abo: aboData, reload: loadUser, isSuperAdmin};
-  
+
+  const ctx = {user: userData, org: orgData, abo: aboData, reload: loadUser, isSuperAdmin, setPage};
+
   return (
     <AppContext.Provider value={ctx}>
       <div className="min-h-screen bg-slate-50 flex">
         {sidebarOpen && <div className="fixed inset-0 bg-black/30 z-40 lg:hidden" onClick={() => setSidebarOpen(false)}></div>}
-        <aside className={cn('sidebar w-64 bg-white border-r flex flex-col fixed lg:relative h-screen z-50', sidebarOpen && 'open')}>
-          <div className="p-4 border-b flex items-center gap-3"><div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold">K</div><div><div className="font-bold">KabiNet</div><div className="text-xs text-slate-400 truncate max-w-[140px]">{orgData.nom}</div></div></div>
-          <nav className="flex-1 p-3 space-y-1">{nav.map(n => <button key={n.k} onClick={() => {setPage(n.k); setSidebarOpen(false);}} className={cn('nav-item w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left', page === n.k ? 'active font-medium' : 'text-slate-600')}><span>{n.i}</span>{n.l}</button>)}</nav>
-          <div className="p-4 border-t"><div className="flex items-center gap-3 mb-3"><div className="w-10 h-10 gradient-primary rounded-full flex items-center justify-center text-white font-bold text-sm">{userData.prenom?.[0]}{userData.nom?.[0]}</div><div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{userData.prenom} {userData.nom}</div><div className="text-xs text-slate-400">{userData.role}</div></div></div><button onClick={onLogout} className="w-full flex items-center gap-2 px-4 py-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl">🚪 Déconnexion</button></div>
+        
+        <aside className={cn('sidebar w-64 bg-white border-r border-slate-100 flex flex-col fixed lg:relative h-screen z-50 transition-transform', sidebarOpen && 'open')}>
+          <div className="p-4 border-b border-slate-100 flex items-center gap-3">
+            <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold shadow-lg shadow-blue-500/25">K</div>
+            <div className="flex-1 min-w-0">
+              <div className="font-bold text-slate-800">KabiNet</div>
+              <div className="text-xs text-slate-400 truncate">{orgData.nom}</div>
+            </div>
+          </div>
+          
+          <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+            {nav.map(n => (
+              <button key={n.k} onClick={() => {setPage(n.k); setSidebarOpen(false);}}
+                className={cn('nav-item w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left text-sm',
+                  page === n.k ? 'active font-medium' : 'text-slate-600')}>
+                <span className="text-lg">{n.i}</span>
+                <span>{n.l}</span>
+              </button>
+            ))}
+          </nav>
+          
+          <div className="p-4 border-t border-slate-100">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 gradient-primary rounded-full flex items-center justify-center text-white font-bold text-sm shadow-lg shadow-blue-500/25">
+                {userData.prenom?.[0]}{userData.nom?.[0]}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-slate-800 truncate">{userData.prenom} {userData.nom}</div>
+                <div className="text-xs text-slate-400">{userData.role}</div>
+              </div>
+            </div>
+            <button onClick={onLogout} className="w-full flex items-center gap-2 px-4 py-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors">
+              🚪 <span>Déconnexion</span>
+            </button>
+          </div>
         </aside>
-        <main className="flex-1">
-          <header className="lg:hidden flex items-center justify-between p-4 bg-white border-b sticky top-0 z-30"><button onClick={() => setSidebarOpen(true)} className="p-2 text-2xl">☰</button><div className="font-bold">KabiNet</div><div className="w-10"></div></header>
-          <div className="p-4 lg:p-8">
+
+        <main className="flex-1 min-w-0">
+          <header className="lg:hidden flex items-center justify-between p-4 bg-white border-b border-slate-100 sticky top-0 z-30">
+            <button onClick={() => setSidebarOpen(true)} className="p-2 text-2xl hover:bg-slate-100 rounded-lg">☰</button>
+            <div className="font-bold text-slate-800">KabiNet</div>
+            <div className="w-10"></div>
+          </header>
+          
+          <div className="p-4 lg:p-8 animate-fade">
             {page === 'dashboard' && <DashboardPage />}
-            {page === 'clients' && <ClientsPage />}
-            {page === 'projects' && <ProjectsPage />}
+            {page === 'crm' && <CRMPage />}
+            {page === 'missions' && <MissionsPage />}
+            {page === 'staffing' && <StaffingPage />}
             {page === 'timesheet' && <TimesheetPage />}
-            {page === 'invoices' && <InvoicesPage />}
-            {page === 'expenses' && <ExpensesPage />}
-            {page === 'team' && <TeamPage />}
-            {page === 'reports' && <ReportsPage />}
-            {page === 'settings' && <SettingsPage />}
+            {page === 'conges' && <CongesPage />}
+            {page === 'facturation' && <FacturationPage />}
+            {page === 'soustraitance' && <SoustraitancePage />}
+            {page === 'interco' && <IntercoPage />}
+            {page === 'equipe' && <EquipePage />}
+            {page === 'rapports' && <RapportsPage />}
+            {page === 'parametres' && <ParametresPage />}
             {page === 'admin' && <AdminPage />}
           </div>
         </main>
@@ -172,6 +848,7 @@ const MainApp = ({user, onLogout}) => {
   );
 };
 
+// ========== SUPER ADMIN APP ==========
 const SuperAdminApp = ({user, onLogout}) => {
   const [orgs, setOrgs] = useState([]);
   const [users, setUsers] = useState([]);
@@ -181,175 +858,1768 @@ const SuperAdminApp = ({user, onLogout}) => {
   const [editOrg, setEditOrg] = useState(null);
   const [editForm, setEditForm] = useState({plan: 'trial', date_fin: ''});
   const [saving, setSaving] = useState(false);
-  
+
   useEffect(() => { loadData(); }, []);
-  const loadData = async () => { const [o, u, a] = await Promise.all([supabase.from('organisations').select('*').order('created_at', {ascending: false}), supabase.from('utilisateurs').select('*,organisations(nom)').order('created_at', {ascending: false}), supabase.from('abonnements').select('*,organisations(nom)').order('created_at', {ascending: false})]); setOrgs(o.data || []); setUsers(u.data || []); setAbos(a.data || []); setLoading(false); };
+
+  const loadData = async () => {
+    const [o, u, a] = await Promise.all([
+      supabase.from('organisations').select('*').order('created_at', {ascending: false}),
+      supabase.from('utilisateurs').select('*,organisations(nom)').order('created_at', {ascending: false}),
+      supabase.from('abonnements').select('*,organisations(nom)').order('created_at', {ascending: false})
+    ]);
+    setOrgs(o.data || []);
+    setUsers(u.data || []);
+    setAbos(a.data || []);
+    setLoading(false);
+  };
+
   const getAbo = (orgId) => abos.find(a => a.organisation_id === orgId);
-  const openEdit = (org) => { const a = getAbo(org.id); setEditOrg(org); setEditForm({plan: a?.plan || 'trial', date_fin: a?.date_fin?.split('T')[0] || ''}); };
-  const saveAbo = async () => { if (!editOrg) return; setSaving(true); try { const a = getAbo(editOrg.id); const data = {organisation_id: editOrg.id, plan: editForm.plan, statut: 'actif', date_debut: new Date().toISOString(), date_fin: editForm.date_fin ? new Date(editForm.date_fin).toISOString() : null, montant: PLANS[editForm.plan]?.prix || 0}; if (a?.id) await supabase.from('abonnements').update(data).eq('id', a.id); else await supabase.from('abonnements').insert([data]); await loadData(); setEditOrg(null); } catch (e) { alert(e.message); } setSaving(false); };
   
+  const openEdit = (org) => {
+    const a = getAbo(org.id);
+    setEditOrg(org);
+    setEditForm({plan: a?.plan || 'trial', date_fin: a?.date_fin?.split('T')[0] || ''});
+  };
+
+  const saveAbo = async () => {
+    if (!editOrg) return;
+    setSaving(true);
+    try {
+      const a = getAbo(editOrg.id);
+      const data = {
+        organisation_id: editOrg.id,
+        plan: editForm.plan,
+        statut: 'actif',
+        date_debut: new Date().toISOString(),
+        date_fin: editForm.date_fin ? new Date(editForm.date_fin).toISOString() : null,
+        montant: PLANS[editForm.plan]?.prix || 0
+      };
+      if (a?.id) await supabase.from('abonnements').update(data).eq('id', a.id);
+      else await supabase.from('abonnements').insert([data]);
+      await loadData();
+      setEditOrg(null);
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const stats = {
+    total: orgs.length,
+    trial: abos.filter(a => a.plan === 'trial').length,
+    standard: abos.filter(a => a.plan === 'standard').length,
+    premium: abos.filter(a => a.plan === 'premium').length
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="bg-white border-b px-6 py-4 flex items-center justify-between"><div className="flex items-center gap-3"><div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold">K</div><div><div className="font-bold">KabiNet</div><div className="text-xs text-amber-600">🛡️ Super Admin</div></div></div><div className="flex items-center gap-4"><span className="text-sm text-slate-500">{user.email}</span><Button variant="secondary" onClick={onLogout}>Déconnexion</Button></div></header>
-      <div className="max-w-6xl mx-auto p-6">
-        <h1 className="text-2xl font-bold mb-6">Administration Globale</h1>
-        <div className="grid grid-cols-4 gap-4 mb-6"><StatCard title="Organisations" value={orgs.length} icon="🏢" color="blue" /><StatCard title="Utilisateurs" value={users.length} icon="👥" color="green" /><StatCard title="Essais" value={abos.filter(a => a.plan === 'trial').length} icon="🎁" color="amber" /><StatCard title="Payants" value={abos.filter(a => a.plan !== 'trial').length} icon="⭐" color="purple" /></div>
-        <div className="flex gap-2 mb-4">{['orgs', 'users', 'abos'].map(t => <button key={t} onClick={() => setTab(t)} className={cn('px-4 py-2 rounded-xl font-medium', tab === t ? 'gradient-primary text-white' : 'bg-white')}>{t === 'orgs' ? 'Organisations' : t === 'users' ? 'Utilisateurs' : 'Abonnements'}</button>)}</div>
-        <Card>{loading ? <Loader /> : <>{tab === 'orgs' && <Table columns={[{header: 'Cabinet', render: r => <b>{r.nom}</b>}, {header: 'Créé', render: r => fmtDate(r.created_at)}, {header: 'Plan', render: r => { const a = getAbo(r.id); return <Badge color={a?.plan === 'premium' ? 'purple' : a?.plan === 'standard' ? 'blue' : 'gray'}>{PLANS[a?.plan]?.nom || 'Essai'}</Badge>; }}, {header: 'Expire', render: r => { const a = getAbo(r.id); return a?.date_fin ? fmtDate(a.date_fin) : '-'; }}, {header: '', render: r => <Button variant="ghost" onClick={() => openEdit(r)}>✏️</Button>}]} data={orgs} />}{tab === 'users' && <Table columns={[{header: 'Nom', render: r => <b>{r.prenom} {r.nom}</b>}, {header: 'Email', key: 'email'}, {header: 'Cabinet', render: r => r.organisations?.nom || '-'}, {header: 'Rôle', render: r => <Badge color={r.role === 'Admin' ? 'blue' : 'gray'}>{r.role}</Badge>}, {header: 'Créé', render: r => fmtDate(r.created_at)}]} data={users} />}{tab === 'abos' && <Table columns={[{header: 'Cabinet', render: r => r.organisations?.nom || '-'}, {header: 'Plan', render: r => <Badge color={r.plan === 'premium' ? 'purple' : r.plan === 'standard' ? 'blue' : 'gray'}>{PLANS[r.plan]?.nom || r.plan}</Badge>}, {header: 'Statut', render: r => <Badge color={r.statut === 'actif' ? 'green' : 'red'}>{r.statut}</Badge>}, {header: 'Début', render: r => fmtDate(r.date_debut)}, {header: 'Fin', render: r => fmtDate(r.date_fin)}]} data={abos} />}</>}</Card>
+      <header className="bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between sticky top-0 z-30">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold">K</div>
+          <div>
+            <div className="font-bold text-slate-800">KabiNet</div>
+            <div className="text-xs text-amber-600 font-medium">🛡️ Super Admin</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <span className="text-sm text-slate-500 hidden sm:block">{user.email}</span>
+          <Button variant="secondary" size="sm" onClick={onLogout}>Déconnexion</Button>
+        </div>
+      </header>
+
+      <div className="max-w-7xl mx-auto p-6">
+        <h1 className="text-2xl font-bold text-slate-800 mb-6">Administration Globale</h1>
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <StatCard title="Organisations" value={stats.total} icon="🏢" color="blue" />
+          <StatCard title="Essais" value={stats.trial} icon="🎁" color="amber" />
+          <StatCard title="Standard" value={stats.standard} icon="⭐" color="green" />
+          <StatCard title="Premium" value={stats.premium} icon="👑" color="purple" />
+        </div>
+
+        <Card>
+          <Tabs tabs={[
+            {key: 'orgs', label: 'Organisations', icon: '🏢', count: orgs.length},
+            {key: 'users', label: 'Utilisateurs', icon: '👥', count: users.length},
+            {key: 'abos', label: 'Abonnements', icon: '💳', count: abos.length}
+          ]} active={tab} onChange={setTab} />
+          
+          <div className="p-4">
+            {loading ? <Loader /> : (
+              <>
+                {tab === 'orgs' && (
+                  <Table columns={[
+                    {header: 'Cabinet', render: r => <div><div className="font-medium text-slate-800">{r.nom}</div><div className="text-xs text-slate-400">{fmtDate(r.created_at)}</div></div>},
+                    {header: 'Plan', render: r => {
+                      const a = getAbo(r.id);
+                      const plan = PLANS[a?.plan] || PLANS.trial;
+                      return <Badge color={plan.color}>{plan.icon} {plan.nom}</Badge>;
+                    }},
+                    {header: 'Expire', render: r => {
+                      const a = getAbo(r.id);
+                      if (!a?.date_fin) return '-';
+                      const days = daysBetween(today(), a.date_fin);
+                      return <span className={days < 0 ? 'text-red-500 font-medium' : days < 7 ? 'text-amber-500' : ''}>{fmtDate(a.date_fin)}</span>;
+                    }}
+                  ]} data={orgs} actions={r => (
+                    <Button variant="ghost" size="xs" onClick={() => openEdit(r)}>✏️</Button>
+                  )} />
+                )}
+                
+                {tab === 'users' && (
+                  <Table columns={[
+                    {header: 'Utilisateur', render: r => <div><div className="font-medium text-slate-800">{r.prenom} {r.nom}</div><div className="text-xs text-slate-400">{r.email}</div></div>},
+                    {header: 'Cabinet', render: r => r.organisations?.nom || '-'},
+                    {header: 'Rôle', render: r => <Badge color={r.role === 'Admin' ? 'blue' : 'gray'}>{r.role}</Badge>},
+                    {header: 'Créé', render: r => fmtDate(r.created_at)}
+                  ]} data={users} />
+                )}
+                
+                {tab === 'abos' && (
+                  <Table columns={[
+                    {header: 'Cabinet', render: r => r.organisations?.nom || '-'},
+                    {header: 'Plan', render: r => <Badge color={PLANS[r.plan]?.color || 'gray'}>{PLANS[r.plan]?.nom || r.plan}</Badge>},
+                    {header: 'Statut', render: r => <Badge color={r.statut === 'actif' ? 'green' : 'red'}>{r.statut}</Badge>},
+                    {header: 'Période', render: r => <span className="text-sm">{fmtDate(r.date_debut)} → {fmtDate(r.date_fin)}</span>}
+                  ]} data={abos} />
+                )}
+              </>
+            )}
+          </div>
+        </Card>
       </div>
-      <Modal isOpen={!!editOrg} onClose={() => setEditOrg(null)} title={'Modifier: ' + editOrg?.nom} size="sm"><div className="space-y-4"><Select label="Plan" value={editForm.plan} onChange={v => setEditForm(p => ({...p, plan: v}))} options={Object.entries(PLANS).map(([k, v]) => ({value: k, label: v.nom + ' - ' + fmt(v.prix) + ' F'}))} /><Input label="Date d'expiration" type="date" value={editForm.date_fin} onChange={v => setEditForm(p => ({...p, date_fin: v}))} /><div className="flex gap-3"><Button variant="secondary" onClick={() => setEditOrg(null)} className="flex-1">Annuler</Button><Button onClick={saveAbo} loading={saving} className="flex-1">Enregistrer</Button></div></div></Modal>
+
+      <Modal isOpen={!!editOrg} onClose={() => setEditOrg(null)} title={`Modifier: ${editOrg?.nom}`} size="sm">
+        <div className="space-y-4">
+          <Select label="Plan" value={editForm.plan} onChange={v => setEditForm(p => ({...p, plan: v}))}
+            options={Object.entries(PLANS).map(([k, v]) => ({value: k, label: `${v.icon} ${v.nom} - ${v.prix > 0 ? fmt(v.prix) + ' F/mois' : 'Gratuit'}`}))} />
+          <Input label="Date d'expiration" type="date" value={editForm.date_fin} onChange={v => setEditForm(p => ({...p, date_fin: v}))} />
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setEditOrg(null)} className="flex-1">Annuler</Button>
+            <Button onClick={saveAbo} loading={saving} className="flex-1">Enregistrer</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+};
+// ========== DASHBOARD PAGE ==========
+const DashboardPage = () => {
+  const {org, user} = useApp();
+  const [stats, setStats] = useState({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => { loadStats(); }, []);
+
+  const loadStats = async () => {
+    const [clients, projets, temps, factures, collab] = await Promise.all([
+      supabase.from('clients').select('id').eq('organisation_id', org.id),
+      supabase.from('projets').select('id, statut, budget_montant, montant_facture').eq('organisation_id', org.id),
+      supabase.from('saisies_temps').select('heures, facturable').eq('organisation_id', org.id),
+      supabase.from('factures').select('montant_total, statut').eq('organisation_id', org.id),
+      supabase.from('collaborateurs').select('id, actif').eq('organisation_id', org.id)
+    ]);
+
+    const projetsActifs = projets.data?.filter(p => p.statut === 'active') || [];
+    const heuresTotal = temps.data?.reduce((s, t) => s + (t.heures || 0), 0) || 0;
+    const heuresFact = temps.data?.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0) || 0;
+    const caEncaisse = factures.data?.filter(f => f.statut === 'paid').reduce((s, f) => s + (f.montant_total || 0), 0) || 0;
+    const budgetTotal = projets.data?.reduce((s, p) => s + (p.budget_montant || 0), 0) || 0;
+    const caFacture = factures.data?.reduce((s, f) => s + (f.montant_total || 0), 0) || 0;
+    
+    setStats({
+      clients: clients.data?.length || 0,
+      projetsActifs: projetsActifs.length,
+      heuresTotal, heuresFact,
+      tauxCharge: heuresTotal > 0 ? Math.round((heuresFact / heuresTotal) * 100) : 0,
+      caEncaisse, budgetTotal, caFacture,
+      resteFacturer: budgetTotal - caFacture,
+      collaborateurs: collab.data?.filter(c => c.actif).length || 0
+    });
+    setLoading(false);
+  };
+
+  if (loading) return <Loader text="Chargement..." />;
+
+  return (
+    <div>
+      <PageHeader title="Tableau de bord" subtitle={`Bienvenue, ${user.prenom} !`} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <StatCard title="Missions actives" value={stats.projetsActifs} icon="📋" color="blue" />
+        <StatCard title="Heures saisies" value={fmt(stats.heuresTotal) + 'h'} subtitle={`${stats.tauxCharge}% facturable`} icon="⏱️" color="green" />
+        <StatCard title="CA encaissé" value={fmtMoney(stats.caEncaisse)} icon="💰" color="purple" />
+        <StatCard title="Reste à facturer" value={fmtMoney(stats.resteFacturer)} icon="📊" color="amber" />
+      </div>
+      <div className="grid lg:grid-cols-2 gap-6">
+        <Card title="📊 Indicateurs">
+          <div className="space-y-4">
+            <div><div className="flex justify-between text-sm mb-1"><span>Budget consommé</span><span className="font-medium">{stats.budgetTotal > 0 ? Math.round((stats.caFacture / stats.budgetTotal) * 100) : 0}%</span></div><ProgressBar value={stats.caFacture} max={stats.budgetTotal} color="blue" showLabel={false} /></div>
+            <div><div className="flex justify-between text-sm mb-1"><span>Taux chargeabilité</span><span className="font-medium">{stats.tauxCharge}%</span></div><ProgressBar value={stats.heuresFact} max={stats.heuresTotal} color="green" showLabel={false} /></div>
+            <div className="grid grid-cols-2 gap-4 pt-4 border-t"><div className="text-center"><div className="text-2xl font-bold">{stats.clients}</div><div className="text-sm text-slate-500">Clients</div></div><div className="text-center"><div className="text-2xl font-bold">{stats.collaborateurs}</div><div className="text-sm text-slate-500">Collaborateurs</div></div></div>
+          </div>
+        </Card>
+        <Card title="🎯 Actions rapides">
+          <div className="grid grid-cols-2 gap-3">
+            <button className="p-4 bg-blue-50 rounded-xl text-left hover:bg-blue-100 transition-colors"><div className="text-2xl mb-2">➕</div><div className="font-medium">Nouvelle mission</div></button>
+            <button className="p-4 bg-green-50 rounded-xl text-left hover:bg-green-100 transition-colors"><div className="text-2xl mb-2">⏱️</div><div className="font-medium">Saisir mes temps</div></button>
+            <button className="p-4 bg-purple-50 rounded-xl text-left hover:bg-purple-100 transition-colors"><div className="text-2xl mb-2">💰</div><div className="font-medium">Créer facture</div></button>
+            <button className="p-4 bg-amber-50 rounded-xl text-left hover:bg-amber-100 transition-colors"><div className="text-2xl mb-2">🏖️</div><div className="font-medium">Demander congé</div></button>
+          </div>
+        </Card>
+      </div>
     </div>
   );
 };
 
-const DashboardPage = () => {
+// ========== CRM PAGE ==========
+const CRMPage = () => {
   const {org} = useApp();
-  const [stats, setStats] = useState({projets: 0, heures: 0, ca: 0, clients: 0});
-  const [loading, setLoading] = useState(true);
-  useEffect(() => { Promise.all([supabase.from('projets').select('id').eq('organisation_id', org.id).eq('statut', 'active'), supabase.from('saisies_temps').select('heures').eq('organisation_id', org.id), supabase.from('factures').select('montant_total,statut').eq('organisation_id', org.id), supabase.from('clients').select('id').eq('organisation_id', org.id)]).then(([p, t, f, c]) => { setStats({projets: p.data?.length || 0, heures: t.data?.reduce((s, x) => s + (x.heures || 0), 0) || 0, ca: f.data?.filter(x => x.statut === 'paid').reduce((s, x) => s + (x.montant_total || 0), 0) || 0, clients: c.data?.length || 0}); setLoading(false); }); }, []);
-  if (loading) return <Loader />;
-  return <div><h1 className="text-2xl font-bold mb-6">Tableau de bord</h1><div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6"><StatCard title="Missions actives" value={stats.projets} icon="📋" color="blue" /><StatCard title="Heures saisies" value={fmt(stats.heures) + 'h'} icon="⏱️" color="green" /><StatCard title="CA encaissé" value={fmtMoney(stats.ca)} icon="💰" color="purple" /><StatCard title="Clients" value={stats.clients} icon="🏢" color="amber" /></div><div className="grid lg:grid-cols-2 gap-6"><Card title="Activité récente"><p className="text-slate-400">Dernières actions...</p></Card><Card title="À faire"><p className="text-slate-400">Tâches en attente...</p></Card></div></div>;
-};
-
-const ClientsPage = () => {
-  const {org} = useApp();
-  const [items, setItems] = useState([]);
+  const [tab, setTab] = useState('clients');
+  const [clients, setClients] = useState([]);
+  const [contacts, setContacts] = useState([]);
+  const [opportunites, setOpportunites] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [modal, setModal] = useState(false);
-  const [edit, setEdit] = useState(null);
+  const [modal, setModal] = useState(null);
+  const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
-  useEffect(() => { load(); }, []);
-  const load = async () => { const {data} = await supabase.from('clients').select('*').eq('organisation_id', org.id).order('nom'); setItems(data || []); setLoading(false); };
-  const openNew = () => { setEdit(null); setForm({code: genCode('CLI'), nom: '', ville: 'DAKAR', email: '', telephone: ''}); setModal(true); };
-  const openEdit = (r) => { setEdit(r); setForm(r); setModal(true); };
-  const save = async () => { if (!form.nom) return alert('Nom requis'); setSaving(true); try { if (edit?.id) await supabase.from('clients').update(form).eq('id', edit.id); else await supabase.from('clients').insert([{...form, organisation_id: org.id}]); setModal(false); load(); } catch (e) { alert(e.message); } setSaving(false); };
-  const del = async (r) => { if (!confirm('Supprimer ce client?')) return; await supabase.from('clients').delete().eq('id', r.id); load(); };
-  const filtered = items.filter(x => x.nom?.toLowerCase().includes(search.toLowerCase()));
-  return <div><div className="flex justify-between items-center mb-6"><div><h1 className="text-2xl font-bold">Clients</h1><p className="text-slate-500">{items.length} clients</p></div><Button onClick={openNew} icon="➕">Nouveau</Button></div><Card><div className="mb-4"><Input value={search} onChange={setSearch} placeholder="🔍 Rechercher..." className="max-w-xs" /></div><Table loading={loading} columns={[{header: 'Code', render: r => <span className="font-mono text-blue-600 text-xs bg-blue-50 px-2 py-1 rounded">{r.code}</span>}, {header: 'Nom', render: r => <b>{r.nom}</b>}, {header: 'Ville', key: 'ville'}, {header: 'Email', key: 'email'}, {header: '', render: r => <div className="flex gap-1"><button onClick={() => openEdit(r)} className="p-1 hover:bg-slate-100 rounded">✏️</button><button onClick={() => del(r)} className="p-1 hover:bg-red-50 text-red-500 rounded">🗑️</button></div>}]} data={filtered} /></Card><Modal isOpen={modal} onClose={() => setModal(false)} title={edit ? 'Modifier client' : 'Nouveau client'}><div className="space-y-4"><div className="grid grid-cols-2 gap-4"><Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} /><Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required /></div><div className="grid grid-cols-2 gap-4"><Input label="Ville" value={form.ville} onChange={v => setForm(p => ({...p, ville: v}))} /><Input label="Email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} /></div><Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} /><div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Enregistrer</Button></div></div></Modal></div>;
-};
 
-const ProjectsPage = () => {
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    const [c, co, op] = await Promise.all([
+      supabase.from('clients').select('*').eq('organisation_id', org.id).order('nom'),
+      supabase.from('contacts').select('*,clients(nom)').eq('organisation_id', org.id).order('nom'),
+      supabase.from('opportunites').select('*,clients(nom)').eq('organisation_id', org.id).order('created_at', {ascending: false})
+    ]);
+    setClients(c.data || []);
+    setContacts(co.data || []);
+    setOpportunites(op.data || []);
+    setLoading(false);
+  };
+
+  // CLIENT CRUD
+  const openNewClient = () => { setEditItem(null); setForm({code: genCode('CLI'), type_client: 'entreprise', nom: '', denomination: '', ninea: '', adresse: '', ville: 'DAKAR', email: '', telephone: ''}); setModal('client'); };
+  const openEditClient = (c) => { setEditItem(c); setForm({...c}); setModal('client'); };
+  const saveClient = async () => {
+    if (!form.nom && !form.denomination) return alert('Nom requis');
+    setSaving(true);
+    try {
+      const data = {...form, nom: form.denomination || form.nom};
+      if (editItem?.id) await supabase.from('clients').update(data).eq('id', editItem.id);
+      else await supabase.from('clients').insert([{...data, organisation_id: org.id}]);
+      setModal(null); loadData();
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+  const deleteClient = async (c) => { if (!confirm(`Supprimer "${c.nom}" ?`)) return; await supabase.from('clients').delete().eq('id', c.id); loadData(); };
+
+  // CONTACT CRUD
+  const openNewContact = (clientId = '') => { setEditItem(null); setForm({client_id: clientId, nom: '', prenom: '', fonction: '', email: '', telephone: '', principal: false}); setModal('contact'); };
+  const openEditContact = (c) => { setEditItem(c); setForm({...c}); setModal('contact'); };
+  const saveContact = async () => {
+    if (!form.nom || !form.client_id) return alert('Client et nom requis');
+    setSaving(true);
+    try {
+      if (editItem?.id) await supabase.from('contacts').update(form).eq('id', editItem.id);
+      else await supabase.from('contacts').insert([{...form, organisation_id: org.id}]);
+      setModal(null); loadData();
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+  const deleteContact = async (c) => { if (!confirm(`Supprimer "${c.prenom} ${c.nom}" ?`)) return; await supabase.from('contacts').delete().eq('id', c.id); loadData(); };
+
+  // OPPORTUNITE CRUD
+  const openNewOpp = () => { setEditItem(null); setForm({code: genCode('OPP'), nom: '', client_id: '', montant: 0, probabilite: 50, stage: 'prospect', date_cloture_prevue: ''}); setModal('opportunite'); };
+  const openEditOpp = (o) => { setEditItem(o); setForm({...o, date_cloture_prevue: o.date_cloture_prevue?.split('T')[0] || ''}); setModal('opportunite'); };
+  const saveOpp = async () => {
+    if (!form.nom || !form.client_id) return alert('Client et nom requis');
+    setSaving(true);
+    try {
+      if (editItem?.id) await supabase.from('opportunites').update(form).eq('id', editItem.id);
+      else await supabase.from('opportunites').insert([{...form, organisation_id: org.id}]);
+      setModal(null); loadData();
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+  const updateOppStage = async (o, stage) => { await supabase.from('opportunites').update({stage}).eq('id', o.id); loadData(); };
+
+  const filteredClients = clients.filter(c => c.nom?.toLowerCase().includes(search.toLowerCase()) || c.ninea?.toLowerCase().includes(search.toLowerCase()));
+  const filteredContacts = contacts.filter(c => c.nom?.toLowerCase().includes(search.toLowerCase()) || c.prenom?.toLowerCase().includes(search.toLowerCase()));
+  const oppActives = opportunites.filter(o => !['gagne', 'perdu'].includes(o.stage));
+  const totalPipeline = oppActives.reduce((s, o) => s + (o.montant * o.probabilite / 100), 0);
+
+  return (
+    <div>
+      <PageHeader title="CRM" subtitle={`${clients.length} clients • ${contacts.length} contacts • ${opportunites.length} opportunités`}
+        tabs={[{key: 'clients', label: 'Clients', icon: '🏢', count: clients.length}, {key: 'contacts', label: 'Contacts', icon: '👤', count: contacts.length}, {key: 'opportunites', label: 'Opportunités', icon: '🎯', count: opportunites.length}, {key: 'pipeline', label: 'Pipeline', icon: '📊'}]}
+        activeTab={tab} onTabChange={setTab}
+        action={<div className="flex gap-2"><Button variant="secondary" size="sm" onClick={() => openNewContact()} icon="👤">Contact</Button><Button size="sm" onClick={openNewClient} icon="➕">Client</Button></div>}
+      />
+
+      {loading ? <Loader /> : (<>
+        {tab === 'clients' && (
+          <Card>
+            <div className="flex gap-4 mb-4"><SearchInput value={search} onChange={setSearch} placeholder="Rechercher..." className="flex-1" /><Select value="" onChange={() => {}} options={CLIENT_TYPES} placeholder="Type" className="w-40" /></div>
+            <Table columns={[
+              {header: 'Client', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.code} • {CLIENT_TYPES.find(t => t.value === r.type_client)?.label}</div></div>},
+              {header: 'NINEA', render: r => r.ninea || '-'},
+              {header: 'Ville', key: 'ville'},
+              {header: 'Contact', render: r => <div className="text-sm"><div>{r.email}</div><div className="text-slate-400">{r.telephone}</div></div>}
+            ]} data={filteredClients} actions={r => <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openNewContact(r.id)}>👤</Button><Button variant="ghost" size="xs" onClick={() => openEditClient(r)}>✏️</Button><Button variant="ghost" size="xs" onClick={() => deleteClient(r)}>🗑️</Button></div>} />
+          </Card>
+        )}
+
+        {tab === 'contacts' && (
+          <Card>
+            <div className="mb-4"><SearchInput value={search} onChange={setSearch} placeholder="Rechercher..." /></div>
+            <Table columns={[
+              {header: 'Contact', render: r => <div><div className="font-medium">{r.prenom} {r.nom}</div><div className="text-xs text-slate-400">{r.fonction}</div></div>},
+              {header: 'Client', render: r => r.clients?.nom || '-'},
+              {header: 'Email', key: 'email'},
+              {header: 'Téléphone', render: r => r.telephone || '-'},
+              {header: 'Principal', render: r => r.principal ? <Badge color="green">✓</Badge> : ''}
+            ]} data={filteredContacts} actions={r => <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openEditContact(r)}>✏️</Button><Button variant="ghost" size="xs" onClick={() => deleteContact(r)}>🗑️</Button></div>} />
+          </Card>
+        )}
+
+        {tab === 'opportunites' && (
+          <Card action={<Button size="sm" onClick={openNewOpp} icon="➕">Opportunité</Button>}>
+            <div className="grid grid-cols-3 gap-4 mb-6 p-4 bg-slate-50 rounded-xl">
+              <div className="text-center"><div className="text-2xl font-bold">{oppActives.length}</div><div className="text-sm text-slate-500">En cours</div></div>
+              <div className="text-center"><div className="text-2xl font-bold text-green-600">{fmtMoney(totalPipeline)}</div><div className="text-sm text-slate-500">Pipeline pondéré</div></div>
+              <div className="text-center"><div className="text-2xl font-bold">{opportunites.filter(o => o.stage === 'gagne').length}</div><div className="text-sm text-slate-500">Gagnées</div></div>
+            </div>
+            <Table columns={[
+              {header: 'Opportunité', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.code}</div></div>},
+              {header: 'Client', render: r => r.clients?.nom || '-'},
+              {header: 'Montant', render: r => <span className="font-medium">{fmtMoney(r.montant)}</span>},
+              {header: 'Proba', render: r => <span>{r.probabilite}%</span>},
+              {header: 'Stage', render: r => { const s = OPPORTUNITY_STAGES.find(s => s.id === r.stage); return <Badge color={s?.color}>{s?.nom}</Badge>; }},
+              {header: 'Clôture', render: r => r.date_cloture_prevue ? fmtDate(r.date_cloture_prevue) : '-'}
+            ]} data={opportunites} actions={r => <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openEditOpp(r)}>✏️</Button></div>} />
+          </Card>
+        )}
+
+        {tab === 'pipeline' && (
+          <div className="flex gap-4 overflow-x-auto pb-4">
+            {OPPORTUNITY_STAGES.filter(s => !['gagne', 'perdu'].includes(s.id)).map(stage => {
+              const opps = opportunites.filter(o => o.stage === stage.id);
+              const total = opps.reduce((s, o) => s + o.montant, 0);
+              return (
+                <div key={stage.id} className="pipeline-stage flex-shrink-0">
+                  <div className="bg-slate-100 rounded-t-xl p-3">
+                    <div className="flex justify-between items-center"><span className="font-medium">{stage.nom}</span><Badge color={stage.color}>{opps.length}</Badge></div>
+                    <div className="text-sm text-slate-500 mt-1">{fmtMoney(total)}</div>
+                  </div>
+                  <div className="bg-slate-50 rounded-b-xl p-2 min-h-[300px] space-y-2">
+                    {opps.map(o => (
+                      <div key={o.id} className="kanban-card bg-white p-3 rounded-lg shadow-sm border hover:shadow-md transition-shadow cursor-pointer" onClick={() => openEditOpp(o)}>
+                        <div className="font-medium text-sm">{o.nom}</div>
+                        <div className="text-xs text-slate-400">{o.clients?.nom}</div>
+                        <div className="flex justify-between items-center mt-2">
+                          <span className="text-sm font-medium text-green-600">{fmtMoney(o.montant)}</span>
+                          <span className="text-xs text-slate-400">{o.probabilite}%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </>)}
+
+      {/* MODAL CLIENT */}
+      <Modal isOpen={modal === 'client'} onClose={() => setModal(null)} title={editItem ? 'Modifier client' : 'Nouveau client'} size="lg">
+        <div className="space-y-4">
+          <Select label="Type de client" value={form.type_client} onChange={v => setForm(p => ({...p, type_client: v}))} options={CLIENT_TYPES} required />
+          {form.type_client === 'entreprise' ? (<>
+            <div className="grid grid-cols-2 gap-4"><Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} /><Input label="NINEA" value={form.ninea} onChange={v => setForm(p => ({...p, ninea: v}))} /></div>
+            <Input label="Dénomination sociale" value={form.denomination} onChange={v => setForm(p => ({...p, denomination: v}))} required />
+          </>) : (
+            <div className="grid grid-cols-2 gap-4"><Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} /><Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required /></div>
+          )}
+          <Input label="Adresse" value={form.adresse} onChange={v => setForm(p => ({...p, adresse: v}))} />
+          <div className="grid grid-cols-2 gap-4"><Input label="Ville" value={form.ville} onChange={v => setForm(p => ({...p, ville: v}))} /><Input label="Pays" value={form.pays || 'Sénégal'} onChange={v => setForm(p => ({...p, pays: v}))} /></div>
+          <div className="grid grid-cols-2 gap-4"><Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} /><Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} /></div>
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveClient} loading={saving} className="flex-1">Enregistrer</Button></div>
+        </div>
+      </Modal>
+
+      {/* MODAL CONTACT */}
+      <Modal isOpen={modal === 'contact'} onClose={() => setModal(null)} title={editItem ? 'Modifier contact' : 'Nouveau contact'}>
+        <div className="space-y-4">
+          <Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" required />
+          <div className="grid grid-cols-2 gap-4"><Input label="Prénom" value={form.prenom} onChange={v => setForm(p => ({...p, prenom: v}))} /><Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required /></div>
+          <Input label="Fonction" value={form.fonction} onChange={v => setForm(p => ({...p, fonction: v}))} placeholder="Ex: Directeur Financier" />
+          <div className="grid grid-cols-2 gap-4"><Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} /><Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} /></div>
+          <Checkbox label="Contact principal" checked={form.principal} onChange={v => setForm(p => ({...p, principal: v}))} />
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveContact} loading={saving} className="flex-1">Enregistrer</Button></div>
+        </div>
+      </Modal>
+
+      {/* MODAL OPPORTUNITE */}
+      <Modal isOpen={modal === 'opportunite'} onClose={() => setModal(null)} title={editItem ? 'Modifier opportunité' : 'Nouvelle opportunité'}>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4"><Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} /><Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" required /></div>
+          <Input label="Nom de l'opportunité" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
+          <div className="grid grid-cols-3 gap-4"><Input label="Montant (FCFA)" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} /><Input label="Probabilité (%)" type="number" value={form.probabilite} onChange={v => setForm(p => ({...p, probabilite: v}))} min={0} max={100} /><Select label="Étape" value={form.stage} onChange={v => setForm(p => ({...p, stage: v}))} options={OPPORTUNITY_STAGES.map(s => ({value: s.id, label: s.nom}))} /></div>
+          <Input label="Date clôture prévue" type="date" value={form.date_cloture_prevue} onChange={v => setForm(p => ({...p, date_cloture_prevue: v}))} />
+          <TextArea label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} rows={3} />
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveOpp} loading={saving} className="flex-1">Enregistrer</Button></div>
+        </div>
+      </Modal>
+    </div>
+  );
+};
+// ========== MISSIONS PAGE ==========
+const MissionsPage = () => {
   const {org} = useApp();
-  const [items, setItems] = useState([]);
+  const [missions, setMissions] = useState([]);
   const [clients, setClients] = useState([]);
+  const [depts, setDepts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState(false);
-  const [edit, setEdit] = useState(null);
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [modal, setModal] = useState(null);
+  const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
-  useEffect(() => { load(); }, []);
-  const load = async () => { const [p, c] = await Promise.all([supabase.from('projets').select('*,clients(nom)').eq('organisation_id', org.id).order('created_at', {ascending: false}), supabase.from('clients').select('id,nom').eq('organisation_id', org.id)]); setItems(p.data || []); setClients(c.data || []); setLoading(false); };
-  const openNew = () => { setEdit(null); setForm({code: genCode('PRJ'), nom: '', client_id: '', type_facturation: 'regie', statut: 'active', budget_montant: 0, date_debut: today()}); setModal(true); };
-  const openEdit = (r) => { setEdit(r); setForm({...r, date_debut: r.date_debut || '', date_fin: r.date_fin || ''}); setModal(true); };
-  const save = async () => { if (!form.nom) return alert('Nom requis'); setSaving(true); try { const data = {...form, client_id: form.client_id || null}; if (edit?.id) await supabase.from('projets').update(data).eq('id', edit.id); else await supabase.from('projets').insert([{...data, organisation_id: org.id}]); setModal(false); load(); } catch (e) { alert(e.message); } setSaving(false); };
-  const statusColor = {draft: 'gray', active: 'green', completed: 'blue', cancelled: 'red'};
-  return <div><div className="flex justify-between items-center mb-6"><div><h1 className="text-2xl font-bold">Missions</h1><p className="text-slate-500">{items.length} missions</p></div><Button onClick={openNew} icon="➕">Nouvelle</Button></div><Card><Table loading={loading} columns={[{header: 'Code', render: r => <span className="font-mono text-blue-600 text-xs bg-blue-50 px-2 py-1 rounded">{r.code}</span>}, {header: 'Mission', render: r => <b>{r.nom}</b>}, {header: 'Client', render: r => r.clients?.nom || '-'}, {header: 'Type', render: r => <Badge>{r.type_facturation === 'forfait' ? 'Forfait' : 'Régie'}</Badge>}, {header: 'Statut', render: r => <Badge color={statusColor[r.statut]}>{r.statut}</Badge>}, {header: 'Budget', render: r => r.budget_montant ? fmtMoney(r.budget_montant) : '-'}, {header: '', render: r => <button onClick={() => openEdit(r)} className="p-1 hover:bg-slate-100 rounded">✏️</button>}]} data={items} /></Card><Modal isOpen={modal} onClose={() => setModal(false)} title={edit ? 'Modifier mission' : 'Nouvelle mission'} size="lg"><div className="space-y-4"><div className="grid grid-cols-2 gap-4"><Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} /><Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required /></div><div className="grid grid-cols-2 gap-4"><Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" /><Select label="Type" value={form.type_facturation} onChange={v => setForm(p => ({...p, type_facturation: v}))} options={[{value: 'regie', label: 'Régie'}, {value: 'forfait', label: 'Forfait'}]} /></div><div className="grid grid-cols-3 gap-4"><Select label="Statut" value={form.statut} onChange={v => setForm(p => ({...p, statut: v}))} options={[{value: 'draft', label: 'Brouillon'}, {value: 'active', label: 'En cours'}, {value: 'completed', label: 'Terminé'}]} /><Input label="Budget (FCFA)" type="number" value={form.budget_montant} onChange={v => setForm(p => ({...p, budget_montant: v}))} /><Input label="Date début" type="date" value={form.date_debut} onChange={v => setForm(p => ({...p, date_debut: v}))} /></div><div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Enregistrer</Button></div></div></Modal></div>;
+  const [acomptes, setAcomptes] = useState([]);
+
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    const [m, c, d, a] = await Promise.all([
+      supabase.from('projets').select('*,clients(nom),departements(nom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
+      supabase.from('clients').select('id,nom').eq('organisation_id', org.id),
+      supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
+      supabase.from('acomptes').select('*').eq('organisation_id', org.id)
+    ]);
+    setMissions(m.data || []);
+    setClients(c.data || []);
+    setDepts(d.data || []);
+    setAcomptes(a.data || []);
+    setLoading(false);
+  };
+
+  const openNew = () => {
+    setEditItem(null);
+    setForm({
+      code: genCode('MIS'), nom: '', client_id: '', departement_id: '',
+      type_facturation: 'regie', statut: 'draft', budget_montant: 0,
+      date_debut: today(), date_fin_prevue: '', description: '', facturable: true
+    });
+    setModal('mission');
+  };
+
+  const openEdit = (m) => {
+    setEditItem(m);
+    setForm({...m, date_debut: m.date_debut?.split('T')[0] || '', date_fin_prevue: m.date_fin_prevue?.split('T')[0] || ''});
+    setModal('mission');
+  };
+
+  const save = async () => {
+    if (!form.nom || !form.client_id) return alert('Client et nom requis');
+    setSaving(true);
+    try {
+      const data = {...form, client_id: form.client_id || null, departement_id: form.departement_id || null};
+      if (editItem?.id) await supabase.from('projets').update(data).eq('id', editItem.id);
+      else await supabase.from('projets').insert([{...data, organisation_id: org.id}]);
+      setModal(null); loadData();
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const openAcomptes = (m) => { setEditItem(m); setModal('acomptes'); };
+
+  const addAcompte = async () => {
+    const missionAcomptes = acomptes.filter(a => a.projet_id === editItem.id);
+    const totalAcomptes = missionAcomptes.reduce((s, a) => s + (a.montant || 0), 0);
+    const reste = (editItem.budget_montant || 0) - totalAcomptes;
+    const num = missionAcomptes.length + 1;
+    
+    const montant = parseFloat(prompt(`Montant de l'acompte ${num} (Reste: ${fmt(reste)} F):`, reste)) || 0;
+    if (montant <= 0) return;
+    
+    await supabase.from('acomptes').insert([{
+      organisation_id: org.id,
+      projet_id: editItem.id,
+      numero: num,
+      montant,
+      date_prevu: today(),
+      statut: 'prevu'
+    }]);
+    
+    const newTotal = totalAcomptes + montant;
+    await supabase.from('projets').update({montant_facture: newTotal}).eq('id', editItem.id);
+    loadData();
+  };
+
+  const getMissionAcomptes = (missionId) => acomptes.filter(a => a.projet_id === missionId);
+  const getMissionTotalFacture = (m) => getMissionAcomptes(m.id).reduce((s, a) => s + (a.montant || 0), 0);
+  const getMissionResteFacturer = (m) => (m.budget_montant || 0) - getMissionTotalFacture(m);
+  const getMissionProgress = (m) => m.budget_montant > 0 ? Math.round((getMissionTotalFacture(m) / m.budget_montant) * 100) : 0;
+
+  // Calcul dépassement délai
+  const getDelaiStatus = (m) => {
+    if (!m.date_fin_prevue) return null;
+    const days = daysBetween(today(), m.date_fin_prevue);
+    if (m.statut === 'completed') return {status: 'ok', label: 'Terminé'};
+    if (days < 0) return {status: 'late', label: `${Math.abs(days)}j de retard`, color: 'red'};
+    if (days <= 7) return {status: 'warning', label: `${days}j restants`, color: 'yellow'};
+    return {status: 'ok', label: `${days}j restants`, color: 'green'};
+  };
+
+  const filtered = missions.filter(m => {
+    if (search && !m.nom?.toLowerCase().includes(search.toLowerCase()) && !m.code?.toLowerCase().includes(search.toLowerCase())) return false;
+    if (filterStatus && m.statut !== filterStatus) return false;
+    return true;
+  });
+
+  const stats = {
+    total: missions.length,
+    actives: missions.filter(m => m.statut === 'active').length,
+    budget: missions.reduce((s, m) => s + (m.budget_montant || 0), 0),
+    facture: missions.reduce((s, m) => s + getMissionTotalFacture(m), 0)
+  };
+
+  return (
+    <div>
+      <PageHeader title="Missions" subtitle={`${stats.actives} actives sur ${stats.total} • Budget: ${fmtMoney(stats.budget)}`}
+        action={<Button onClick={openNew} icon="➕">Nouvelle mission</Button>} />
+
+      {loading ? <Loader /> : (
+        <Card>
+          <div className="flex flex-col sm:flex-row gap-4 mb-4">
+            <SearchInput value={search} onChange={setSearch} placeholder="Rechercher..." className="flex-1" />
+            <Select value={filterStatus} onChange={setFilterStatus} options={Object.entries(MISSION_STATUS).map(([k, v]) => ({value: k, label: v.label}))} placeholder="Tous statuts" className="w-40" />
+          </div>
+
+          <Table columns={[
+            {header: 'Mission', render: r => (
+              <div>
+                <div className="font-medium">{r.nom}</div>
+                <div className="text-xs text-slate-400">{r.code}</div>
+              </div>
+            )},
+            {header: 'Client', render: r => r.clients?.nom || '-'},
+            {header: 'Type', render: r => <Badge>{r.type_facturation === 'forfait' ? 'Forfait' : 'Régie'}</Badge>},
+            {header: 'Budget', render: r => (
+              <div>
+                <div className="font-medium">{fmtMoney(r.budget_montant)}</div>
+                <ProgressBar value={getMissionTotalFacture(r)} max={r.budget_montant} color={getMissionProgress(r) >= 100 ? 'green' : 'blue'} size="sm" showLabel={false} />
+                <div className="text-xs text-slate-400 mt-1">Reste: {fmtMoney(getMissionResteFacturer(r))}</div>
+              </div>
+            )},
+            {header: 'Délai', render: r => {
+              const d = getDelaiStatus(r);
+              if (!d) return '-';
+              return <Badge color={d.color}>{d.label}</Badge>;
+            }},
+            {header: 'Statut', render: r => <Badge color={MISSION_STATUS[r.statut]?.color}>{MISSION_STATUS[r.statut]?.label}</Badge>}
+          ]} data={filtered} actions={r => (
+            <div className="flex gap-1">
+              <Button variant="ghost" size="xs" onClick={() => openAcomptes(r)} title="Acomptes">💰</Button>
+              <Button variant="ghost" size="xs" onClick={() => openEdit(r)}>✏️</Button>
+            </div>
+          )} />
+        </Card>
+      )}
+
+      {/* MODAL MISSION */}
+      <Modal isOpen={modal === 'mission'} onClose={() => setModal(null)} title={editItem ? 'Modifier mission' : 'Nouvelle mission'} size="lg">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
+            <Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" required />
+          </div>
+          <Input label="Nom de la mission" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
+          <div className="grid grid-cols-3 gap-4">
+            <Select label="Département" value={form.departement_id} onChange={v => setForm(p => ({...p, departement_id: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" />
+            <Select label="Type facturation" value={form.type_facturation} onChange={v => setForm(p => ({...p, type_facturation: v}))} options={BILLING_TYPES} />
+            <Select label="Statut" value={form.statut} onChange={v => setForm(p => ({...p, statut: v}))} options={Object.entries(MISSION_STATUS).map(([k, v]) => ({value: k, label: v.label}))} />
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <Input label="Budget (FCFA)" type="number" value={form.budget_montant} onChange={v => setForm(p => ({...p, budget_montant: v}))} />
+            <Input label="Date début" type="date" value={form.date_debut} onChange={v => setForm(p => ({...p, date_debut: v}))} />
+            <Input label="Date fin prévue" type="date" value={form.date_fin_prevue} onChange={v => setForm(p => ({...p, date_fin_prevue: v}))} />
+          </div>
+          <TextArea label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} rows={3} />
+          <Checkbox label="Mission facturable" checked={form.facturable} onChange={v => setForm(p => ({...p, facturable: v}))} />
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={save} loading={saving} className="flex-1">Enregistrer</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* MODAL ACOMPTES */}
+      <Modal isOpen={modal === 'acomptes'} onClose={() => setModal(null)} title={`Acomptes - ${editItem?.nom}`} size="md">
+        {editItem && (
+          <div>
+            <div className="p-4 bg-slate-50 rounded-xl mb-4">
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div><div className="text-sm text-slate-500">Budget</div><div className="text-xl font-bold">{fmtMoney(editItem.budget_montant)}</div></div>
+                <div><div className="text-sm text-slate-500">Facturé</div><div className="text-xl font-bold text-green-600">{fmtMoney(getMissionTotalFacture(editItem))}</div></div>
+                <div><div className="text-sm text-slate-500">Reste</div><div className="text-xl font-bold text-amber-600">{fmtMoney(getMissionResteFacturer(editItem))}</div></div>
+              </div>
+              <ProgressBar value={getMissionTotalFacture(editItem)} max={editItem.budget_montant} color="green" className="mt-4" />
+            </div>
+
+            <div className="space-y-2 mb-4">
+              {getMissionAcomptes(editItem.id).map((a, i) => (
+                <div key={a.id} className="flex items-center justify-between p-3 bg-white border rounded-xl">
+                  <div>
+                    <div className="font-medium">Acompte {a.numero}</div>
+                    <div className="text-sm text-slate-400">{fmtDate(a.date_prevu)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-bold">{fmtMoney(a.montant)}</div>
+                    <Badge color={a.statut === 'facture' ? 'green' : a.statut === 'prevu' ? 'blue' : 'gray'}>{a.statut}</Badge>
+                  </div>
+                </div>
+              ))}
+              {getMissionAcomptes(editItem.id).length === 0 && <p className="text-center text-slate-400 py-4">Aucun acompte</p>}
+            </div>
+
+            {getMissionResteFacturer(editItem) > 0 && (
+              <Button onClick={addAcompte} className="w-full" icon="➕">Ajouter un acompte</Button>
+            )}
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
 };
 
+// ========== STAFFING PAGE ==========
+const StaffingPage = () => {
+  const {org} = useApp();
+  const [affectations, setAffectations] = useState([]);
+  const [collaborateurs, setCollaborateurs] = useState([]);
+  const [missions, setMissions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [weekStart, setWeekStart] = useState(getWeekStart());
+  const [modal, setModal] = useState(false);
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    const [a, c, m] = await Promise.all([
+      supabase.from('affectations').select('*,collaborateurs(nom,prenom),projets(nom,code)').eq('organisation_id', org.id),
+      supabase.from('collaborateurs').select('*,grades(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
+      supabase.from('projets').select('id,nom,code').eq('organisation_id', org.id).eq('statut', 'active')
+    ]);
+    setAffectations(a.data || []);
+    setCollaborateurs(c.data || []);
+    setMissions(m.data || []);
+    setLoading(false);
+  };
+
+  const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven'].map((d, i) => ({label: d, date: addDays(weekStart, i)}));
+
+  const getAffectation = (collabId, date) => affectations.find(a => a.collaborateur_id === collabId && a.date === date);
+
+  const openNew = (collabId = '', date = '') => {
+    setForm({collaborateur_id: collabId, projet_id: '', date: date || today(), heures: 8});
+    setModal(true);
+  };
+
+  const saveAffectation = async () => {
+    if (!form.collaborateur_id || !form.projet_id) return alert('Collaborateur et mission requis');
+    setSaving(true);
+    try {
+      const existing = getAffectation(form.collaborateur_id, form.date);
+      if (existing) await supabase.from('affectations').update(form).eq('id', existing.id);
+      else await supabase.from('affectations').insert([{...form, organisation_id: org.id}]);
+      setModal(false); loadData();
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const deleteAffectation = async (a) => {
+    await supabase.from('affectations').delete().eq('id', a.id);
+    loadData();
+  };
+
+  // Calcul disponibilité
+  const getCollabLoad = (collabId) => {
+    const weekAff = affectations.filter(a => {
+      if (a.collaborateur_id !== collabId) return false;
+      return a.date >= weekStart && a.date <= addDays(weekStart, 4);
+    });
+    return weekAff.reduce((s, a) => s + (a.heures || 0), 0);
+  };
+
+  return (
+    <div>
+      <PageHeader title="Staffing" subtitle="Planning des affectations"
+        action={<div className="flex gap-2">
+          <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, -7))}>← Sem. préc.</Button>
+          <Button variant="secondary" onClick={() => setWeekStart(getWeekStart())}>Aujourd'hui</Button>
+          <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, 7))}>Sem. suiv. →</Button>
+          <Button onClick={() => openNew()} icon="➕">Affecter</Button>
+        </div>}
+      />
+
+      {loading ? <Loader /> : (
+        <Card title={`Semaine du ${fmtDate(weekStart)}`}>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b">
+                  <th className="px-4 py-3 text-left w-48">Collaborateur</th>
+                  {days.map(d => <th key={d.date} className="px-2 py-3 text-center w-32">{d.label}<br/><span className="text-xs text-slate-400">{d.date.split('-')[2]}</span></th>)}
+                  <th className="px-4 py-3 text-center w-24">Charge</th>
+                </tr>
+              </thead>
+              <tbody>
+                {collaborateurs.map(c => {
+                  const load = getCollabLoad(c.id);
+                  const loadPercent = Math.round((load / 40) * 100);
+                  return (
+                    <tr key={c.id} className="border-b border-slate-50">
+                      <td className="px-4 py-2">
+                        <div className="font-medium">{c.prenom} {c.nom}</div>
+                        <div className="text-xs text-slate-400">{c.grades?.nom}</div>
+                      </td>
+                      {days.map(d => {
+                        const aff = getAffectation(c.id, d.date);
+                        return (
+                          <td key={d.date} className="px-1 py-2 text-center">
+                            {aff ? (
+                              <div className="bg-blue-100 text-blue-700 rounded-lg p-2 text-xs cursor-pointer hover:bg-blue-200" onClick={() => deleteAffectation(aff)}>
+                                <div className="font-medium truncate">{aff.projets?.code}</div>
+                                <div>{aff.heures}h</div>
+                              </div>
+                            ) : (
+                              <button onClick={() => openNew(c.id, d.date)} className="w-full h-12 border-2 border-dashed border-slate-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-colors text-slate-400">+</button>
+                            )}
+                          </td>
+                        );
+                      })}
+                      <td className="px-4 py-2 text-center">
+                        <div className={cn('font-bold', loadPercent > 100 ? 'text-red-500' : loadPercent >= 80 ? 'text-green-500' : 'text-slate-400')}>
+                          {load}h / 40h
+                        </div>
+                        <ProgressBar value={load} max={40} color={loadPercent > 100 ? 'red' : 'green'} size="sm" showLabel={false} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      <Modal isOpen={modal} onClose={() => setModal(false)} title="Nouvelle affectation" size="sm">
+        <div className="space-y-4">
+          <Select label="Collaborateur" value={form.collaborateur_id} onChange={v => setForm(p => ({...p, collaborateur_id: v}))} options={collaborateurs.map(c => ({value: c.id, label: `${c.prenom} ${c.nom}`}))} placeholder="Sélectionner" required />
+          <Select label="Mission" value={form.projet_id} onChange={v => setForm(p => ({...p, projet_id: v}))} options={missions.map(m => ({value: m.id, label: `${m.code} - ${m.nom}`}))} placeholder="Sélectionner" required />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Date" type="date" value={form.date} onChange={v => setForm(p => ({...p, date: v}))} />
+            <Input label="Heures" type="number" value={form.heures} onChange={v => setForm(p => ({...p, heures: v}))} min={1} max={12} />
+          </div>
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button>
+            <Button onClick={saveAffectation} loading={saving} className="flex-1">Enregistrer</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+};
+// ========== TIMESHEET PAGE ==========
 const TimesheetPage = () => {
   const {org, user} = useApp();
   const [weekStart, setWeekStart] = useState(getWeekStart());
   const [entries, setEntries] = useState([]);
-  const [projects, setProjects] = useState([]);
+  const [missions, setMissions] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [holidays, setHolidays] = useState([]);
+  const [conges, setConges] = useState([]);
   const [loading, setLoading] = useState(true);
-  const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((d, i) => ({label: d, date: addDays(weekStart, i)}));
-  useEffect(() => { load(); }, [weekStart]);
-  const load = async () => { setLoading(true); const end = addDays(weekStart, 6); const [t, p] = await Promise.all([supabase.from('saisies_temps').select('*').eq('organisation_id', org.id).eq('utilisateur_id', user.id).gte('date', weekStart).lte('date', end), supabase.from('projets').select('id,nom,code').eq('organisation_id', org.id).eq('statut', 'active')]); setEntries(t.data || []); setProjects(p.data || []); setLoading(false); };
+  const [filterClient, setFilterClient] = useState('');
+  const [filterSearch, setFilterSearch] = useState('');
+  const [commentModal, setCommentModal] = useState(null);
+  const [comment, setComment] = useState('');
+  const [clients, setClients] = useState([]);
+
+  const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((d, i) => ({
+    label: d, 
+    date: addDays(weekStart, i),
+    isWeekend: i >= 5
+  }));
+
+  useEffect(() => { loadData(); }, [weekStart]);
+
+  const loadData = async () => {
+    setLoading(true);
+    const end = addDays(weekStart, 6);
+    const [t, m, cat, h, cg, cl] = await Promise.all([
+      supabase.from('saisies_temps').select('*,projets(nom,code,client_id,facturable)').eq('organisation_id', org.id).eq('utilisateur_id', user.id).gte('date', weekStart).lte('date', end),
+      supabase.from('projets').select('*,clients(id,nom)').eq('organisation_id', org.id).in('statut', ['active', 'draft']),
+      supabase.from('categories_taches').select('*').eq('organisation_id', org.id),
+      supabase.from('jours_feries').select('date,nom').eq('organisation_id', org.id),
+      supabase.from('conges').select('*').eq('collaborateur_id', user.id).eq('statut', 'approved'),
+      supabase.from('clients').select('id,nom').eq('organisation_id', org.id)
+    ]);
+    setEntries(t.data || []);
+    setMissions(m.data || []);
+    setCategories(cat.data || []);
+    setHolidays((h.data || []).map(x => x.date));
+    setConges(cg.data || []);
+    setClients(cl.data || []);
+    setLoading(false);
+  };
+
   const getEntry = (projId, date) => entries.find(e => e.projet_id === projId && e.date === date);
-  const updateEntry = async (projId, date, heures) => { const existing = getEntry(projId, date); const h = parseFloat(heures) || 0; if (existing) { if (h > 0) await supabase.from('saisies_temps').update({heures: h}).eq('id', existing.id); else await supabase.from('saisies_temps').delete().eq('id', existing.id); } else if (h > 0) { await supabase.from('saisies_temps').insert([{organisation_id: org.id, utilisateur_id: user.id, projet_id: projId, date, heures: h, facturable: true}]); } load(); };
+
+  const isDateDisabled = (date) => {
+    if (isWeekend(date)) return 'weekend';
+    if (holidays.includes(date)) return 'holiday';
+    const conge = conges.find(c => date >= c.date_debut && date <= c.date_fin);
+    if (conge) return 'conge';
+    return false;
+  };
+
+  const updateEntry = async (projId, date, heures) => {
+    if (isDateDisabled(date)) return;
+    const existing = getEntry(projId, date);
+    const h = parseFloat(heures) || 0;
+    const mission = missions.find(m => m.id === projId);
+    
+    if (existing) {
+      if (h > 0) await supabase.from('saisies_temps').update({heures: h}).eq('id', existing.id);
+      else await supabase.from('saisies_temps').delete().eq('id', existing.id);
+    } else if (h > 0) {
+      await supabase.from('saisies_temps').insert([{
+        organisation_id: org.id, utilisateur_id: user.id, projet_id: projId,
+        date, heures: h, facturable: mission?.facturable !== false
+      }]);
+    }
+    loadData();
+  };
+
+  const openComment = (projId, date) => {
+    const entry = getEntry(projId, date);
+    setComment(entry?.commentaire || '');
+    setCommentModal({projId, date, entryId: entry?.id});
+  };
+
+  const saveComment = async () => {
+    if (!commentModal) return;
+    const {projId, date, entryId} = commentModal;
+    if (entryId) {
+      await supabase.from('saisies_temps').update({commentaire: comment}).eq('id', entryId);
+    } else {
+      await supabase.from('saisies_temps').insert([{
+        organisation_id: org.id, utilisateur_id: user.id, projet_id: projId,
+        date, heures: 0, commentaire: comment, facturable: true
+      }]);
+    }
+    setCommentModal(null);
+    loadData();
+  };
+
+  // Filtrage missions
+  const filteredMissions = missions.filter(m => {
+    if (filterClient && m.client_id !== filterClient) return false;
+    if (filterSearch && !m.nom.toLowerCase().includes(filterSearch.toLowerCase()) && !m.code.toLowerCase().includes(filterSearch.toLowerCase())) return false;
+    return true;
+  });
+
+  // Séparation facturables / non-facturables
+  const missionsFact = filteredMissions.filter(m => m.facturable !== false);
+  const missionsNonFact = filteredMissions.filter(m => m.facturable === false);
+
   const totalWeek = entries.reduce((s, e) => s + (e.heures || 0), 0);
-  return <div><div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6"><div><h1 className="text-2xl font-bold">Saisie des temps</h1><p className="text-slate-500">Semaine du {fmtDate(weekStart)}</p></div><div className="flex gap-2"><Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, -7))}>←</Button><Button variant="secondary" onClick={() => setWeekStart(getWeekStart())}>Aujourd'hui</Button><Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, 7))}>→</Button></div></div><Card>{loading ? <Loader /> : <div className="overflow-x-auto"><table className="w-full"><thead><tr className="border-b"><th className="px-4 py-3 text-left w-48">Projet</th>{days.map(d => <th key={d.date} className="px-2 py-3 text-center w-16">{d.label}<br /><span className="text-xs text-slate-400">{d.date.split('-')[2]}</span></th>)}<th className="px-4 py-3 text-right">Total</th></tr></thead><tbody>{projects.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">Aucune mission active. Créez d'abord une mission.</td></tr> : projects.map(p => { const total = entries.filter(e => e.projet_id === p.id).reduce((s, e) => s + (e.heures || 0), 0); return <tr key={p.id} className="border-b border-slate-50"><td className="px-4 py-2 text-sm font-medium">{p.nom}</td>{days.map(d => <td key={d.date} className="px-1 py-2 text-center"><input type="number" min="0" max="24" step="0.5" defaultValue={getEntry(p.id, d.date)?.heures || ''} onBlur={e => updateEntry(p.id, d.date, e.target.value)} className="w-14 px-2 py-1.5 bg-slate-50 border rounded-lg text-center text-sm" /></td>)}<td className="px-4 py-2 text-right font-bold">{total || '-'}</td></tr>; })}</tbody><tfoot><tr className="bg-slate-50"><td className="px-4 py-3 font-bold">Total</td>{days.map(d => { const t = entries.filter(e => e.date === d.date).reduce((s, e) => s + (e.heures || 0), 0); return <td key={d.date} className="px-2 py-3 text-center font-bold text-blue-600">{t || '-'}</td>; })}<td className="px-4 py-3 text-right font-bold text-xl text-blue-600">{totalWeek}h</td></tr></tfoot></table></div>}</Card></div>;
+  const totalFact = entries.filter(e => e.facturable).reduce((s, e) => s + (e.heures || 0), 0);
+
+  const renderMissionRow = (m) => {
+    const total = entries.filter(e => e.projet_id === m.id).reduce((s, e) => s + (e.heures || 0), 0);
+    return (
+      <tr key={m.id} className="border-b border-slate-50">
+        <td className="px-4 py-2">
+          <div className="font-medium text-sm">{m.nom}</div>
+          <div className="text-xs text-slate-400">{m.code} • {m.clients?.nom || 'Interne'}</div>
+        </td>
+        {days.map(d => {
+          const disabled = isDateDisabled(d.date);
+          const entry = getEntry(m.id, d.date);
+          return (
+            <td key={d.date} className={cn('px-1 py-2 text-center', disabled === 'weekend' && 'cell-weekend', disabled === 'holiday' && 'cell-holiday', disabled === 'conge' && 'bg-pink-50')}>
+              {disabled ? (
+                <div className="w-14 h-10 flex items-center justify-center text-xs text-slate-400">
+                  {disabled === 'holiday' ? '🎌' : disabled === 'conge' ? '🏖️' : '-'}
+                </div>
+              ) : (
+                <div className="relative group">
+                  <input type="number" min="0" max="24" step="0.5"
+                    defaultValue={entry?.heures || ''}
+                    onBlur={e => updateEntry(m.id, d.date, e.target.value)}
+                    className="w-14 px-2 py-1.5 bg-slate-50 border rounded-lg text-center text-sm focus:bg-white" />
+                  <button onClick={() => openComment(m.id, d.date)}
+                    className={cn('absolute -top-1 -right-1 w-4 h-4 rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity',
+                      entry?.commentaire ? 'bg-blue-500 text-white' : 'bg-slate-200 text-slate-500')}>
+                    {entry?.commentaire ? '💬' : '+'}
+                  </button>
+                </div>
+              )}
+            </td>
+          );
+        })}
+        <td className="px-4 py-2 text-right font-bold">{total || '-'}</td>
+      </tr>
+    );
+  };
+
+  return (
+    <div>
+      <PageHeader title="Saisie des temps" subtitle={`Semaine du ${fmtDate(weekStart)}`}
+        action={<div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setWeekStart(addDays(weekStart, -7))}>←</Button>
+          <Button variant="secondary" size="sm" onClick={() => setWeekStart(getWeekStart())}>Aujourd'hui</Button>
+          <Button variant="secondary" size="sm" onClick={() => setWeekStart(addDays(weekStart, 7))}>→</Button>
+        </div>}
+      />
+
+      {loading ? <Loader /> : (<>
+        {/* Filtres */}
+        <Card className="mb-4">
+          <div className="flex flex-col sm:flex-row gap-4">
+            <SearchInput value={filterSearch} onChange={setFilterSearch} placeholder="Rechercher une mission..." className="flex-1" />
+            <Select value={filterClient} onChange={setFilterClient} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Tous les clients" className="w-48" />
+          </div>
+        </Card>
+
+        {/* Tableau temps facturables */}
+        <Card title="⏱️ Temps facturables" className="mb-4">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b">
+                  <th className="px-4 py-3 text-left w-64">Mission</th>
+                  {days.map(d => (
+                    <th key={d.date} className={cn('px-2 py-3 text-center w-16', d.isWeekend && 'bg-slate-50')}>
+                      {d.label}<br/><span className="text-xs text-slate-400">{d.date.split('-')[2]}</span>
+                      {holidays.includes(d.date) && <span className="block text-xs">🎌</span>}
+                    </th>
+                  ))}
+                  <th className="px-4 py-3 text-right w-20">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {missionsFact.length === 0 ? (
+                  <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">Aucune mission facturable active</td></tr>
+                ) : missionsFact.map(renderMissionRow)}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        {/* Tableau temps non-facturables */}
+        <Card title="📋 Temps non-facturables" collapsible defaultOpen={false}>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b">
+                  <th className="px-4 py-3 text-left w-64">Activité</th>
+                  {days.map(d => (
+                    <th key={d.date} className={cn('px-2 py-3 text-center w-16', d.isWeekend && 'bg-slate-50')}>
+                      {d.label}<br/><span className="text-xs text-slate-400">{d.date.split('-')[2]}</span>
+                    </th>
+                  ))}
+                  <th className="px-4 py-3 text-right w-20">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {missionsNonFact.length === 0 ? (
+                  <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">Aucune activité non-facturable</td></tr>
+                ) : missionsNonFact.map(renderMissionRow)}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        {/* Totaux */}
+        <Card className="mt-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <span className="text-slate-500">Total semaine:</span>
+              <span className="text-2xl font-bold ml-2">{totalWeek}h</span>
+            </div>
+            <div className="flex gap-6">
+              <div><span className="text-slate-500">Facturable:</span><span className="font-bold text-green-600 ml-2">{totalFact}h</span></div>
+              <div><span className="text-slate-500">Non-fact:</span><span className="font-bold text-slate-400 ml-2">{totalWeek - totalFact}h</span></div>
+              <div><span className="text-slate-500">Taux:</span><span className="font-bold text-blue-600 ml-2">{totalWeek > 0 ? Math.round((totalFact / totalWeek) * 100) : 0}%</span></div>
+            </div>
+          </div>
+        </Card>
+      </>)}
+
+      {/* Modal commentaire */}
+      <Modal isOpen={!!commentModal} onClose={() => setCommentModal(null)} title="Commentaire" size="sm">
+        <div className="space-y-4">
+          <TextArea label="Décrivez votre activité" value={comment} onChange={setComment} rows={4} placeholder="Ex: Préparation des états financiers..." />
+          <div className="flex gap-3">
+            <Button variant="secondary" onClick={() => setCommentModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={saveComment} className="flex-1">Enregistrer</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
 };
 
-const InvoicesPage = () => {
+// ========== CONGES PAGE ==========
+const CongesPage = () => {
+  const {org, user} = useApp();
+  const [conges, setConges] = useState([]);
+  const [collaborateurs, setCollaborateurs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(false);
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState('mes');
+
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    const [c, co] = await Promise.all([
+      supabase.from('conges').select('*,collaborateurs(nom,prenom)').eq('organisation_id', org.id).order('date_debut', {ascending: false}),
+      supabase.from('collaborateurs').select('*').eq('organisation_id', org.id).eq('actif', true)
+    ]);
+    setConges(c.data || []);
+    setCollaborateurs(co.data || []);
+    setLoading(false);
+  };
+
+  const openNew = () => {
+    setForm({collaborateur_id: user.id, type_conge: 'conge_paye', date_debut: '', date_fin: '', motif: ''});
+    setModal(true);
+  };
+
+  const save = async () => {
+    if (!form.date_debut || !form.date_fin) return alert('Dates requises');
+    setSaving(true);
+    try {
+      const jours = workingDaysBetween(form.date_debut, form.date_fin);
+      await supabase.from('conges').insert([{...form, organisation_id: org.id, nb_jours: jours, statut: 'pending'}]);
+      setModal(false); loadData();
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const updateStatus = async (conge, statut) => {
+    await supabase.from('conges').update({statut, validateur_id: user.id, date_validation: new Date().toISOString()}).eq('id', conge.id);
+    loadData();
+  };
+
+  const mesConges = conges.filter(c => c.collaborateur_id === user.id);
+  const congesAValider = conges.filter(c => c.statut === 'pending');
+
+  // Solde congés (simplifié: 2.5j/mois, 30j/an)
+  const soldeConges = 30 - mesConges.filter(c => c.statut === 'approved' && c.type_conge === 'conge_paye').reduce((s, c) => s + (c.nb_jours || 0), 0);
+
+  return (
+    <div>
+      <PageHeader title="Congés & Absences" subtitle={`Solde: ${soldeConges} jours`}
+        tabs={[{key: 'mes', label: 'Mes congés', count: mesConges.length}, {key: 'valider', label: 'À valider', count: congesAValider.length}, {key: 'tous', label: 'Tous', count: conges.length}]}
+        activeTab={tab} onTabChange={setTab}
+        action={<Button onClick={openNew} icon="➕">Demander congé</Button>}
+      />
+
+      {loading ? <Loader /> : (
+        <Card>
+          <Table columns={[
+            {header: 'Collaborateur', render: r => tab !== 'mes' ? <span>{r.collaborateurs?.prenom} {r.collaborateurs?.nom}</span> : <span>Moi</span>},
+            {header: 'Type', render: r => { const t = LEAVE_TYPES.find(l => l.value === r.type_conge); return <Badge color={t?.color}>{t?.label}</Badge>; }},
+            {header: 'Période', render: r => <span>{fmtDate(r.date_debut)} → {fmtDate(r.date_fin)}</span>},
+            {header: 'Jours', render: r => <span className="font-medium">{r.nb_jours}j</span>},
+            {header: 'Statut', render: r => <Badge color={LEAVE_STATUS[r.statut]?.color}>{LEAVE_STATUS[r.statut]?.label}</Badge>},
+            {header: 'Motif', render: r => <span className="text-sm text-slate-500 truncate max-w-xs">{r.motif || '-'}</span>}
+          ]} data={tab === 'mes' ? mesConges : tab === 'valider' ? congesAValider : conges}
+          actions={r => tab === 'valider' && r.statut === 'pending' ? (
+            <div className="flex gap-1">
+              <Button variant="success" size="xs" onClick={() => updateStatus(r, 'approved')}>✓</Button>
+              <Button variant="danger" size="xs" onClick={() => updateStatus(r, 'rejected')}>✗</Button>
+            </div>
+          ) : null} />
+        </Card>
+      )}
+
+      <Modal isOpen={modal} onClose={() => setModal(false)} title="Demande de congé">
+        <div className="space-y-4">
+          <Select label="Type de congé" value={form.type_conge} onChange={v => setForm(p => ({...p, type_conge: v}))} options={LEAVE_TYPES.map(t => ({value: t.value, label: t.label}))} />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Date début" type="date" value={form.date_debut} onChange={v => setForm(p => ({...p, date_debut: v}))} required />
+            <Input label="Date fin" type="date" value={form.date_fin} onChange={v => setForm(p => ({...p, date_fin: v}))} required />
+          </div>
+          {form.date_debut && form.date_fin && (
+            <div className="p-3 bg-blue-50 rounded-xl text-center">
+              <span className="text-blue-600 font-medium">{workingDaysBetween(form.date_debut, form.date_fin)} jours ouvrés</span>
+            </div>
+          )}
+          <TextArea label="Motif (optionnel)" value={form.motif} onChange={v => setForm(p => ({...p, motif: v}))} rows={2} />
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button>
+            <Button onClick={save} loading={saving} className="flex-1">Soumettre</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+};
+// ========== FACTURATION PAGE ==========
+const FacturationPage = () => {
   const {org} = useApp();
-  const [items, setItems] = useState([]);
+  const [factures, setFactures] = useState([]);
+  const [missions, setMissions] = useState([]);
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState(false);
+  const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
-  useEffect(() => { load(); }, []);
-  const load = async () => { const [f, c] = await Promise.all([supabase.from('factures').select('*,clients(nom)').eq('organisation_id', org.id).order('date_emission', {ascending: false}), supabase.from('clients').select('id,nom').eq('organisation_id', org.id)]); setItems(f.data || []); setClients(c.data || []); setLoading(false); };
-  const openNew = () => { setForm({reference: genCode('FAC'), client_id: '', date_emission: today(), date_echeance: addDays(today(), 30), montant_ht: 0, taux_tva: 18, statut: 'draft'}); setModal(true); };
-  const save = async () => { if (!form.client_id) return alert('Client requis'); setSaving(true); try { const tva = form.montant_ht * form.taux_tva / 100; await supabase.from('factures').insert([{...form, organisation_id: org.id, montant_tva: tva, montant_total: form.montant_ht + tva}]); setModal(false); load(); } catch (e) { alert(e.message); } setSaving(false); };
-  const statusColor = {draft: 'gray', sent: 'blue', paid: 'green', overdue: 'red'};
-  return <div><div className="flex justify-between items-center mb-6"><div><h1 className="text-2xl font-bold">Facturation</h1><p className="text-slate-500">{items.length} factures</p></div><Button onClick={openNew} icon="➕">Nouvelle</Button></div><Card><Table loading={loading} columns={[{header: 'N°', render: r => <span className="font-mono text-blue-600">{r.reference}</span>}, {header: 'Client', render: r => r.clients?.nom || '-'}, {header: 'Date', render: r => fmtDate(r.date_emission)}, {header: 'Montant', render: r => <b>{fmtMoney(r.montant_total)}</b>}, {header: 'Statut', render: r => <Badge color={statusColor[r.statut]}>{r.statut}</Badge>}]} data={items} /></Card><Modal isOpen={modal} onClose={() => setModal(false)} title="Nouvelle facture"><div className="space-y-4"><div className="grid grid-cols-2 gap-4"><Input label="Référence" value={form.reference} onChange={v => setForm(p => ({...p, reference: v}))} /><Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" /></div><div className="grid grid-cols-2 gap-4"><Input label="Date émission" type="date" value={form.date_emission} onChange={v => setForm(p => ({...p, date_emission: v}))} /><Input label="Échéance" type="date" value={form.date_echeance} onChange={v => setForm(p => ({...p, date_echeance: v}))} /></div><div className="grid grid-cols-2 gap-4"><Input label="Montant HT" type="number" value={form.montant_ht} onChange={v => setForm(p => ({...p, montant_ht: v}))} /><Input label="TVA %" type="number" value={form.taux_tva} onChange={v => setForm(p => ({...p, taux_tva: v}))} /></div><div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Créer</Button></div></div></Modal></div>;
+
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    const [f, m, c] = await Promise.all([
+      supabase.from('factures').select('*,clients(nom),projets(nom,code)').eq('organisation_id', org.id).order('date_emission', {ascending: false}),
+      supabase.from('projets').select('*,clients(nom)').eq('organisation_id', org.id),
+      supabase.from('clients').select('id,nom').eq('organisation_id', org.id)
+    ]);
+    setFactures(f.data || []);
+    setMissions(m.data || []);
+    setClients(c.data || []);
+    setLoading(false);
+  };
+
+  const openNew = () => {
+    setForm({reference: genCode('FAC'), projet_id: '', client_id: '', type_facture: 'acompte', date_emission: today(), date_echeance: addDays(today(), 30), montant_ht: 0, taux_tva: 18, statut: 'draft'});
+    setModal('facture');
+  };
+
+  const save = async () => {
+    if (!form.client_id) return alert('Client requis');
+    setSaving(true);
+    try {
+      const tva = form.montant_ht * form.taux_tva / 100;
+      await supabase.from('factures').insert([{...form, montant_tva: tva, montant_total: form.montant_ht + tva, organisation_id: org.id}]);
+      setModal(null); loadData();
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const updateStatus = async (f, statut) => { await supabase.from('factures').update({statut}).eq('id', f.id); loadData(); };
+
+  const exportPDF = (f) => {
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF();
+    doc.setFontSize(20); doc.text('FACTURE', 105, 20, {align: 'center'});
+    doc.setFontSize(12); doc.text(f.reference, 105, 28, {align: 'center'});
+    doc.setFontSize(10);
+    doc.text('Date: ' + fmtDate(f.date_emission), 20, 45);
+    doc.text('Client: ' + (f.clients?.nom || '-'), 20, 52);
+    doc.text('Montant HT: ' + fmt(f.montant_ht) + ' FCFA', 20, 70);
+    doc.text('TVA: ' + fmt(f.montant_tva) + ' FCFA', 20, 78);
+    doc.setFontSize(14); doc.text('TOTAL: ' + fmt(f.montant_total) + ' FCFA', 20, 90);
+    doc.save('Facture_' + f.reference + '.pdf');
+  };
+
+  const stats = {total: factures.reduce((s, f) => s + (f.montant_total || 0), 0), encaisse: factures.filter(f => f.statut === 'paid').reduce((s, f) => s + (f.montant_total || 0), 0)};
+
+  return (
+    <div>
+      <PageHeader title="Facturation" subtitle={factures.length + ' factures'} action={<Button onClick={openNew} icon="➕">Nouvelle</Button>} />
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        <StatCard title="Total facturé" value={fmtMoney(stats.total)} icon="📄" color="blue" />
+        <StatCard title="Encaissé" value={fmtMoney(stats.encaisse)} icon="✅" color="green" />
+      </div>
+      {loading ? <Loader /> : (
+        <Card>
+          <Table columns={[
+            {header: 'Facture', render: r => <div><div className="font-medium">{r.reference}</div><div className="text-xs text-slate-400">{r.type_facture}</div></div>},
+            {header: 'Client', render: r => r.clients?.nom || '-'},
+            {header: 'Mission', render: r => r.projets?.code || '-'},
+            {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant_total)}</span>},
+            {header: 'Statut', render: r => <Badge color={INVOICE_STATUS[r.statut]?.color}>{INVOICE_STATUS[r.statut]?.label}</Badge>}
+          ]} data={factures} actions={r => (
+            <div className="flex gap-1">
+              <Button variant="ghost" size="xs" onClick={() => exportPDF(r)}>📄</Button>
+              {r.statut === 'draft' && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'sent')}>📤</Button>}
+              {r.statut === 'sent' && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'paid')}>✅</Button>}
+            </div>
+          )} />
+        </Card>
+      )}
+      <Modal isOpen={modal === 'facture'} onClose={() => setModal(null)} title="Nouvelle facture" size="lg">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Référence" value={form.reference} onChange={v => setForm(p => ({...p, reference: v}))} />
+            <Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" required />
+          </div>
+          <Select label="Mission" value={form.projet_id} onChange={v => { const m = missions.find(x => x.id === v); setForm(p => ({...p, projet_id: v, client_id: m?.client_id || p.client_id})); }} options={missions.map(m => ({value: m.id, label: m.code + ' - ' + m.nom}))} placeholder="Sélectionner" />
+          <div className="grid grid-cols-3 gap-4">
+            <Input label="Montant HT" type="number" value={form.montant_ht} onChange={v => setForm(p => ({...p, montant_ht: v}))} />
+            <Input label="TVA %" type="number" value={form.taux_tva} onChange={v => setForm(p => ({...p, taux_tva: v}))} />
+            <div><label className="block text-sm font-medium mb-1.5">Total TTC</label><div className="px-4 py-2.5 bg-slate-100 rounded-xl font-bold">{fmtMoney(form.montant_ht * (1 + form.taux_tva / 100))}</div></div>
+          </div>
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Créer</Button></div>
+        </div>
+      </Modal>
+    </div>
+  );
 };
 
-const ExpensesPage = () => {
+// ========== SOUS-TRAITANCE PAGE ==========
+const SoustraitancePage = () => {
   const {org} = useApp();
-  const [items, setItems] = useState([]);
+  const [prestataires, setPrestataires] = useState([]);
+  const [contrats, setContrats] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState(false);
+  const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
-  useEffect(() => { load(); }, []);
-  const load = async () => { const {data} = await supabase.from('notes_frais').select('*').eq('organisation_id', org.id).order('date_frais', {ascending: false}); setItems(data || []); setLoading(false); };
-  const openNew = () => { setForm({reference: genCode('NDF'), titre: '', date_frais: today(), montant_total: 0, statut: 'draft'}); setModal(true); };
-  const save = async () => { if (!form.titre) return alert('Titre requis'); setSaving(true); try { await supabase.from('notes_frais').insert([{...form, organisation_id: org.id}]); setModal(false); load(); } catch (e) { alert(e.message); } setSaving(false); };
-  const statusColor = {draft: 'gray', submitted: 'blue', approved: 'green', rejected: 'red', paid: 'purple'};
-  return <div><div className="flex justify-between items-center mb-6"><div><h1 className="text-2xl font-bold">Notes de frais</h1><p className="text-slate-500">{items.length} notes</p></div><Button onClick={openNew} icon="➕">Nouvelle</Button></div><Card><Table loading={loading} columns={[{header: 'Réf', render: r => <span className="font-mono text-blue-600">{r.reference}</span>}, {header: 'Titre', render: r => <b>{r.titre}</b>}, {header: 'Date', render: r => fmtDate(r.date_frais)}, {header: 'Montant', render: r => <b>{fmtMoney(r.montant_total)}</b>}, {header: 'Statut', render: r => <Badge color={statusColor[r.statut]}>{r.statut}</Badge>}]} data={items} /></Card><Modal isOpen={modal} onClose={() => setModal(false)} title="Nouvelle note de frais"><div className="space-y-4"><Input label="Titre" value={form.titre} onChange={v => setForm(p => ({...p, titre: v}))} placeholder="Ex: Déplacement client" required /><div className="grid grid-cols-2 gap-4"><Input label="Date" type="date" value={form.date_frais} onChange={v => setForm(p => ({...p, date_frais: v}))} /><Input label="Montant" type="number" value={form.montant_total} onChange={v => setForm(p => ({...p, montant_total: v}))} /></div><div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Créer</Button></div></div></Modal></div>;
+
+  useEffect(() => { loadData(); }, []);
+  const loadData = async () => {
+    const [p, c] = await Promise.all([
+      supabase.from('prestataires').select('*').eq('organisation_id', org.id),
+      supabase.from('contrats_soustraitance').select('*,prestataires(nom),projets(nom,code)').eq('organisation_id', org.id)
+    ]);
+    setPrestataires(p.data || []); setContrats(c.data || []); setLoading(false);
+  };
+
+  const openNewPresta = () => { setForm({code: genCode('PRE'), nom: '', email: '', telephone: ''}); setModal('presta'); };
+  const savePresta = async () => { setSaving(true); try { await supabase.from('prestataires').insert([{...form, organisation_id: org.id}]); setModal(null); loadData(); } catch(e) { alert(e.message); } setSaving(false); };
+
+  return (
+    <div>
+      <PageHeader title="Sous-traitance" subtitle={prestataires.length + ' prestataires'} action={<Button onClick={openNewPresta} icon="➕">Prestataire</Button>} />
+      {loading ? <Loader /> : (
+        <Card>
+          <Table columns={[
+            {header: 'Prestataire', render: r => <div className="font-medium">{r.nom}</div>},
+            {header: 'Email', key: 'email'},
+            {header: 'Téléphone', key: 'telephone'}
+          ]} data={prestataires} />
+        </Card>
+      )}
+      <Modal isOpen={modal === 'presta'} onClose={() => setModal(null)} title="Nouveau prestataire">
+        <div className="space-y-4">
+          <Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
+          <div className="grid grid-cols-2 gap-4"><Input label="Email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} /><Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} /></div>
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={savePresta} loading={saving} className="flex-1">Créer</Button></div>
+        </div>
+      </Modal>
+    </div>
+  );
 };
 
-const TeamPage = () => {
+// ========== INTERCO PAGE ==========
+const IntercoPage = () => {
   const {org} = useApp();
-  const [items, setItems] = useState([]);
+  const [transactions, setTransactions] = useState([]);
   const [depts, setDepts] = useState([]);
-  const [grades, setGrades] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
-  useEffect(() => { load(); }, []);
-  const load = async () => { const [c, d, g] = await Promise.all([supabase.from('collaborateurs').select('*,departements(nom),grades(nom)').eq('organisation_id', org.id).order('nom'), supabase.from('departements').select('id,nom').eq('organisation_id', org.id), supabase.from('grades').select('id,nom,taux_journalier').eq('organisation_id', org.id)]); setItems(c.data || []); setDepts(d.data || []); setGrades(g.data || []); setLoading(false); };
-  const openNew = () => { setForm({code: genCode('EMP'), nom: '', prenom: '', email: '', departement_id: '', grade_id: '', date_entree: today(), actif: true}); setModal(true); };
-  const save = async () => { if (!form.nom || !form.prenom) return alert('Nom et prénom requis'); setSaving(true); try { const grade = grades.find(g => g.id === form.grade_id); await supabase.from('collaborateurs').insert([{...form, organisation_id: org.id, taux_journalier: grade?.taux_journalier || 0}]); setModal(false); load(); } catch (e) { alert(e.message); } setSaving(false); };
-  return <div><div className="flex justify-between items-center mb-6"><div><h1 className="text-2xl font-bold">Équipe</h1><p className="text-slate-500">{items.length} collaborateurs</p></div><Button onClick={openNew} icon="➕">Nouveau</Button></div><Card><Table loading={loading} columns={[{header: 'Nom', render: r => <b>{r.prenom} {r.nom}</b>}, {header: 'Email', key: 'email'}, {header: 'Département', render: r => r.departements?.nom || '-'}, {header: 'Grade', render: r => r.grades?.nom || '-'}, {header: 'TJ', render: r => r.taux_journalier ? fmt(r.taux_journalier) + ' F' : '-'}, {header: 'Statut', render: r => <Badge color={r.actif ? 'green' : 'gray'}>{r.actif ? 'Actif' : 'Inactif'}</Badge>}]} data={items} /></Card><Modal isOpen={modal} onClose={() => setModal(false)} title="Nouveau collaborateur" size="lg"><div className="space-y-4"><div className="grid grid-cols-3 gap-4"><Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} /><Input label="Prénom" value={form.prenom} onChange={v => setForm(p => ({...p, prenom: v}))} required /><Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required /></div><div className="grid grid-cols-2 gap-4"><Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} /><Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} /></div><div className="grid grid-cols-3 gap-4"><Select label="Département" value={form.departement_id} onChange={v => setForm(p => ({...p, departement_id: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" /><Select label="Grade" value={form.grade_id} onChange={v => setForm(p => ({...p, grade_id: v}))} options={grades.map(g => ({value: g.id, label: g.nom + ' - ' + fmt(g.taux_journalier) + ' F'}))} placeholder="Sélectionner" /><Input label="Date entrée" type="date" value={form.date_entree} onChange={v => setForm(p => ({...p, date_entree: v}))} /></div><div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Créer</Button></div></div></Modal></div>;
-};
 
-const ReportsPage = () => {
+  useEffect(() => { loadData(); }, []);
+  const loadData = async () => {
+    const [t, d] = await Promise.all([
+      supabase.from('transactions_interco').select('*').eq('organisation_id', org.id).order('created_at', {ascending: false}),
+      supabase.from('departements').select('*').eq('organisation_id', org.id)
+    ]);
+    setTransactions(t.data || []); setDepts(d.data || []); setLoading(false);
+  };
+
+  const openNew = () => { setForm({dept_vendeur: '', dept_acheteur: '', description: '', montant: 0, date: today()}); setModal(true); };
+  const save = async () => {
+    if (!form.dept_vendeur || !form.dept_acheteur) return alert('Départements requis');
+    setSaving(true);
+    try { await supabase.from('transactions_interco').insert([{...form, organisation_id: org.id}]); setModal(false); loadData(); }
+    catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  return (
+    <div>
+      <PageHeader title="Ventes/Achats Interco" subtitle="Transactions entre départements" action={<Button onClick={openNew} icon="➕">Transaction</Button>} />
+      {loading ? <Loader /> : (
+        <Card>
+          <Table columns={[
+            {header: 'Vendeur', render: r => depts.find(d => d.id === r.dept_vendeur)?.nom || '-'},
+            {header: 'Acheteur', render: r => depts.find(d => d.id === r.dept_acheteur)?.nom || '-'},
+            {header: 'Description', key: 'description'},
+            {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant)}</span>},
+            {header: 'Date', render: r => fmtDate(r.date)}
+          ]} data={transactions} empty="Aucune transaction interco" />
+        </Card>
+      )}
+      <Modal isOpen={modal} onClose={() => setModal(false)} title="Nouvelle transaction">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Select label="Dept. vendeur" value={form.dept_vendeur} onChange={v => setForm(p => ({...p, dept_vendeur: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" required />
+            <Select label="Dept. acheteur" value={form.dept_acheteur} onChange={v => setForm(p => ({...p, dept_acheteur: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" required />
+          </div>
+          <Input label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Montant" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} />
+            <Input label="Date" type="date" value={form.date} onChange={v => setForm(p => ({...p, date: v}))} />
+          </div>
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Créer</Button></div>
+        </div>
+      </Modal>
+    </div>
+  );
+};
+// ========== EQUIPE PAGE ==========
+const EquipePage = () => {
   const {org} = useApp();
-  const [data, setData] = useState({heures: 0, heuresFact: 0, facture: 0, encaisse: 0});
+  const [collaborateurs, setCollaborateurs] = useState([]);
+  const [grades, setGrades] = useState([]);
+  const [depts, setDepts] = useState([]);
   const [loading, setLoading] = useState(true);
-  useEffect(() => { Promise.all([supabase.from('saisies_temps').select('heures,facturable').eq('organisation_id', org.id), supabase.from('factures').select('montant_total,statut').eq('organisation_id', org.id)]).then(([t, f]) => { const h = t.data || []; const fa = f.data || []; setData({heures: h.reduce((s, x) => s + (x.heures || 0), 0), heuresFact: h.filter(x => x.facturable).reduce((s, x) => s + (x.heures || 0), 0), facture: fa.reduce((s, x) => s + (x.montant_total || 0), 0), encaisse: fa.filter(x => x.statut === 'paid').reduce((s, x) => s + (x.montant_total || 0), 0)}); setLoading(false); }); }, []);
-  if (loading) return <Loader />;
-  const taux = data.heures > 0 ? Math.round(data.heuresFact / data.heures * 100) : 0;
-  return <div><h1 className="text-2xl font-bold mb-6">Rapports</h1><div className="grid md:grid-cols-4 gap-4 mb-6"><StatCard title="Heures totales" value={fmt(data.heures) + 'h'} icon="⏱️" color="blue" /><StatCard title="Heures facturables" value={fmt(data.heuresFact) + 'h'} icon="💼" color="green" /><StatCard title="Taux chargeabilité" value={taux + '%'} icon="📊" color="purple" /><StatCard title="CA encaissé" value={fmtMoney(data.encaisse)} icon="💰" color="amber" /></div><Card title="Détails"><p className="text-slate-500">Rapports détaillés à venir...</p></Card></div>;
+  const [tab, setTab] = useState('collab');
+  const [modal, setModal] = useState(null);
+  const [editItem, setEditItem] = useState(null);
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    const [c, g, d] = await Promise.all([
+      supabase.from('collaborateurs').select('*,grades(nom,taux_journalier),departements(nom)').eq('organisation_id', org.id).order('nom'),
+      supabase.from('grades').select('*').eq('organisation_id', org.id).order('niveau', {ascending: false}),
+      supabase.from('departements').select('*').eq('organisation_id', org.id).order('nom')
+    ]);
+    setCollaborateurs(c.data || []); setGrades(g.data || []); setDepts(d.data || []); setLoading(false);
+  };
+
+  // Collaborateur CRUD
+  const openNewCollab = () => { setEditItem(null); setForm({code: genCode('EMP'), nom: '', prenom: '', email: '', telephone: '', departement_id: '', grade_id: '', date_entree: today(), actif: true}); setModal('collab'); };
+  const openEditCollab = (c) => { setEditItem(c); setForm({...c, date_entree: c.date_entree?.split('T')[0]}); setModal('collab'); };
+  const saveCollab = async () => {
+    if (!form.nom || !form.prenom) return alert('Nom et prénom requis');
+    setSaving(true);
+    try {
+      const grade = grades.find(g => g.id === form.grade_id);
+      const data = {...form, taux_journalier: grade?.taux_journalier || 0};
+      if (editItem?.id) await supabase.from('collaborateurs').update(data).eq('id', editItem.id);
+      else await supabase.from('collaborateurs').insert([{...data, organisation_id: org.id}]);
+      setModal(null); loadData();
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  // Passage de grade
+  const openPassageGrade = (c) => {
+    setEditItem(c);
+    setForm({collaborateur_id: c.id, ancien_grade_id: c.grade_id, nouveau_grade_id: '', date_effet: today(), motif: ''});
+    setModal('passage');
+  };
+  const savePassage = async () => {
+    if (!form.nouveau_grade_id) return alert('Nouveau grade requis');
+    setSaving(true);
+    try {
+      await supabase.from('passages_grade').insert([{...form, organisation_id: org.id}]);
+      const grade = grades.find(g => g.id === form.nouveau_grade_id);
+      await supabase.from('collaborateurs').update({grade_id: form.nouveau_grade_id, taux_journalier: grade?.taux_journalier}).eq('id', editItem.id);
+      setModal(null); loadData();
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const actifs = collaborateurs.filter(c => c.actif);
+
+  return (
+    <div>
+      <PageHeader title="Équipe" subtitle={actifs.length + ' collaborateurs actifs'}
+        tabs={[{key: 'collab', label: 'Collaborateurs', count: collaborateurs.length}, {key: 'grades', label: 'Passages de grade', icon: '🎖️'}]}
+        activeTab={tab} onTabChange={setTab}
+        action={<Button onClick={openNewCollab} icon="➕">Collaborateur</Button>}
+      />
+
+      {loading ? <Loader /> : (<>
+        {tab === 'collab' && (
+          <Card>
+            <Table columns={[
+              {header: 'Collaborateur', render: r => <div><div className="font-medium">{r.prenom} {r.nom}</div><div className="text-xs text-slate-400">{r.code}</div></div>},
+              {header: 'Email', key: 'email'},
+              {header: 'Département', render: r => r.departements?.nom || '-'},
+              {header: 'Grade', render: r => <Badge color="blue">{r.grades?.nom || '-'}</Badge>},
+              {header: 'TJ', render: r => r.taux_journalier ? fmt(r.taux_journalier) + ' F' : '-'},
+              {header: 'Statut', render: r => <Badge color={r.actif ? 'green' : 'gray'}>{r.actif ? 'Actif' : 'Inactif'}</Badge>}
+            ]} data={collaborateurs} actions={r => (
+              <div className="flex gap-1">
+                <Button variant="ghost" size="xs" onClick={() => openPassageGrade(r)} title="Passage grade">🎖️</Button>
+                <Button variant="ghost" size="xs" onClick={() => openEditCollab(r)}>✏️</Button>
+              </div>
+            )} />
+          </Card>
+        )}
+
+        {tab === 'grades' && (
+          <Card title="Campagnes de passage de grade">
+            <EmptyState icon="🎖️" title="Passages de grade" description="Gérez les promotions de fin de saison ici." action={<Button onClick={() => setTab('collab')}>Voir collaborateurs</Button>} />
+          </Card>
+        )}
+      </>)}
+
+      {/* Modal Collaborateur */}
+      <Modal isOpen={modal === 'collab'} onClose={() => setModal(null)} title={editItem ? 'Modifier collaborateur' : 'Nouveau collaborateur'} size="lg">
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-4">
+            <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
+            <Input label="Prénom" value={form.prenom} onChange={v => setForm(p => ({...p, prenom: v}))} required />
+            <Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} />
+            <Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} />
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <Select label="Département" value={form.departement_id} onChange={v => setForm(p => ({...p, departement_id: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" />
+            <Select label="Grade" value={form.grade_id} onChange={v => setForm(p => ({...p, grade_id: v}))} options={grades.map(g => ({value: g.id, label: g.nom + ' - ' + fmt(g.taux_journalier) + ' F'}))} placeholder="Sélectionner" />
+            <Input label="Date entrée" type="date" value={form.date_entree} onChange={v => setForm(p => ({...p, date_entree: v}))} />
+          </div>
+          <Checkbox label="Collaborateur actif" checked={form.actif} onChange={v => setForm(p => ({...p, actif: v}))} />
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveCollab} loading={saving} className="flex-1">Enregistrer</Button></div>
+        </div>
+      </Modal>
+
+      {/* Modal Passage Grade */}
+      <Modal isOpen={modal === 'passage'} onClose={() => setModal(null)} title={'Passage de grade - ' + editItem?.prenom + ' ' + editItem?.nom}>
+        <div className="space-y-4">
+          <div className="p-4 bg-slate-50 rounded-xl">
+            <div className="text-sm text-slate-500">Grade actuel</div>
+            <div className="font-bold">{grades.find(g => g.id === editItem?.grade_id)?.nom || 'Non défini'}</div>
+          </div>
+          <Select label="Nouveau grade" value={form.nouveau_grade_id} onChange={v => setForm(p => ({...p, nouveau_grade_id: v}))} options={grades.filter(g => g.id !== editItem?.grade_id).map(g => ({value: g.id, label: g.nom + ' - ' + fmt(g.taux_journalier) + ' F/j'}))} placeholder="Sélectionner" required />
+          <Input label="Date d'effet" type="date" value={form.date_effet} onChange={v => setForm(p => ({...p, date_effet: v}))} />
+          <TextArea label="Motif" value={form.motif} onChange={v => setForm(p => ({...p, motif: v}))} rows={2} placeholder="Promotion annuelle, performance..." />
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={savePassage} loading={saving} className="flex-1">Valider passage</Button></div>
+        </div>
+      </Modal>
+    </div>
+  );
 };
 
-const SettingsPage = () => {
+// ========== RAPPORTS PAGE ==========
+const RapportsPage = () => {
+  const {org} = useApp();
+  const [data, setData] = useState({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    const [temps, factures, collabs, missions] = await Promise.all([
+      supabase.from('saisies_temps').select('heures,facturable,date').eq('organisation_id', org.id),
+      supabase.from('factures').select('montant_total,statut').eq('organisation_id', org.id),
+      supabase.from('collaborateurs').select('*,grades(taux_journalier)').eq('organisation_id', org.id).eq('actif', true),
+      supabase.from('projets').select('*').eq('organisation_id', org.id)
+    ]);
+
+    const h = temps.data || [];
+    const heuresTotal = h.reduce((s, t) => s + (t.heures || 0), 0);
+    const heuresFact = h.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0);
+    
+    const f = factures.data || [];
+    const caTotal = f.reduce((s, x) => s + (x.montant_total || 0), 0);
+    const caEncaisse = f.filter(x => x.statut === 'paid').reduce((s, x) => s + (x.montant_total || 0), 0);
+    
+    const m = missions.data || [];
+    const budgetTotal = m.reduce((s, x) => s + (x.budget_montant || 0), 0);
+    
+    // Production valorisée (heures * taux)
+    const tauxMoyen = collabs.data?.reduce((s, c) => s + (c.grades?.taux_journalier || 0), 0) / (collabs.data?.length || 1) / 8;
+    const production = heuresFact * tauxMoyen;
+
+    setData({
+      heuresTotal, heuresFact,
+      tauxCharge: heuresTotal > 0 ? Math.round((heuresFact / heuresTotal) * 100) : 0,
+      caTotal, caEncaisse, budgetTotal, production,
+      rentabilite: budgetTotal > 0 ? Math.round((caEncaisse / budgetTotal) * 100) : 0
+    });
+    setLoading(false);
+  };
+
+  if (loading) return <Loader />;
+
+  return (
+    <div>
+      <PageHeader title="Rapports" subtitle="Indicateurs de performance" />
+      
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <StatCard title="Heures totales" value={fmt(data.heuresTotal) + 'h'} icon="⏱️" color="blue" />
+        <StatCard title="Heures facturables" value={fmt(data.heuresFact) + 'h'} icon="💼" color="green" />
+        <StatCard title="Taux chargeabilité" value={data.tauxCharge + '%'} icon="📊" color="purple" />
+        <StatCard title="CA encaissé" value={fmtMoney(data.caEncaisse)} icon="💰" color="amber" />
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-6">
+        <Card title="📈 Performance financière">
+          <div className="space-y-4">
+            <div><div className="flex justify-between text-sm mb-1"><span>CA vs Budget</span><span>{data.rentabilite}%</span></div><ProgressBar value={data.caEncaisse} max={data.budgetTotal} color="green" /></div>
+            <div><div className="flex justify-between text-sm mb-1"><span>Production valorisée</span><span>{fmtMoney(data.production)}</span></div><ProgressBar value={data.production} max={data.budgetTotal} color="blue" /></div>
+          </div>
+        </Card>
+        <Card title="🎯 Objectifs">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="text-center p-4 bg-slate-50 rounded-xl"><div className="text-3xl font-bold text-blue-600">{data.tauxCharge}%</div><div className="text-sm text-slate-500">Chargeabilité</div><div className="text-xs text-slate-400">Objectif: 75%</div></div>
+            <div className="text-center p-4 bg-slate-50 rounded-xl"><div className="text-3xl font-bold text-green-600">{data.rentabilite}%</div><div className="text-sm text-slate-500">Rentabilité</div><div className="text-xs text-slate-400">Objectif: 100%</div></div>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+};
+// ========== PARAMETRES PAGE ==========
+const ParametresPage = () => {
   const {org, abo, reload} = useApp();
   const [tab, setTab] = useState('org');
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [depts, setDepts] = useState([]);
   const [grades, setGrades] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [holidays, setHolidays] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [editModal, setEditModal] = useState(null);
+  const [editForm, setEditForm] = useState({});
+
   useEffect(() => { setForm({nom: org.nom, adresse: org.adresse || '', ville: org.ville || '', email: org.email || '', telephone: org.telephone || ''}); loadParams(); }, [org]);
-  const loadParams = async () => { const [d, g] = await Promise.all([supabase.from('departements').select('*').eq('organisation_id', org.id).order('nom'), supabase.from('grades').select('*').eq('organisation_id', org.id).order('niveau', {ascending: false})]); setDepts(d.data || []); setGrades(g.data || []); setLoading(false); };
-  const saveOrg = async () => { setSaving(true); try { await supabase.from('organisations').update(form).eq('id', org.id); reload(); alert('Enregistré!'); } catch (e) { alert(e.message); } setSaving(false); };
-  const exportData = async () => { const [c, p, t, f] = await Promise.all([supabase.from('clients').select('*').eq('organisation_id', org.id), supabase.from('projets').select('*').eq('organisation_id', org.id), supabase.from('saisies_temps').select('*').eq('organisation_id', org.id), supabase.from('factures').select('*').eq('organisation_id', org.id)]); const data = {organisation: org, clients: c.data, projets: p.data, temps: t.data, factures: f.data, exportedAt: new Date().toISOString()}; const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'kabinet_backup_' + org.nom.replace(/\s+/g, '_') + '_' + today() + '.json'; a.click(); };
-  const joursRestants = abo?.date_fin ? Math.ceil((new Date(abo.date_fin) - new Date()) / (1000 * 60 * 60 * 24)) : 0;
-  const isExpire = joursRestants <= 0 && abo?.plan !== 'premium';
-  return <div><h1 className="text-2xl font-bold mb-6">Paramètres</h1><div className="flex gap-2 mb-6 border-b overflow-x-auto">{[{k: 'org', l: '🏢 Organisation'}, {k: 'abo', l: '💳 Abonnement'}, {k: 'params', l: '⚙️ Configuration'}, {k: 'backup', l: '💾 Sauvegarde'}].map(t => <button key={t.k} onClick={() => setTab(t.k)} className={cn('px-4 py-3 font-medium -mb-px whitespace-nowrap', tab === t.k ? 'border-b-2 border-blue-500 text-blue-600' : 'text-slate-500')}>{t.l}</button>)}</div>{tab === 'org' && <Card title="Informations de l'organisation"><div className="space-y-4 max-w-xl"><Input label="Nom du cabinet" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} /><Input label="Adresse" value={form.adresse} onChange={v => setForm(p => ({...p, adresse: v}))} /><div className="grid grid-cols-2 gap-4"><Input label="Ville" value={form.ville} onChange={v => setForm(p => ({...p, ville: v}))} /><Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} /></div><Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} /><Button onClick={saveOrg} loading={saving}>💾 Enregistrer</Button></div></Card>}{tab === 'abo' && <Card title="Abonnement"><div className="max-w-2xl"><div className={cn('p-6 rounded-2xl mb-6', isExpire ? 'bg-red-50 border-2 border-red-200' : 'bg-blue-50 border-2 border-blue-200')}><div className="flex items-center justify-between mb-4"><div><span className="text-3xl mr-3">{PLANS[abo?.plan]?.icon || '🎁'}</span><span className="text-2xl font-bold">{PLANS[abo?.plan]?.nom || 'Essai'}</span></div><Badge color={isExpire ? 'red' : 'green'}>{isExpire ? 'Expiré' : 'Actif'}</Badge></div>{abo?.date_fin && <div className="flex justify-between text-sm"><span className="text-slate-600">Expire le: <b>{fmtDate(abo.date_fin)}</b></span><span className={isExpire ? 'text-red-600 font-bold' : 'text-slate-600'}>{isExpire ? 'Expiré' : joursRestants + ' jours restants'}</span></div>}</div><h3 className="font-bold mb-4">Changer de plan</h3><div className="grid md:grid-cols-3 gap-4">{Object.entries(PLANS).map(([k, p]) => <div key={k} className={cn('p-4 rounded-xl border-2', abo?.plan === k ? 'border-blue-500 bg-blue-50' : 'border-slate-200')}><div className="text-2xl mb-2">{p.icon}</div><div className="font-bold">{p.nom}</div><div className="text-slate-500 text-sm">{p.prix ? fmt(p.prix) + ' F/mois' : 'Gratuit'}</div>{abo?.plan === k ? <Badge color="blue">Plan actuel</Badge> : <a href={'https://wa.me/221781234567?text=Bonjour, je souhaite passer au plan ' + p.nom} target="_blank" className="mt-3 block text-center text-sm text-blue-600 hover:underline">Contacter</a>}</div>)}</div></div></Card>}{tab === 'params' && <div className="space-y-6"><Card title="Départements">{loading ? <Loader /> : <Table columns={[{header: 'Code', render: r => <span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">{r.code}</span>}, {header: 'Nom', render: r => <b>{r.nom}</b>}, {header: 'Facturable', render: r => <Badge color={r.facturable ? 'green' : 'gray'}>{r.facturable ? 'Oui' : 'Non'}</Badge>}]} data={depts} />}</Card><Card title="Grades">{loading ? <Loader /> : <Table columns={[{header: 'Code', key: 'code'}, {header: 'Nom', render: r => <b>{r.nom}</b>}, {header: 'Niveau', key: 'niveau'}, {header: 'Taux journalier', render: r => fmtMoney(r.taux_journalier)}]} data={grades} />}</Card></div>}{tab === 'backup' && <Card title="Sauvegarde et Import"><div className="max-w-xl space-y-6"><div className="p-6 bg-slate-50 rounded-xl"><h3 className="font-bold mb-2">📥 Exporter les données</h3><p className="text-slate-500 text-sm mb-4">Téléchargez une sauvegarde complète de vos données au format JSON.</p><Button onClick={exportData} variant="secondary" icon="⬇️">Exporter en JSON</Button></div><div className="p-6 bg-slate-50 rounded-xl"><h3 className="font-bold mb-2">📤 Importer des données</h3><p className="text-slate-500 text-sm mb-4">L'import en masse depuis Excel sera disponible prochainement.</p><Button variant="secondary" disabled icon="⬆️">Import Excel (bientôt)</Button></div></div></Card>}</div>;
+
+  const loadParams = async () => {
+    const [d, g, c, h] = await Promise.all([
+      supabase.from('departements').select('*').eq('organisation_id', org.id).order('nom'),
+      supabase.from('grades').select('*').eq('organisation_id', org.id).order('niveau', {ascending: false}),
+      supabase.from('categories_taches').select('*').eq('organisation_id', org.id).order('nom'),
+      supabase.from('jours_feries').select('*').eq('organisation_id', org.id).order('date')
+    ]);
+    setDepts(d.data || []); setGrades(g.data || []); setCategories(c.data || []); setHolidays(h.data || []); setLoading(false);
+  };
+
+  const saveOrg = async () => { setSaving(true); try { await supabase.from('organisations').update(form).eq('id', org.id); reload(); alert('Enregistré!'); } catch(e) { alert(e.message); } setSaving(false); };
+
+  // CRUD générique
+  const openEdit = (type, item = null) => {
+    setEditModal(type);
+    if (item) setEditForm({...item});
+    else if (type === 'dept') setEditForm({code: '', nom: '', facturable: true, couleur: '#2563eb'});
+    else if (type === 'grade') setEditForm({code: '', nom: '', niveau: 1, taux_journalier: 0, taux_cible: 80});
+    else if (type === 'categorie') setEditForm({code: '', nom: '', facturable: true, couleur: '#2563eb'});
+    else if (type === 'holiday') setEditForm({date: '', nom: ''});
+  };
+
+  const saveEdit = async () => {
+    setSaving(true);
+    try {
+      const table = editModal === 'dept' ? 'departements' : editModal === 'grade' ? 'grades' : editModal === 'categorie' ? 'categories_taches' : 'jours_feries';
+      if (editForm.id) await supabase.from(table).update(editForm).eq('id', editForm.id);
+      else await supabase.from(table).insert([{...editForm, organisation_id: org.id}]);
+      setEditModal(null); loadParams();
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const deleteItem = async (table, id) => {
+    if (!confirm('Supprimer cet élément ?')) return;
+    await supabase.from(table).delete().eq('id', id);
+    loadParams();
+  };
+
+  const exportData = async () => {
+    const [c, p, t, f] = await Promise.all([
+      supabase.from('clients').select('*').eq('organisation_id', org.id),
+      supabase.from('projets').select('*').eq('organisation_id', org.id),
+      supabase.from('saisies_temps').select('*').eq('organisation_id', org.id),
+      supabase.from('factures').select('*').eq('organisation_id', org.id)
+    ]);
+    const data = {organisation: org, clients: c.data, projets: p.data, temps: t.data, factures: f.data, exportedAt: new Date().toISOString()};
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'kabinet_backup_' + today() + '.json'; a.click();
+  };
+
+  const joursRestants = abo?.date_fin ? Math.ceil((new Date(abo.date_fin) - new Date()) / (1000*60*60*24)) : 0;
+  const isExpire = joursRestants <= 0;
+
+  return (
+    <div>
+      <PageHeader title="Paramètres" />
+      <Tabs tabs={[{key: 'org', label: '🏢 Organisation'}, {key: 'abo', label: '💳 Abonnement'}, {key: 'config', label: '⚙️ Configuration'}, {key: 'backup', label: '💾 Sauvegarde'}]} active={tab} onChange={setTab} />
+
+      <div className="mt-6">
+        {tab === 'org' && (
+          <Card title="Informations de l'organisation">
+            <div className="space-y-4 max-w-xl">
+              <Input label="Nom du cabinet" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} />
+              <Input label="Adresse" value={form.adresse} onChange={v => setForm(p => ({...p, adresse: v}))} />
+              <div className="grid grid-cols-2 gap-4"><Input label="Ville" value={form.ville} onChange={v => setForm(p => ({...p, ville: v}))} /><Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} /></div>
+              <Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} />
+              <Button onClick={saveOrg} loading={saving} icon="💾">Enregistrer</Button>
+            </div>
+          </Card>
+        )}
+
+        {tab === 'abo' && (
+          <Card title="Abonnement">
+            <div className="max-w-2xl">
+              <div className={cn('p-6 rounded-2xl mb-6', isExpire ? 'bg-red-50 border-2 border-red-200' : 'bg-blue-50 border-2 border-blue-200')}>
+                <div className="flex items-center justify-between mb-4">
+                  <div><span className="text-3xl mr-3">{PLANS[abo?.plan]?.icon}</span><span className="text-2xl font-bold">{PLANS[abo?.plan]?.nom}</span></div>
+                  <Badge color={isExpire ? 'red' : 'green'}>{isExpire ? 'Expiré' : 'Actif'}</Badge>
+                </div>
+                {abo?.date_fin && <div className="flex justify-between text-sm"><span>Expire: <b>{fmtDate(abo.date_fin)}</b></span><span className={isExpire ? 'text-red-600 font-bold' : ''}>{isExpire ? 'Expiré' : joursRestants + ' jours restants'}</span></div>}
+              </div>
+              <h3 className="font-bold mb-4">Plans disponibles</h3>
+              <div className="grid grid-cols-3 gap-4">
+                {Object.entries(PLANS).map(([k, p]) => (
+                  <div key={k} className={cn('p-4 rounded-xl border-2', abo?.plan === k ? 'border-blue-500 bg-blue-50' : 'border-slate-200')}>
+                    <div className="text-2xl mb-2">{p.icon}</div><div className="font-bold">{p.nom}</div><div className="text-slate-500 text-sm">{p.prix ? fmt(p.prix) + ' F/mois' : 'Gratuit'}</div>
+                    {abo?.plan === k && <Badge color="blue" className="mt-2">Actuel</Badge>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {tab === 'config' && loading ? <Loader /> : tab === 'config' && (
+          <div className="space-y-6">
+            {/* Départements */}
+            <Card title="Départements" collapsible defaultOpen={false} action={<Button size="xs" onClick={() => openEdit('dept')}>➕</Button>}>
+              <Table columns={[
+                {header: 'Code', render: r => <span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded">{r.code}</span>},
+                {header: 'Nom', render: r => <b>{r.nom}</b>},
+                {header: 'Facturable', render: r => <Badge color={r.facturable ? 'green' : 'gray'}>{r.facturable ? 'Oui' : 'Non'}</Badge>}
+              ]} data={depts} actions={r => (
+                <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openEdit('dept', r)}>✏️</Button><Button variant="ghost" size="xs" onClick={() => deleteItem('departements', r.id)}>🗑️</Button></div>
+              )} />
+            </Card>
+
+            {/* Grades */}
+            <Card title="Grades" collapsible defaultOpen={false} action={<Button size="xs" onClick={() => openEdit('grade')}>➕</Button>}>
+              <Table columns={[
+                {header: 'Code', key: 'code'},
+                {header: 'Nom', render: r => <b>{r.nom}</b>},
+                {header: 'Niveau', key: 'niveau'},
+                {header: 'Taux journalier', render: r => fmtMoney(r.taux_journalier)},
+                {header: 'Cible', render: r => (r.taux_cible || 0) + '%'}
+              ]} data={grades} actions={r => (
+                <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openEdit('grade', r)}>✏️</Button><Button variant="ghost" size="xs" onClick={() => deleteItem('grades', r.id)}>🗑️</Button></div>
+              )} />
+            </Card>
+
+            {/* Catégories */}
+            <Card title="Catégories de tâches" collapsible defaultOpen={false} action={<Button size="xs" onClick={() => openEdit('categorie')}>➕</Button>}>
+              <Table columns={[
+                {header: 'Code', key: 'code'},
+                {header: 'Nom', render: r => <b>{r.nom}</b>},
+                {header: 'Facturable', render: r => <Badge color={r.facturable ? 'green' : 'gray'}>{r.facturable ? 'Oui' : 'Non'}</Badge>}
+              ]} data={categories} actions={r => (
+                <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openEdit('categorie', r)}>✏️</Button><Button variant="ghost" size="xs" onClick={() => deleteItem('categories_taches', r.id)}>🗑️</Button></div>
+              )} />
+            </Card>
+
+            {/* Jours fériés */}
+            <Card title="Jours fériés" collapsible defaultOpen={false} action={<Button size="xs" onClick={() => openEdit('holiday')}>➕</Button>}>
+              <Table columns={[
+                {header: 'Date', render: r => fmtDate(r.date)},
+                {header: 'Nom', render: r => <b>{r.nom}</b>}
+              ]} data={holidays} actions={r => (
+                <Button variant="ghost" size="xs" onClick={() => deleteItem('jours_feries', r.id)}>🗑️</Button>
+              )} />
+            </Card>
+          </div>
+        )}
+
+        {tab === 'backup' && (
+          <Card title="Sauvegarde et Import">
+            <div className="max-w-xl space-y-6">
+              <div className="p-6 bg-slate-50 rounded-xl"><h3 className="font-bold mb-2">📥 Exporter</h3><p className="text-slate-500 text-sm mb-4">Téléchargez vos données en JSON.</p><Button onClick={exportData} variant="secondary" icon="⬇️">Exporter</Button></div>
+              <div className="p-6 bg-slate-50 rounded-xl"><h3 className="font-bold mb-2">📤 Importer</h3><p className="text-slate-500 text-sm mb-4">Import Excel (bientôt).</p><Button variant="secondary" disabled icon="⬆️">Import Excel</Button></div>
+            </div>
+          </Card>
+        )}
+      </div>
+
+      {/* Modals d'édition */}
+      <Modal isOpen={editModal === 'dept'} onClose={() => setEditModal(null)} title={editForm.id ? 'Modifier département' : 'Nouveau département'} size="sm">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4"><Input label="Code" value={editForm.code} onChange={v => setEditForm(p => ({...p, code: v}))} /><Input label="Nom" value={editForm.nom} onChange={v => setEditForm(p => ({...p, nom: v}))} required /></div>
+          <Checkbox label="Facturable" checked={editForm.facturable} onChange={v => setEditForm(p => ({...p, facturable: v}))} />
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setEditModal(null)} className="flex-1">Annuler</Button><Button onClick={saveEdit} loading={saving} className="flex-1">Enregistrer</Button></div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={editModal === 'grade'} onClose={() => setEditModal(null)} title={editForm.id ? 'Modifier grade' : 'Nouveau grade'} size="sm">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4"><Input label="Code" value={editForm.code} onChange={v => setEditForm(p => ({...p, code: v}))} /><Input label="Nom" value={editForm.nom} onChange={v => setEditForm(p => ({...p, nom: v}))} required /></div>
+          <div className="grid grid-cols-3 gap-4"><Input label="Niveau" type="number" value={editForm.niveau} onChange={v => setEditForm(p => ({...p, niveau: v}))} /><Input label="Taux journalier" type="number" value={editForm.taux_journalier} onChange={v => setEditForm(p => ({...p, taux_journalier: v}))} /><Input label="Cible %" type="number" value={editForm.taux_cible} onChange={v => setEditForm(p => ({...p, taux_cible: v}))} /></div>
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setEditModal(null)} className="flex-1">Annuler</Button><Button onClick={saveEdit} loading={saving} className="flex-1">Enregistrer</Button></div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={editModal === 'categorie'} onClose={() => setEditModal(null)} title={editForm.id ? 'Modifier catégorie' : 'Nouvelle catégorie'} size="sm">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4"><Input label="Code" value={editForm.code} onChange={v => setEditForm(p => ({...p, code: v}))} /><Input label="Nom" value={editForm.nom} onChange={v => setEditForm(p => ({...p, nom: v}))} required /></div>
+          <Checkbox label="Facturable" checked={editForm.facturable} onChange={v => setEditForm(p => ({...p, facturable: v}))} />
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setEditModal(null)} className="flex-1">Annuler</Button><Button onClick={saveEdit} loading={saving} className="flex-1">Enregistrer</Button></div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={editModal === 'holiday'} onClose={() => setEditModal(null)} title="Ajouter jour férié" size="sm">
+        <div className="space-y-4">
+          <Input label="Date" type="date" value={editForm.date} onChange={v => setEditForm(p => ({...p, date: v}))} required />
+          <Input label="Nom" value={editForm.nom} onChange={v => setEditForm(p => ({...p, nom: v}))} placeholder="Ex: Tabaski" required />
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setEditModal(null)} className="flex-1">Annuler</Button><Button onClick={saveEdit} loading={saving} className="flex-1">Ajouter</Button></div>
+        </div>
+      </Modal>
+    </div>
+  );
 };
 
+// ========== ADMIN PAGE ==========
 const AdminPage = () => {
   const {isSuperAdmin} = useApp();
-  if (!isSuperAdmin) return <div className="text-center py-20"><div className="text-6xl mb-4">🔒</div><h2 className="text-xl font-bold">Accès refusé</h2><p className="text-slate-500">Réservé aux super admins</p></div>;
-  return <div><h1 className="text-2xl font-bold mb-6">Administration</h1><Card><p className="text-slate-500">Pour accéder à l'admin global, déconnectez-vous puis reconnectez-vous sans organisation liée.</p></Card></div>;
+  if (!isSuperAdmin) return <EmptyState icon="🔒" title="Accès refusé" description="Cette section est réservée aux super administrateurs." />;
+  return <div><PageHeader title="Administration" /><Card><p className="text-slate-500">Pour l'administration globale, déconnectez-vous et reconnectez-vous avec un compte super admin sans organisation.</p></Card></div>;
 };
-
+// ========== ROOT APP ==========
 const App = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState('landing');
   const [confirmEmail, setConfirmEmail] = useState('');
-  useEffect(() => { supabase.auth.getSession().then(({data: {session}}) => { setUser(session?.user || null); setLoading(false); }); const {data: {subscription}} = supabase.auth.onAuthStateChange((e, s) => setUser(s?.user || null)); return () => subscription.unsubscribe(); }, []);
-  const logout = async () => { await supabase.auth.signOut(); setUser(null); setPage('landing'); };
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({data: {session}}) => {
+      setUser(session?.user || null);
+      setLoading(false);
+    });
+    const {data: {subscription}} = supabase.auth.onAuthStateChange((e, s) => setUser(s?.user || null));
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const logout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setPage('landing');
+  };
+
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="loader"></div></div>;
   if (user) return <MainApp user={user} onLogout={logout} />;
   if (page === 'login') return <LoginPage onLogin={setUser} onRegister={() => setPage('register')} onBack={() => setPage('landing')} />;
