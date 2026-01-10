@@ -1322,7 +1322,7 @@ const CRMPage = () => {
     setSaving(true);
     try {
       const data = {
-        code: form.code,
+        reference: form.code, // La table utilise reference au lieu de code
         nom: form.nom,
         client_id: form.client_id,
         description: form.description || '',
@@ -2171,10 +2171,12 @@ const CongesPage = () => {
   const {org, user} = useApp();
   const [conges, setConges] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState(false);
+  const [modal, setModal] = useState(null); // 'conge' ou 'import'
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState('mes');
+  const [soldeAnterieur, setSoldeAnterieur] = useState(0);
+  const [importDone, setImportDone] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
@@ -2182,12 +2184,52 @@ const CongesPage = () => {
     const {data, error} = await supabase.from('conges').select('*').eq('organisation_id', org.id).order('date_debut', {ascending: false});
     if (error) console.error('Conges error:', error);
     setConges(data || []);
+    
+    // Vérifier si un import a déjà été fait (chercher un congé de type 'report_anterieur')
+    const hasImport = (data || []).some(c => c.type_conge === 'report_anterieur' && c.utilisateur_id === user.id);
+    setImportDone(hasImport);
+    
+    // Récupérer le solde antérieur s'il existe
+    const importConge = (data || []).find(c => c.type_conge === 'report_anterieur' && c.utilisateur_id === user.id);
+    if (importConge) setSoldeAnterieur(importConge.nb_jours || 0);
+    
     setLoading(false);
   };
 
   const openNew = () => {
     setForm({utilisateur_id: user.id, type_conge: 'conge_paye', date_debut: '', date_fin: '', motif: ''});
-    setModal(true);
+    setModal('conge');
+  };
+  
+  const openImport = () => {
+    setForm({solde_anterieur: 0});
+    setModal('import');
+  };
+  
+  const saveImport = async () => {
+    const solde = parseFloat(form.solde_anterieur) || 0;
+    if (solde <= 0) return alert('Le solde doit être positif');
+    
+    setSaving(true);
+    try {
+      // Créer un "congé" fictif de type report pour stocker le solde antérieur
+      // On utilise nb_jours négatif pour représenter un crédit
+      const {error} = await supabase.from('conges').insert([{
+        organisation_id: org.id,
+        utilisateur_id: user.id,
+        type_conge: 'report_anterieur',
+        date_debut: today(),
+        date_fin: today(),
+        nb_jours: solde, // Positif = crédit de jours
+        motif: 'Import solde antérieur',
+        statut: 'approved'
+      }]);
+      if (error) throw error;
+      setModal(null);
+      loadData();
+      alert('Solde antérieur importé avec succès !');
+    } catch(e) { alert('Erreur: ' + e.message); }
+    setSaving(false);
   };
 
   const save = async () => {
@@ -2228,15 +2270,23 @@ const CongesPage = () => {
   };
   
   const deleteConge = async (c) => {
-    if (c.statut === 'approved') return alert('Impossible de supprimer un congé déjà approuvé');
-    if (!confirm('Supprimer cette demande de congé ?')) return;
+    if (c.statut === 'approved' && c.type_conge !== 'report_anterieur') return alert('Impossible de supprimer un congé déjà approuvé');
+    if (c.type_conge === 'report_anterieur') {
+      if (!confirm('⚠️ Supprimer le solde antérieur importé ? Cette action est irréversible.')) return;
+    } else {
+      if (!confirm('Supprimer cette demande de congé ?')) return;
+    }
     await supabase.from('conges').delete().eq('id', c.id);
     loadData();
   };
 
-  const mesConges = conges.filter(c => c.utilisateur_id === user.id);
+  const mesConges = conges.filter(c => c.utilisateur_id === user.id && c.type_conge !== 'report_anterieur');
   const congesAValider = conges.filter(c => c.statut === 'pending');
   const congesApprouves = mesConges.filter(c => c.statut === 'approved' && c.type_conge === 'conge_paye');
+  
+  // Récupérer le solde antérieur importé
+  const importConge = conges.find(c => c.type_conge === 'report_anterieur' && c.utilisateur_id === user.id);
+  const joursReportAnterieurs = importConge?.nb_jours || 0;
 
   // Calcul du solde de congés
   // Acquisition: 2 jours par mois d'ancienneté (24 jours/an)
@@ -2244,7 +2294,7 @@ const CongesPage = () => {
   const dateEntree = user.date_entree ? new Date(user.date_entree) : new Date(new Date().getFullYear(), 0, 1);
   const maintenant = new Date();
   const moisAnciennete = Math.floor((maintenant - dateEntree) / (1000 * 60 * 60 * 24 * 30));
-  const joursAcquis = Math.min(moisAnciennete * 2, 24); // Max 24 jours/an
+  const joursAcquis = Math.min(moisAnciennete * 2, 24) + joursReportAnterieurs; // Acquis + report antérieur
   const joursPris = congesApprouves.reduce((s, c) => s + (c.nb_jours || 0), 0);
   const soldeConges = Math.max(0, joursAcquis - joursPris);
   const joursEnAttente = mesConges.filter(c => c.statut === 'pending' && c.type_conge === 'conge_paye').reduce((s, c) => s + (c.nb_jours || 0), 0);
@@ -2255,13 +2305,17 @@ const CongesPage = () => {
         subtitle={`Solde: ${soldeConges} jours disponibles`}
         tabs={[{key: 'mes', label: 'Mes congés', count: mesConges.length}, {key: 'valider', label: 'À valider', count: congesAValider.length}, {key: 'tous', label: 'Tous', count: conges.length}]}
         activeTab={tab} onTabChange={setTab}
-        action={<Button onClick={openNew} icon="➕">Demander congé</Button>}
+        action={<div className="flex gap-2">
+          {!importDone && <Button variant="secondary" size="sm" onClick={openImport} icon="📥">Import solde</Button>}
+          <Button onClick={openNew} icon="➕">Demander congé</Button>
+        </div>}
       />
 
       {/* Carte récapitulative du solde */}
       {tab === 'mes' && (
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          <StatCard title="Jours acquis" value={joursAcquis + 'j'} icon="📅" color="blue" subtitle={`(${moisAnciennete} mois × 2j)`} />
+        <div className="grid grid-cols-5 gap-4 mb-6">
+          <StatCard title="Report antérieur" value={joursReportAnterieurs + 'j'} icon="📥" color="slate" />
+          <StatCard title="Jours acquis" value={(joursAcquis - joursReportAnterieurs) + 'j'} icon="📅" color="blue" subtitle={`(${moisAnciennete} mois × 2j)`} />
           <StatCard title="Jours pris" value={joursPris + 'j'} icon="🏖️" color="amber" />
           <StatCard title="En attente" value={joursEnAttente + 'j'} icon="⏳" color="purple" />
           <StatCard title="Solde disponible" value={soldeConges + 'j'} icon="✅" color="green" />
@@ -2291,7 +2345,7 @@ const CongesPage = () => {
         </Card>
       )}
 
-      <Modal isOpen={modal} onClose={() => setModal(false)} title="Demande de congé">
+      <Modal isOpen={modal === 'conge'} onClose={() => setModal(null)} title="Demande de congé">
         <div className="space-y-4">
           <Select label="Type de congé" value={form.type_conge} onChange={v => setForm(p => ({...p, type_conge: v}))} options={LEAVE_TYPES.map(t => ({value: t.value, label: t.label}))} />
           <div className="grid grid-cols-2 gap-4">
@@ -2301,12 +2355,36 @@ const CongesPage = () => {
           {form.date_debut && form.date_fin && (
             <div className="p-3 bg-blue-50 rounded-xl text-center">
               <span className="text-blue-600 font-medium">{workingDaysBetween(form.date_debut, form.date_fin)} jours ouvrés</span>
+              {form.type_conge === 'conge_paye' && workingDaysBetween(form.date_debut, form.date_fin) > soldeConges && (
+                <div className="text-red-500 text-sm mt-1">⚠️ Dépasse votre solde de {soldeConges}j</div>
+              )}
             </div>
           )}
           <TextArea label="Motif (optionnel)" value={form.motif} onChange={v => setForm(p => ({...p, motif: v}))} rows={2} />
           <div className="flex gap-3 pt-4">
-            <Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button>
+            <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
             <Button onClick={save} loading={saving} className="flex-1">Soumettre</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal Import solde antérieur */}
+      <Modal isOpen={modal === 'import'} onClose={() => setModal(null)} title="Importer solde antérieur" size="sm">
+        <div className="space-y-4">
+          <div className="p-4 bg-amber-50 rounded-xl text-amber-700 text-sm">
+            <strong>⚠️ Important:</strong> Cette opération ne peut être effectuée qu'une seule fois. Entrez le solde de congés que vous aviez avant d'utiliser KabiNet.
+          </div>
+          <Input 
+            label="Solde antérieur (jours)" 
+            type="number" 
+            value={form.solde_anterieur} 
+            onChange={v => setForm(p => ({...p, solde_anterieur: v}))} 
+            placeholder="Ex: 12"
+            required 
+          />
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={saveImport} loading={saving} className="flex-1">Importer</Button>
           </div>
         </div>
       </Modal>
