@@ -1442,18 +1442,6 @@ const MainApp = ({user, onLogout}) => {
   const isCollaborateur = gradeNiveau > 0 && gradeNiveau <= 2 && !isAdmin; // Junior ou Senior sans droits admin
   const userDeptId = collabData?.departement_id;
   
-  // Debug permissions (à retirer en prod)
-  console.log('Permissions debug:', { 
-    gradeNiveau, 
-    gradeNom: collabData?.grades?.nom,
-    gradeNiveauBrut: collabData?.grades?.niveau,
-    userRole, 
-    isAdmin, 
-    isManager, 
-    isCollaborateur,
-    collabEmail: collabData?.email 
-  });
-  
   // Permissions par fonctionnalité
   const permissions = {
     dashboard: true, // Tout le monde (mais contenu différent)
@@ -1819,12 +1807,6 @@ const DashboardPage = () => {
         supabase.from('collaborateurs').select('id, nom, prenom, actif, grade_id, grades(nom)').eq('organisation_id', org.id),
         supabase.from('affectations').select('*').eq('organisation_id', org.id)
       ]);
-      
-      // Debug: Afficher les factures brutes
-      console.log('=== DEBUG FACTURES ===');
-      console.log('Nombre de factures:', factures.data?.length);
-      console.log('Factures:', factures.data);
-      if (factures.error) console.error('Erreur factures:', factures.error);
 
       const projetsActifs = projets.data?.filter(p => p.statut === 'active') || [];
       const heuresTotal = temps.data?.reduce((s, t) => s + (t.heures || 0), 0) || 0;
@@ -1833,23 +1815,11 @@ const DashboardPage = () => {
       // Récupérer les factures
       const allFactures = factures.data || [];
       
-      // Debug détaillé
-      console.log('=== CALCUL CA ===');
-      allFactures.forEach((f, i) => {
-        console.log(`Facture ${i+1}: montant_total=${f.montant_total}, montant_encaisse=${f.montant_encaisse}, statut=${f.statut}`);
-      });
-      
       // CA Facturé = somme de tous les montants des factures
-      const caFacture = allFactures.reduce((s, f) => {
-        const montant = parseFloat(f.montant_total) || 0;
-        return s + montant;
-      }, 0);
+      const caFacture = allFactures.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
       
       // CA Encaissé = somme de tous les montants_encaisse
-      const caEncaisse = allFactures.reduce((s, f) => {
-        const encaisse = parseFloat(f.montant_encaisse) || 0;
-        return s + encaisse;
-      }, 0);
+      const caEncaisse = allFactures.reduce((s, f) => s + (parseFloat(f.montant_encaisse) || 0), 0);
       
       // CA en attente = CA facturé - CA encaissé
       const caEnAttente = caFacture - caEncaisse;
@@ -1860,22 +1830,10 @@ const DashboardPage = () => {
       // Reste à facturer = Budget - CA Facturé
       const resteFacturer = budgetTotal - caFacture;
       
-      console.log('=== RÉSULTATS ===');
-      console.log('CA Facturé:', caFacture);
-      console.log('CA Encaissé:', caEncaisse);
-      console.log('CA En attente:', caEnAttente);
-      console.log('Budget total:', budgetTotal);
-      
       // CA par mois (Janvier à Décembre de l'année courante)
       const now = new Date();
       const currentYear = now.getFullYear();
       const caParMois = [];
-      
-      // Debug dates des factures
-      console.log('=== DATES FACTURES ===');
-      allFactures.forEach((f, i) => {
-        console.log(`Facture ${i+1}: date_emission=${f.date_emission}, date_facture=${f.date_facture}`);
-      });
       
       for (let i = 0; i < 12; i++) {
         const date = new Date(currentYear, i, 1);
@@ -1889,10 +1847,6 @@ const DashboardPage = () => {
           return dateFacture >= monthStart && dateFacture <= monthEnd;
         });
         const montant = facturesDuMois.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
-        
-        if (facturesDuMois.length > 0) {
-          console.log(`Mois ${i+1} (${mois}): ${facturesDuMois.length} factures, montant=${montant}`);
-        }
         
         caParMois.push({mois: mois.charAt(0).toUpperCase() + mois.slice(1), montant, isFuture: i > now.getMonth()});
       }
