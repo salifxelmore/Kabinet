@@ -790,7 +790,9 @@ const MainApp = ({user, onLogout}) => {
 
   const loadUser = async () => {
     try {
-      const {data: u} = await supabase.from('utilisateurs').select('*,organisations(*),departements(*),grades(*)').eq('auth_id', user.id).single();
+      console.log('Loading user with auth_id:', user.id);
+      const {data: u, error: userError} = await supabase.from('utilisateurs').select('*,organisations(*),departements(*),grades(*)').eq('auth_id', user.id).single();
+      console.log('User data:', u, 'Error:', userError);
       if (u) {
         const {data: a} = await supabase.from('abonnements').select('*').eq('organisation_id', u.organisation_id).order('created_at', {ascending: false}).limit(1).single();
         setUserData(u);
@@ -798,9 +800,10 @@ const MainApp = ({user, onLogout}) => {
         setAboData(a);
       } else if (isSuperAdmin) {
         // Super admin sans organisation - afficher admin par défaut
+        console.log('Super admin without org, showing admin panel');
         setViewMode('admin');
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error('LoadUser error:', e); }
     setLoading(false);
   };
 
@@ -931,14 +934,15 @@ const SuperAdminApp = ({user, onLogout, onSwitchToOrg, hasOrg = true}) => {
     setSaving(true);
     try {
       // Vérifier si l'utilisateur existe déjà
-      const {data: existingUser} = await supabase.from('utilisateurs').select('id').eq('auth_id', user.id).single();
+      const {data: existingUser} = await supabase.from('utilisateurs').select('id').eq('auth_id', user.id).maybeSingle();
       
       if (existingUser) {
         // Mettre à jour
-        await supabase.from('utilisateurs').update({organisation_id: selectedOrg}).eq('id', existingUser.id);
+        const {error} = await supabase.from('utilisateurs').update({organisation_id: selectedOrg}).eq('id', existingUser.id);
+        if (error) throw error;
       } else {
         // Créer
-        await supabase.from('utilisateurs').insert([{
+        const {error} = await supabase.from('utilisateurs').insert([{
           auth_id: user.id,
           organisation_id: selectedOrg,
           email: user.email,
@@ -946,12 +950,17 @@ const SuperAdminApp = ({user, onLogout, onSwitchToOrg, hasOrg = true}) => {
           prenom: 'Super',
           role: 'Admin'
         }]);
+        if (error) throw error;
       }
-      alert('Compte lié avec succès! Cliquez sur "Mon Cabinet".');
       setLinkModal(false);
-      window.location.reload();
-    } catch(e) { alert('Erreur: ' + e.message); }
-    setSaving(false);
+      setSaving(false);
+      // Forcer le rechargement complet de la page
+      window.location.href = window.location.href;
+    } catch(e) { 
+      console.error(e);
+      alert('Erreur: ' + e.message); 
+      setSaving(false);
+    }
   };
 
   const loadData = async () => {
