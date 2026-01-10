@@ -4419,25 +4419,28 @@ const ParametresPage = () => {
           <div className="space-y-6">
             {/* Validateurs Congés */}
             <Card title="🏖️ Validateurs des Congés" collapsible defaultOpen={true}>
-              <p className="text-sm text-slate-500 mb-4">Ces personnes peuvent approuver les demandes de congés des collaborateurs de leur département.</p>
+              <p className="text-sm text-slate-500 mb-4">Ces personnes peuvent approuver les demandes de congés des collaborateurs de leur département. Seuls les Managers et grades supérieurs peuvent être validateurs.</p>
               
               {/* Formulaire ajout */}
               <div className="flex gap-4 mb-4 p-4 bg-slate-50 rounded-xl">
                 <Select 
                   value={editForm.validateur_dept_conges || ''} 
-                  onChange={v => setEditForm(p => ({...p, validateur_dept_conges: v}))} 
+                  onChange={v => setEditForm(p => ({...p, validateur_dept_conges: v, validateur_collab_conges: ''}))} 
                   options={depts.map(d => ({value: d.id, label: d.nom}))} 
-                  placeholder="Département" 
+                  placeholder="1. Département" 
                   className="w-48" 
                 />
                 <Select 
                   value={editForm.validateur_collab_conges || ''} 
                   onChange={v => setEditForm(p => ({...p, validateur_collab_conges: v}))} 
-                  options={collaborateurs.filter(c => c.grades?.niveau >= 3).map(c => ({value: c.id, label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'})`}))} 
-                  placeholder="Collaborateur (Manager+)" 
-                  className="flex-1" 
+                  options={collaborateurs
+                    .filter(c => c.grades?.niveau >= 3 && (!editForm.validateur_dept_conges || c.departement_id === editForm.validateur_dept_conges))
+                    .map(c => ({value: c.id, label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'})`}))} 
+                  placeholder={editForm.validateur_dept_conges ? "2. Manager+" : "Sélectionner d'abord un département"} 
+                  className="flex-1"
+                  disabled={!editForm.validateur_dept_conges}
                 />
-                <Button onClick={() => addValidateur('conges', editForm.validateur_dept_conges, editForm.validateur_collab_conges)} icon="➕">Ajouter</Button>
+                <Button onClick={() => addValidateur('conges', editForm.validateur_dept_conges, editForm.validateur_collab_conges)} icon="➕" disabled={!editForm.validateur_dept_conges || !editForm.validateur_collab_conges}>Ajouter</Button>
               </div>
               
               {/* Liste validateurs congés */}
@@ -4454,25 +4457,28 @@ const ParametresPage = () => {
             
             {/* Validateurs Notes de frais */}
             <Card title="🧾 Validateurs des Notes de Frais" collapsible defaultOpen={true}>
-              <p className="text-sm text-slate-500 mb-4">Ces personnes peuvent approuver les notes de frais des collaborateurs de leur département.</p>
+              <p className="text-sm text-slate-500 mb-4">Ces personnes peuvent approuver les notes de frais des collaborateurs de leur département. Seuls les Managers et grades supérieurs peuvent être validateurs.</p>
               
               {/* Formulaire ajout */}
               <div className="flex gap-4 mb-4 p-4 bg-slate-50 rounded-xl">
                 <Select 
                   value={editForm.validateur_dept_frais || ''} 
-                  onChange={v => setEditForm(p => ({...p, validateur_dept_frais: v}))} 
+                  onChange={v => setEditForm(p => ({...p, validateur_dept_frais: v, validateur_collab_frais: ''}))} 
                   options={depts.map(d => ({value: d.id, label: d.nom}))} 
-                  placeholder="Département" 
+                  placeholder="1. Département" 
                   className="w-48" 
                 />
                 <Select 
                   value={editForm.validateur_collab_frais || ''} 
                   onChange={v => setEditForm(p => ({...p, validateur_collab_frais: v}))} 
-                  options={collaborateurs.filter(c => c.grades?.niveau >= 3).map(c => ({value: c.id, label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'})`}))} 
-                  placeholder="Collaborateur (Manager+)" 
-                  className="flex-1" 
+                  options={collaborateurs
+                    .filter(c => c.grades?.niveau >= 3 && (!editForm.validateur_dept_frais || c.departement_id === editForm.validateur_dept_frais))
+                    .map(c => ({value: c.id, label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'})`}))} 
+                  placeholder={editForm.validateur_dept_frais ? "2. Manager+" : "Sélectionner d'abord un département"} 
+                  className="flex-1"
+                  disabled={!editForm.validateur_dept_frais}
                 />
-                <Button onClick={() => addValidateur('frais', editForm.validateur_dept_frais, editForm.validateur_collab_frais)} icon="➕">Ajouter</Button>
+                <Button onClick={() => addValidateur('frais', editForm.validateur_dept_frais, editForm.validateur_collab_frais)} icon="➕" disabled={!editForm.validateur_dept_frais || !editForm.validateur_collab_frais}>Ajouter</Button>
               </div>
               
               {/* Liste validateurs frais */}
@@ -4551,18 +4557,66 @@ const ParametresPage = () => {
       {/* Modal Validateur Congés */}
       <Modal isOpen={editModal === 'validateur_conges'} onClose={() => setEditModal(null)} title="Ajouter validateur congés" size="sm">
         <div className="space-y-4">
-          <Select label="Département" value={editForm.departement_id} onChange={v => setEditForm(p => ({...p, departement_id: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" required />
-          <Select label="Collaborateur (Manager+)" value={editForm.collaborateur_id} onChange={v => setEditForm(p => ({...p, collaborateur_id: v}))} options={collaborateurs.filter(c => c.grades?.niveau >= 3).map(c => ({value: c.id, label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'})`}))} placeholder="Sélectionner" required />
-          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setEditModal(null)} className="flex-1">Annuler</Button><Button onClick={saveEdit} loading={saving} className="flex-1">Ajouter</Button></div>
+          <p className="text-sm text-slate-500">Seuls les collaborateurs avec un grade Manager ou supérieur peuvent être validateurs.</p>
+          <Select 
+            label="1. Département" 
+            value={editForm.departement_id} 
+            onChange={v => setEditForm(p => ({...p, departement_id: v, collaborateur_id: ''}))} 
+            options={depts.map(d => ({value: d.id, label: d.nom}))} 
+            placeholder="Sélectionner" 
+            required 
+          />
+          <Select 
+            label="2. Validateur (Manager+)" 
+            value={editForm.collaborateur_id} 
+            onChange={v => setEditForm(p => ({...p, collaborateur_id: v}))} 
+            options={collaborateurs
+              .filter(c => c.grades?.niveau >= 3 && (!editForm.departement_id || c.departement_id === editForm.departement_id))
+              .map(c => ({value: c.id, label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'})`}))} 
+            placeholder={editForm.departement_id ? "Sélectionner un Manager+" : "Sélectionner d'abord un département"} 
+            disabled={!editForm.departement_id}
+            required 
+          />
+          {editForm.departement_id && collaborateurs.filter(c => c.grades?.niveau >= 3 && c.departement_id === editForm.departement_id).length === 0 && (
+            <div className="text-amber-600 text-sm p-3 bg-amber-50 rounded-lg">⚠️ Aucun Manager+ dans ce département</div>
+          )}
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setEditModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={saveEdit} loading={saving} disabled={!editForm.departement_id || !editForm.collaborateur_id} className="flex-1">Ajouter</Button>
+          </div>
         </div>
       </Modal>
       
       {/* Modal Validateur Notes de frais */}
       <Modal isOpen={editModal === 'validateur_frais'} onClose={() => setEditModal(null)} title="Ajouter validateur notes de frais" size="sm">
         <div className="space-y-4">
-          <Select label="Département" value={editForm.departement_id} onChange={v => setEditForm(p => ({...p, departement_id: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" required />
-          <Select label="Collaborateur (Manager+)" value={editForm.collaborateur_id} onChange={v => setEditForm(p => ({...p, collaborateur_id: v}))} options={collaborateurs.filter(c => c.grades?.niveau >= 3).map(c => ({value: c.id, label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'})`}))} placeholder="Sélectionner" required />
-          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setEditModal(null)} className="flex-1">Annuler</Button><Button onClick={saveEdit} loading={saving} className="flex-1">Ajouter</Button></div>
+          <p className="text-sm text-slate-500">Seuls les collaborateurs avec un grade Manager ou supérieur peuvent être validateurs.</p>
+          <Select 
+            label="1. Département" 
+            value={editForm.departement_id} 
+            onChange={v => setEditForm(p => ({...p, departement_id: v, collaborateur_id: ''}))} 
+            options={depts.map(d => ({value: d.id, label: d.nom}))} 
+            placeholder="Sélectionner" 
+            required 
+          />
+          <Select 
+            label="2. Validateur (Manager+)" 
+            value={editForm.collaborateur_id} 
+            onChange={v => setEditForm(p => ({...p, collaborateur_id: v}))} 
+            options={collaborateurs
+              .filter(c => c.grades?.niveau >= 3 && (!editForm.departement_id || c.departement_id === editForm.departement_id))
+              .map(c => ({value: c.id, label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'})`}))} 
+            placeholder={editForm.departement_id ? "Sélectionner un Manager+" : "Sélectionner d'abord un département"} 
+            disabled={!editForm.departement_id}
+            required 
+          />
+          {editForm.departement_id && collaborateurs.filter(c => c.grades?.niveau >= 3 && c.departement_id === editForm.departement_id).length === 0 && (
+            <div className="text-amber-600 text-sm p-3 bg-amber-50 rounded-lg">⚠️ Aucun Manager+ dans ce département</div>
+          )}
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setEditModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={saveEdit} loading={saving} disabled={!editForm.departement_id || !editForm.collaborateur_id} className="flex-1">Ajouter</Button>
+          </div>
         </div>
       </Modal>
     </div>
