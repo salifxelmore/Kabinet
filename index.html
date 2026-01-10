@@ -1323,8 +1323,9 @@ const CRMPage = () => {
     if (!form.nom || !form.client_id) return alert('Client et nom requis');
     setSaving(true);
     try {
+      const ref = form.code || genCode('OPP');
       const data = {
-        reference: form.code, // La table utilise reference au lieu de code
+        reference: ref,
         nom: form.nom,
         client_id: form.client_id,
         description: form.description || '',
@@ -1336,6 +1337,8 @@ const CRMPage = () => {
       
       let result;
       if (editItem?.id) {
+        // En mode édition, garder la reference existante si pas modifiée
+        data.reference = editItem.reference || ref;
         result = await supabase.from('opportunites').update(data).eq('id', editItem.id);
       } else {
         result = await supabase.from('opportunites').insert([{...data, organisation_id: org.id}]);
@@ -1349,7 +1352,22 @@ const CRMPage = () => {
     }
     setSaving(false);
   };
-  const updateOppStage = async (o, stage) => { await supabase.from('opportunites').update({stage}).eq('id', o.id); loadData(); };
+  
+  // Mettre à jour le stage d'une opportunité (drag & drop pipeline)
+  const updateOppStage = async (o, stage) => { 
+    try {
+      // Important: inclure reference pour éviter l'erreur NOT NULL
+      const {error} = await supabase.from('opportunites').update({
+        stage,
+        reference: o.reference || o.code || genCode('OPP')
+      }).eq('id', o.id); 
+      if (error) throw error;
+      loadData(); 
+    } catch(e) {
+      console.error('Update stage error:', e);
+      alert('Erreur: ' + e.message);
+    }
+  };
 
   const filteredClients = clients.filter(c => c.nom?.toLowerCase().includes(search.toLowerCase()) || c.ninea?.toLowerCase().includes(search.toLowerCase()));
   const filteredContacts = contacts.filter(c => c.nom?.toLowerCase().includes(search.toLowerCase()) || c.prenom?.toLowerCase().includes(search.toLowerCase()));
@@ -1419,31 +1437,84 @@ const CRMPage = () => {
         )}
 
         {tab === 'pipeline' && (
-          <div className="flex gap-4 overflow-x-auto pb-4">
-            {OPPORTUNITY_STAGES.filter(s => !['gagne', 'perdu'].includes(s.id)).map(stage => {
-              const opps = opportunites.filter(o => o.stage === stage.id);
-              const total = opps.reduce((s, o) => s + o.montant, 0);
-              return (
-                <div key={stage.id} className="pipeline-stage flex-shrink-0">
-                  <div className="bg-slate-100 rounded-t-xl p-3">
-                    <div className="flex justify-between items-center"><span className="font-medium">{stage.nom}</span><Badge color={stage.color}>{opps.length}</Badge></div>
-                    <div className="text-sm text-slate-500 mt-1">{fmtMoney(total)}</div>
-                  </div>
-                  <div className="bg-slate-50 rounded-b-xl p-2 min-h-[300px] space-y-2">
-                    {opps.map(o => (
-                      <div key={o.id} className="kanban-card bg-white p-3 rounded-lg shadow-sm border hover:shadow-md transition-shadow cursor-pointer" onClick={() => openEditOpp(o)}>
-                        <div className="font-medium text-sm">{o.nom}</div>
-                        <div className="text-xs text-slate-400">{o.clients?.nom}</div>
-                        <div className="flex justify-between items-center mt-2">
-                          <span className="text-sm font-medium text-green-600">{fmtMoney(o.montant)}</span>
-                          <span className="text-xs text-slate-400">{o.probabilite}%</span>
+          <div>
+            {/* Pipeline actif */}
+            <div className="flex gap-4 overflow-x-auto pb-4">
+              {OPPORTUNITY_STAGES.filter(s => !['gagne', 'perdu'].includes(s.id)).map(stage => {
+                const opps = opportunites.filter(o => o.stage === stage.id);
+                const total = opps.reduce((s, o) => s + o.montant, 0);
+                return (
+                  <div key={stage.id} className="pipeline-stage flex-shrink-0">
+                    <div className="bg-slate-100 rounded-t-xl p-3">
+                      <div className="flex justify-between items-center"><span className="font-medium">{stage.nom}</span><Badge color={stage.color}>{opps.length}</Badge></div>
+                      <div className="text-sm text-slate-500 mt-1">{fmtMoney(total)}</div>
+                    </div>
+                    <div className="bg-slate-50 rounded-b-xl p-2 min-h-[300px] space-y-2">
+                      {opps.map(o => (
+                        <div key={o.id} className="kanban-card bg-white p-3 rounded-lg shadow-sm border hover:shadow-md transition-shadow cursor-pointer" onClick={() => openEditOpp(o)}>
+                          <div className="font-medium text-sm">{o.nom}</div>
+                          <div className="text-xs text-slate-400">{o.clients?.nom}</div>
+                          <div className="flex justify-between items-center mt-2">
+                            <span className="text-sm font-medium text-green-600">{fmtMoney(o.montant)}</span>
+                            <span className="text-xs text-slate-400">{o.probabilite}%</span>
+                          </div>
+                          {/* Boutons pour passer à Gagné/Perdu */}
+                          <div className="flex gap-1 mt-2 pt-2 border-t">
+                            <Button size="xs" variant="success" onClick={(e) => { e.stopPropagation(); updateOppStage(o, 'gagne'); }}>✓ Gagné</Button>
+                            <Button size="xs" variant="danger" onClick={(e) => { e.stopPropagation(); updateOppStage(o, 'perdu'); }}>✗ Perdu</Button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
+                );
+              })}
+            </div>
+            
+            {/* Résultats: Gagné et Perdu */}
+            <div className="grid grid-cols-2 gap-4 mt-6">
+              {/* Colonne Gagné */}
+              <Card className="border-green-200 bg-green-50/50">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-green-700">✓ Gagnés</h3>
+                  <Badge color="green">{opportunites.filter(o => o.stage === 'gagne').length}</Badge>
                 </div>
-              );
-            })}
+                <div className="text-lg font-bold text-green-600 mb-3">{fmtMoney(opportunites.filter(o => o.stage === 'gagne').reduce((s, o) => s + o.montant, 0))}</div>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {opportunites.filter(o => o.stage === 'gagne').map(o => (
+                    <div key={o.id} className="bg-white p-2 rounded-lg text-sm flex justify-between items-center">
+                      <div>
+                        <div className="font-medium">{o.nom}</div>
+                        <div className="text-xs text-slate-400">{o.clients?.nom}</div>
+                      </div>
+                      <span className="font-bold text-green-600">{fmtMoney(o.montant)}</span>
+                    </div>
+                  ))}
+                  {opportunites.filter(o => o.stage === 'gagne').length === 0 && <div className="text-center text-slate-400 py-4">Aucune opportunité gagnée</div>}
+                </div>
+              </Card>
+              
+              {/* Colonne Perdu */}
+              <Card className="border-red-200 bg-red-50/50">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-red-700">✗ Perdus</h3>
+                  <Badge color="red">{opportunites.filter(o => o.stage === 'perdu').length}</Badge>
+                </div>
+                <div className="text-lg font-bold text-red-600 mb-3">{fmtMoney(opportunites.filter(o => o.stage === 'perdu').reduce((s, o) => s + o.montant, 0))}</div>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {opportunites.filter(o => o.stage === 'perdu').map(o => (
+                    <div key={o.id} className="bg-white p-2 rounded-lg text-sm flex justify-between items-center">
+                      <div>
+                        <div className="font-medium">{o.nom}</div>
+                        <div className="text-xs text-slate-400">{o.clients?.nom}</div>
+                      </div>
+                      <span className="font-bold text-red-600">{fmtMoney(o.montant)}</span>
+                    </div>
+                  ))}
+                  {opportunites.filter(o => o.stage === 'perdu').length === 0 && <div className="text-center text-slate-400 py-4">Aucune opportunité perdue</div>}
+                </div>
+              </Card>
+            </div>
           </div>
         )}
       </>)}
@@ -1647,11 +1718,28 @@ const MissionsPage = () => {
     budget: missions.reduce((s, m) => s + (m.budget_montant || 0), 0),
     facture: missions.reduce((s, m) => s + getMissionTotalFacture(m), 0)
   };
+  
+  const exportMissions = () => exportToExcel(filtered, [
+    {header: 'Code', key: 'code'},
+    {header: 'Nom', key: 'nom'},
+    {header: 'Client', getValue: r => r.clients?.nom || ''},
+    {header: 'Département', getValue: r => r.departements?.nom || ''},
+    {header: 'Type', getValue: r => r.type_facturation === 'forfait' ? 'Forfait' : 'Régie'},
+    {header: 'Budget', key: 'budget_montant'},
+    {header: 'Facturé', getValue: r => getMissionTotalFacture(r)},
+    {header: 'Reste', getValue: r => getMissionResteFacturer(r)},
+    {header: 'Date début', key: 'date_debut'},
+    {header: 'Date fin prévue', key: 'date_fin_prevue'},
+    {header: 'Statut', getValue: r => MISSION_STATUS[r.statut]?.label || ''}
+  ], 'missions');
 
   return (
     <div>
       <PageHeader title="Missions" subtitle={`${stats.actives} actives sur ${stats.total} • Budget: ${fmtMoney(stats.budget)}`}
-        action={<Button onClick={openNew} icon="➕">Nouvelle mission</Button>} />
+        action={<div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={exportMissions} icon="📥">Export</Button>
+          <Button onClick={openNew} icon="➕">Nouvelle mission</Button>
+        </div>} />
 
       {loading ? <Loader /> : (
         <Card>
@@ -1774,9 +1862,9 @@ const StaffingPage = () => {
 
   const loadData = async () => {
     const [a, c, m] = await Promise.all([
-      supabase.from('affectations').select('*,collaborateurs(nom,prenom),projets(nom,code)').eq('organisation_id', org.id),
+      supabase.from('affectations').select('*,collaborateurs(nom,prenom),projets(nom,code,clients(nom))').eq('organisation_id', org.id),
       supabase.from('collaborateurs').select('*,grades(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
-      supabase.from('projets').select('id,nom,code').eq('organisation_id', org.id).eq('statut', 'active')
+      supabase.from('projets').select('id,nom,code,clients(nom)').eq('organisation_id', org.id).eq('statut', 'active')
     ]);
     setAffectations(a.data || []);
     setCollaborateurs(c.data || []);
@@ -1818,11 +1906,40 @@ const StaffingPage = () => {
     });
     return weekAff.reduce((s, a) => s + (a.heures || 0), 0);
   };
+  
+  // Export staffing
+  const exportStaffing = () => {
+    const data = [];
+    collaborateurs.forEach(c => {
+      days.forEach(d => {
+        const aff = getAffectation(c.id, d.date);
+        if (aff) {
+          data.push({
+            collaborateur: `${c.prenom} ${c.nom}`,
+            date: d.date,
+            mission_code: aff.projets?.code || '',
+            mission_nom: aff.projets?.nom || '',
+            client: aff.projets?.clients?.nom || '',
+            heures: aff.heures
+          });
+        }
+      });
+    });
+    exportToExcel(data, [
+      {header: 'Collaborateur', key: 'collaborateur'},
+      {header: 'Date', key: 'date'},
+      {header: 'Code mission', key: 'mission_code'},
+      {header: 'Nom mission', key: 'mission_nom'},
+      {header: 'Client', key: 'client'},
+      {header: 'Heures', key: 'heures'}
+    ], 'staffing_' + weekStart);
+  };
 
   return (
     <div>
       <PageHeader title="Staffing" subtitle="Planning des affectations"
         action={<div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={exportStaffing} icon="📥">Export</Button>
           <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, -7))}>← Sem. préc.</Button>
           <Button variant="secondary" onClick={() => setWeekStart(getWeekStart())}>Aujourd'hui</Button>
           <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, 7))}>Sem. suiv. →</Button>
@@ -1856,12 +1973,13 @@ const StaffingPage = () => {
                         return (
                           <td key={d.date} className="px-1 py-2 text-center">
                             {aff ? (
-                              <div className="bg-blue-100 text-blue-700 rounded-lg p-2 text-xs cursor-pointer hover:bg-blue-200" onClick={() => deleteAffectation(aff)}>
-                                <div className="font-medium truncate">{aff.projets?.code}</div>
+                              <div className="bg-blue-100 text-blue-700 rounded-lg p-2 text-xs cursor-pointer hover:bg-blue-200" onClick={() => deleteAffectation(aff)} title={`${aff.projets?.nom} - ${aff.projets?.clients?.nom || 'Sans client'}\nCliquer pour supprimer`}>
+                                <div className="font-medium truncate" title={aff.projets?.nom}>{aff.projets?.code}</div>
+                                <div className="text-[10px] text-blue-500 truncate">{aff.projets?.clients?.nom || '-'}</div>
                                 <div>{aff.heures}h</div>
                               </div>
                             ) : (
-                              <button onClick={() => openNew(c.id, d.date)} className="w-full h-12 border-2 border-dashed border-slate-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-colors text-slate-400">+</button>
+                              <button onClick={() => openNew(c.id, d.date)} className="w-full h-14 border-2 border-dashed border-slate-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-colors text-slate-400">+</button>
                             )}
                           </td>
                         );
@@ -2044,11 +2162,40 @@ const TimesheetPage = () => {
       </tr>
     );
   };
+  
+  // Export timesheet
+  const exportTimesheet = () => {
+    const data = [];
+    missions.forEach(m => {
+      days.forEach(d => {
+        const e = getEntry(m.id, d.date);
+        if (e && e.heures > 0) {
+          data.push({
+            mission_code: m.code,
+            mission_nom: m.nom,
+            client: m.clients?.nom || '',
+            date: d.date,
+            heures: e.heures,
+            commentaire: e.commentaire || ''
+          });
+        }
+      });
+    });
+    exportToExcel(data, [
+      {header: 'Code mission', key: 'mission_code'},
+      {header: 'Nom mission', key: 'mission_nom'},
+      {header: 'Client', key: 'client'},
+      {header: 'Date', key: 'date'},
+      {header: 'Heures', key: 'heures'},
+      {header: 'Commentaire', key: 'commentaire'}
+    ], 'timesheet_' + weekStart);
+  };
 
   return (
     <div>
       <PageHeader title="Saisie des temps" subtitle={`Semaine du ${fmtDate(weekStart)}`}
         action={<div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={exportTimesheet} icon="📥">Export</Button>
           <Button variant="secondary" size="sm" onClick={() => setWeekStart(addDays(weekStart, -7))}>←</Button>
           <Button variant="secondary" size="sm" onClick={() => setWeekStart(getWeekStart())}>Aujourd'hui</Button>
           <Button variant="secondary" size="sm" onClick={() => setWeekStart(addDays(weekStart, 7))}>→</Button>
