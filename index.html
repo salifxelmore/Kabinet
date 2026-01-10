@@ -568,7 +568,7 @@ const LandingPage = ({onLogin, onRegister}) => (
             </div>
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold mb-6 leading-tight">
               Pilotez votre cabinet<br />
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600">en toute tranquilité</span>
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600">comme un pro</span>
             </h1>
             <p className="text-xl text-slate-600 mb-8 leading-relaxed">
               Missura centralise la gestion de vos clients, missions, équipes et finances dans une plateforme intuitive. Gagnez du temps, augmentez votre rentabilité.
@@ -1082,13 +1082,13 @@ const LandingPage = ({onLogin, onRegister}) => (
             <h4 className="text-white font-semibold mb-4">Contact</h4>
             <ul className="space-y-2 text-sm">
               <li>📧 contact@missura.app</li>
-              <li>📞 +221 77 368 42 03</li>
+              <li>📞 +221 XX XXX XX XX</li>
               <li>📍 Dakar, Sénégal</li>
             </ul>
           </div>
         </div>
         <div className="pt-8 border-t border-slate-800 flex flex-col md:flex-row justify-between items-center gap-4">
-          <p className="text-sm">© 2026 Missura. Tous droits réservés.</p>
+          <p className="text-sm">© 2025 Missura. Tous droits réservés.</p>
           <div className="flex gap-6 text-sm">
             <a href="#" className="hover:text-white">Conditions d'utilisation</a>
             <a href="#" className="hover:text-white">Politique de confidentialité</a>
@@ -1229,12 +1229,12 @@ const RegisterPage = ({onLogin, onBack, onConfirm}) => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-purple-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <button onClick={onBack} className="text-slate-400 hover:text-slate-600 text-sm mb-4">← Retour</button>
-          <div className="mx-auto mb-4">
-            <MissuraLogo size={64} />
+          <button onClick={onBack} className="text-slate-400 hover:text-slate-600 text-sm mb-6">← Retour</button>
+          <div className="flex justify-center mb-4">
+            <MissuraLogo size={72} />
           </div>
           <h1 className="text-2xl font-bold text-slate-800">Créer votre compte</h1>
           <p className="text-slate-500 mt-2">14 jours d'essai gratuit</p>
@@ -1828,17 +1828,18 @@ const DashboardPage = () => {
       const budgetTotal = projets.data?.reduce((s, p) => s + (p.budget_montant || 0), 0) || 0;
       const caFacture = factures.data?.reduce((s, f) => s + (f.montant_total || 0), 0) || 0;
       
-      // CA par mois (12 derniers mois)
+      // CA par mois (Janvier à Décembre de l'année courante)
       const now = new Date();
+      const currentYear = now.getFullYear();
       const caParMois = [];
-      for (let i = 11; i >= 0; i--) {
-        const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      for (let i = 0; i < 12; i++) {
+        const date = new Date(currentYear, i, 1);
         const mois = date.toLocaleDateString('fr-FR', {month: 'short'});
         const monthStart = date.toISOString().split('T')[0];
-        const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0).toISOString().split('T')[0];
+        const monthEnd = new Date(currentYear, i + 1, 0).toISOString().split('T')[0];
         const montant = factures.data?.filter(f => f.date_facture >= monthStart && f.date_facture <= monthEnd)
           .reduce((s, f) => s + (f.montant_total || 0), 0) || 0;
-        caParMois.push({mois, montant});
+        caParMois.push({mois: mois.charAt(0).toUpperCase() + mois.slice(1), montant, isFuture: i > now.getMonth()});
       }
       
       // Top missions par CA
@@ -2150,7 +2151,7 @@ const DashboardPage = () => {
       {/* Graphiques */}
       <div className="grid lg:grid-cols-3 gap-6 mb-6">
         {/* Évolution CA */}
-        <Card title="📈 Évolution du CA (12 mois)" className="lg:col-span-2">
+        <Card title={`📈 Évolution du CA ${new Date().getFullYear()}`} className="lg:col-span-2">
           <div className="h-64">
             <div className="flex items-end justify-between h-52 gap-1 px-2">
               {chartData.caParMois?.map((m, i) => {
@@ -2162,10 +2163,14 @@ const DashboardPage = () => {
                       {fmtMoney(m.montant)}
                     </div>
                     <div 
-                      className="w-full bg-gradient-to-t from-blue-600 to-blue-400 rounded-t-lg transition-all hover:from-blue-700 hover:to-blue-500 cursor-pointer"
+                      className={`w-full rounded-t-lg transition-all cursor-pointer ${
+                        m.isFuture 
+                          ? 'bg-slate-200' 
+                          : 'bg-gradient-to-t from-blue-600 to-blue-400 hover:from-blue-700 hover:to-blue-500'
+                      }`}
                       style={{height: `${Math.max(height, 3)}%`}}
                     ></div>
-                    <div className="text-xs text-slate-400 mt-2 capitalize">{m.mois}</div>
+                    <div className={`text-xs mt-2 ${m.isFuture ? 'text-slate-300' : 'text-slate-500'}`}>{m.mois}</div>
                   </div>
                 );
               })}
@@ -5628,14 +5633,15 @@ const RapportsPage = () => {
   const {org} = useApp();
   const [data, setData] = useState({});
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState('month'); // month, quarter, year
+  const [period, setPeriod] = useState('year'); // month, quarter, year
   const [tab, setTab] = useState('global');
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
-  useEffect(() => { loadData(); }, [period]);
+  useEffect(() => { loadData(); }, [period, selectedYear]);
 
   const getPeriodDates = () => {
     const now = new Date();
-    const year = now.getFullYear();
+    const year = selectedYear;
     const month = now.getMonth();
     
     if (period === 'month') {
@@ -5650,7 +5656,7 @@ const RapportsPage = () => {
     } else {
       const start = new Date(year, 0, 1);
       const end = new Date(year, 11, 31);
-      return { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0], label: 'Cette année' };
+      return { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0], label: `Année ${year}` };
     }
   };
 
@@ -5658,22 +5664,26 @@ const RapportsPage = () => {
     setLoading(true);
     const {start, end} = getPeriodDates();
     
-    const [temps, factures, collabs, missions, clients, conges] = await Promise.all([
-      supabase.from('saisies_temps').select('heures,facturable,date,projet_id').eq('organisation_id', org.id).gte('date', start).lte('date', end),
-      supabase.from('factures').select('montant_total,montant_encaisse,statut,date_emission,client_id').eq('organisation_id', org.id),
-      supabase.from('collaborateurs').select('*,grades:grade_id(taux_journalier)').eq('organisation_id', org.id).eq('actif', true),
+    const [temps, factures, collabs, missions, clients, conges, affectations, departements] = await Promise.all([
+      supabase.from('saisies_temps').select('heures,facturable,date,projet_id,utilisateur_id').eq('organisation_id', org.id),
+      supabase.from('factures').select('montant_total,montant_encaisse,statut,date_facture,date_emission,client_id,projet_id').eq('organisation_id', org.id),
+      supabase.from('collaborateurs').select('*,grades:grade_id(nom,taux_journalier),departements:departement_id(nom)').eq('organisation_id', org.id).eq('actif', true),
       supabase.from('projets').select('*,clients(nom)').eq('organisation_id', org.id),
       supabase.from('clients').select('*').eq('organisation_id', org.id),
-      supabase.from('conges').select('*').eq('organisation_id', org.id).eq('statut', 'approved')
+      supabase.from('conges').select('*').eq('organisation_id', org.id).eq('statut', 'approved'),
+      supabase.from('affectations').select('*').eq('organisation_id', org.id),
+      supabase.from('departements').select('*').eq('organisation_id', org.id)
     ]);
 
-    const h = temps.data || [];
-    const heuresTotal = h.reduce((s, t) => s + (t.heures || 0), 0);
-    const heuresFact = h.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0);
+    // Filtrer par période
+    const tPeriod = (temps.data || []).filter(t => t.date >= start && t.date <= end);
+    const fPeriod = (factures.data || []).filter(f => f.date_facture >= start && f.date_facture <= end);
+    
+    const heuresTotal = tPeriod.reduce((s, t) => s + (t.heures || 0), 0);
+    const heuresFact = tPeriod.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0);
     const heuresNonFact = heuresTotal - heuresFact;
     
     const f = factures.data || [];
-    const fPeriod = f.filter(x => x.date_emission >= start && x.date_emission <= end);
     const caTotal = fPeriod.reduce((s, x) => s + (x.montant_total || 0), 0);
     const caEncaisse = f.filter(x => x.statut === 'paid').reduce((s, x) => s + (x.montant_total || 0), 0);
     const caEnAttente = f.filter(x => x.statut === 'sent').reduce((s, x) => s + ((x.montant_total || 0) - (x.montant_encaisse || 0)), 0);
@@ -5682,9 +5692,28 @@ const RapportsPage = () => {
     const missionsActives = m.filter(x => x.statut === 'active').length;
     const budgetTotal = m.reduce((s, x) => s + (x.budget_montant || 0), 0);
     
-    // Production valorisée (heures * taux moyen)
+    // Production valorisée
     const tauxMoyen = collabs.data?.length > 0 ? collabs.data.reduce((s, c) => s + (c.grades?.taux_journalier || 0), 0) / collabs.data.length / 8 : 0;
     const production = heuresFact * tauxMoyen;
+
+    // CA par mois (Janvier à Décembre)
+    const caParMois = [];
+    const heuresParMois = [];
+    for (let i = 0; i < 12; i++) {
+      const monthStart = new Date(selectedYear, i, 1).toISOString().split('T')[0];
+      const monthEnd = new Date(selectedYear, i + 1, 0).toISOString().split('T')[0];
+      const moisLabel = new Date(selectedYear, i, 1).toLocaleDateString('fr-FR', {month: 'short'});
+      
+      const montantCA = f.filter(x => x.date_facture >= monthStart && x.date_facture <= monthEnd)
+        .reduce((s, x) => s + (x.montant_total || 0), 0);
+      caParMois.push({mois: moisLabel.charAt(0).toUpperCase() + moisLabel.slice(1), montant: montantCA, isFuture: i > new Date().getMonth() && selectedYear === new Date().getFullYear()});
+      
+      const heuresMois = (temps.data || []).filter(t => t.date >= monthStart && t.date <= monthEnd)
+        .reduce((s, t) => s + (t.heures || 0), 0);
+      const heuresFactMois = (temps.data || []).filter(t => t.date >= monthStart && t.date <= monthEnd && t.facturable)
+        .reduce((s, t) => s + (t.heures || 0), 0);
+      heuresParMois.push({mois: moisLabel.charAt(0).toUpperCase() + moisLabel.slice(1), total: heuresMois, facturable: heuresFactMois});
+    }
 
     // Top clients par CA
     const clientsCA = {};
@@ -5696,22 +5725,70 @@ const RapportsPage = () => {
     const topClients = Object.entries(clientsCA)
       .map(([id, ca]) => ({id, ca, nom: clients.data?.find(c => c.id === id)?.nom || 'Inconnu'}))
       .sort((a, b) => b.ca - a.ca)
-      .slice(0, 5);
+      .slice(0, 10);
 
     // Top missions par heures
     const missionsHeures = {};
-    h.forEach(t => {
+    tPeriod.forEach(t => {
       if (t.projet_id) {
         missionsHeures[t.projet_id] = (missionsHeures[t.projet_id] || 0) + (t.heures || 0);
       }
     });
     const topMissions = Object.entries(missionsHeures)
-      .map(([id, heures]) => ({id, heures, nom: m.find(x => x.id === id)?.nom || 'Inconnue', code: m.find(x => x.id === id)?.code}))
+      .map(([id, heures]) => {
+        const mission = m.find(x => x.id === id);
+        return {id, heures, nom: mission?.nom || 'Inconnue', code: mission?.code, budget: mission?.budget_heures || 0};
+      })
       .sort((a, b) => b.heures - a.heures)
-      .slice(0, 5);
+      .slice(0, 10);
+
+    // Performance par collaborateur
+    const collabPerf = (collabs.data || []).map(c => {
+      const heures = tPeriod.filter(t => t.utilisateur_id === c.id).reduce((s, t) => s + (t.heures || 0), 0);
+      const heuresFact = tPeriod.filter(t => t.utilisateur_id === c.id && t.facturable).reduce((s, t) => s + (t.heures || 0), 0);
+      return {
+        id: c.id,
+        nom: `${c.prenom} ${c.nom}`,
+        grade: c.grades?.nom || '-',
+        dept: c.departements?.nom || '-',
+        heures,
+        heuresFact,
+        taux: heures > 0 ? Math.round((heuresFact / heures) * 100) : 0,
+        production: heuresFact * (c.grades?.taux_journalier || 0) / 8
+      };
+    }).sort((a, b) => b.taux - a.taux);
+
+    // Performance par département
+    const deptPerf = (departements.data || []).map(d => {
+      const deptCollabs = collabs.data?.filter(c => c.departement_id === d.id) || [];
+      const deptCollabIds = deptCollabs.map(c => c.id);
+      const heures = tPeriod.filter(t => deptCollabIds.includes(t.utilisateur_id)).reduce((s, t) => s + (t.heures || 0), 0);
+      const heuresFact = tPeriod.filter(t => deptCollabIds.includes(t.utilisateur_id) && t.facturable).reduce((s, t) => s + (t.heures || 0), 0);
+      return {
+        id: d.id,
+        nom: d.nom,
+        nbCollabs: deptCollabs.length,
+        heures,
+        heuresFact,
+        taux: heures > 0 ? Math.round((heuresFact / heures) * 100) : 0
+      };
+    }).sort((a, b) => b.taux - a.taux);
+
+    // Répartition missions par statut
+    const missionsByStatus = {
+      active: m.filter(x => x.statut === 'active').length,
+      completed: m.filter(x => x.statut === 'completed').length,
+      draft: m.filter(x => x.statut === 'draft').length,
+      cancelled: m.filter(x => x.statut === 'cancelled').length
+    };
 
     // Jours de congés
-    const joursConges = (conges.data || []).reduce((s, c) => s + (c.nb_jours || 0), 0);
+    const joursConges = (conges.data || []).filter(c => c.date_debut >= start && c.date_debut <= end).reduce((s, c) => s + (c.nb_jours || 0), 0);
+
+    // Calculs additionnels
+    const joursTravailles = heuresTotal / 8;
+    const productiviteMoyenne = collabs.data?.length > 0 ? heuresTotal / collabs.data.length : 0;
+    const caMoyenMission = missionsActives > 0 ? caTotal / missionsActives : 0;
 
     setData({
       heuresTotal, heuresFact, heuresNonFact,
@@ -5721,88 +5798,224 @@ const RapportsPage = () => {
       missionsActives, totalMissions: m.length,
       nbCollabs: collabs.data?.length || 0,
       nbClients: clients.data?.length || 0,
-      topClients, topMissions, joursConges, tauxMoyen
+      topClients, topMissions, joursConges, tauxMoyen,
+      caParMois, heuresParMois, collabPerf, deptPerf, missionsByStatus,
+      joursTravailles, productiviteMoyenne, caMoyenMission
     });
     setLoading(false);
   };
 
-  if (loading) return <Loader />;
+  if (loading) return <Loader text="Chargement des rapports..." />;
 
   const {label} = getPeriodDates();
 
   return (
     <div>
-      <PageHeader title="Rapports & Analyses" subtitle={label}
+      <PageHeader title="📊 Rapports & Analyses" subtitle={label}
         tabs={[
-          {key: 'global', label: 'Vue globale'},
-          {key: 'temps', label: 'Temps'},
-          {key: 'finance', label: 'Finance'},
-          {key: 'clients', label: 'Clients'}
+          {key: 'global', label: '🏠 Synthèse'},
+          {key: 'temps', label: '⏱️ Temps'},
+          {key: 'finance', label: '💰 Finance'},
+          {key: 'equipe', label: '👥 Équipe'},
+          {key: 'clients', label: '🏢 Clients'}
         ]}
         activeTab={tab} onTabChange={setTab}
         action={
           <div className="flex gap-2">
+            <Select value={selectedYear.toString()} onChange={v => setSelectedYear(parseInt(v))} options={[
+              {value: (new Date().getFullYear() - 1).toString(), label: (new Date().getFullYear() - 1).toString()},
+              {value: new Date().getFullYear().toString(), label: new Date().getFullYear().toString()}
+            ]} className="w-24" />
             <Select value={period} onChange={setPeriod} options={[
               {value: 'month', label: 'Ce mois'},
               {value: 'quarter', label: 'Ce trimestre'},
-              {value: 'year', label: 'Cette année'}
+              {value: 'year', label: 'Année complète'}
             ]} className="w-40" />
           </div>
         }
       />
       
+      {/* ========== ONGLET SYNTHÈSE ========== */}
       {tab === 'global' && (<>
+        {/* KPIs principaux */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <StatCard title="Heures totales" value={fmt(data.heuresTotal) + 'h'} icon="⏱️" color="blue" />
-          <StatCard title="Taux chargeabilité" value={data.tauxCharge + '%'} icon="📊" color="purple" trend={data.tauxCharge >= 75 ? 'up' : 'down'} />
-          <StatCard title="CA facturé" value={fmtMoney(data.caTotal)} icon="📄" color="green" />
-          <StatCard title="CA encaissé" value={fmtMoney(data.caEncaisse)} icon="💰" color="amber" />
+          <div className="card p-4 bg-gradient-to-br from-blue-500 to-blue-600 text-white">
+            <div className="text-blue-100 text-sm">Heures totales</div>
+            <div className="text-2xl font-bold">{fmt(data.heuresTotal)}h</div>
+            <div className="text-blue-200 text-xs">{fmt(data.joursTravailles)} jours</div>
+          </div>
+          <div className="card p-4 bg-gradient-to-br from-green-500 to-emerald-500 text-white">
+            <div className="text-green-100 text-sm">Taux chargeabilité</div>
+            <div className="text-2xl font-bold">{data.tauxCharge}%</div>
+            <div className="text-green-200 text-xs">Objectif: 75%</div>
+          </div>
+          <div className="card p-4 bg-gradient-to-br from-purple-500 to-indigo-500 text-white">
+            <div className="text-purple-100 text-sm">CA facturé</div>
+            <div className="text-2xl font-bold">{fmtMoney(data.caTotal)}</div>
+            <div className="text-purple-200 text-xs">{fPeriod?.length || 0} factures</div>
+          </div>
+          <div className="card p-4 bg-gradient-to-br from-amber-500 to-orange-500 text-white">
+            <div className="text-amber-100 text-sm">CA encaissé</div>
+            <div className="text-2xl font-bold">{fmtMoney(data.caEncaisse)}</div>
+            <div className="text-amber-200 text-xs">{data.caTotal > 0 ? Math.round((data.caEncaisse / data.caTotal) * 100) : 0}% recouvré</div>
+          </div>
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-6">
-          <Card title="📈 Performance financière">
+        {/* Graphiques principaux */}
+        <div className="grid lg:grid-cols-2 gap-6 mb-6">
+          {/* Évolution CA */}
+          <Card title={`📈 Évolution du CA ${selectedYear}`}>
+            <div className="h-52">
+              <div className="flex items-end justify-between h-44 gap-1">
+                {data.caParMois?.map((m, i) => {
+                  const maxCA = Math.max(...data.caParMois.map(x => x.montant), 1);
+                  const height = (m.montant / maxCA) * 100;
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center group">
+                      <div className="text-xs text-slate-500 mb-1 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                        {fmtMoney(m.montant)}
+                      </div>
+                      <div 
+                        className={`w-full rounded-t-lg transition-all cursor-pointer ${
+                          m.isFuture ? 'bg-slate-200' : 'bg-gradient-to-t from-green-600 to-green-400 hover:from-green-700 hover:to-green-500'
+                        }`}
+                        style={{height: `${Math.max(height, 4)}%`}}
+                      ></div>
+                      <div className={`text-xs mt-1 ${m.isFuture ? 'text-slate-300' : 'text-slate-500'}`}>{m.mois}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </Card>
+          
+          {/* Évolution Heures */}
+          <Card title="⏱️ Heures par mois">
+            <div className="h-52">
+              <div className="flex items-end justify-between h-44 gap-1">
+                {data.heuresParMois?.map((m, i) => {
+                  const maxH = Math.max(...data.heuresParMois.map(x => x.total), 1);
+                  const heightTotal = (m.total / maxH) * 100;
+                  const heightFact = (m.facturable / maxH) * 100;
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center group">
+                      <div className="text-xs text-slate-500 mb-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {m.total}h
+                      </div>
+                      <div className="w-full relative" style={{height: `${Math.max(heightTotal, 4)}%`}}>
+                        <div className="absolute inset-0 bg-slate-200 rounded-t-lg"></div>
+                        <div 
+                          className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-blue-600 to-blue-400 rounded-t-lg"
+                          style={{height: `${m.total > 0 ? (m.facturable / m.total) * 100 : 0}%`}}
+                        ></div>
+                      </div>
+                      <div className="text-xs mt-1 text-slate-500">{m.mois}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex justify-center gap-6 mt-2 text-xs">
+                <span className="flex items-center gap-1"><span className="w-3 h-3 bg-blue-500 rounded"></span> Facturable</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-3 bg-slate-200 rounded"></span> Non-fact.</span>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        {/* Stats secondaires */}
+        <div className="grid lg:grid-cols-4 gap-6 mb-6">
+          <Card title="🎯 Objectifs">
             <div className="space-y-4">
               <div>
-                <div className="flex justify-between text-sm mb-1"><span>CA vs Budget</span><span className="font-medium">{data.rentabilite}%</span></div>
-                <ProgressBar value={data.caEncaisse} max={data.budgetTotal} color={data.rentabilite >= 100 ? 'green' : 'blue'} />
-                <div className="text-xs text-slate-400 mt-1">{fmtMoney(data.caEncaisse)} / {fmtMoney(data.budgetTotal)}</div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span>Chargeabilité</span>
+                  <span className={data.tauxCharge >= 75 ? 'text-green-600' : 'text-amber-600'}>{data.tauxCharge}% / 75%</span>
+                </div>
+                <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full ${data.tauxCharge >= 75 ? 'bg-green-500' : 'bg-amber-500'}`} style={{width: `${Math.min(data.tauxCharge, 100)}%`}}></div>
+                </div>
               </div>
               <div>
-                <div className="flex justify-between text-sm mb-1"><span>Production valorisée</span><span className="font-medium">{fmtMoney(data.production)}</span></div>
-                <ProgressBar value={data.production} max={data.budgetTotal} color="purple" />
-              </div>
-              <div className="pt-2 border-t">
-                <div className="flex justify-between text-sm"><span>En attente encaissement</span><span className="font-medium text-amber-600">{fmtMoney(data.caEnAttente)}</span></div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span>Rentabilité</span>
+                  <span className={data.rentabilite >= 100 ? 'text-green-600' : 'text-amber-600'}>{data.rentabilite}% / 100%</span>
+                </div>
+                <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full ${data.rentabilite >= 100 ? 'bg-green-500' : 'bg-amber-500'}`} style={{width: `${Math.min(data.rentabilite, 100)}%`}}></div>
+                </div>
               </div>
             </div>
           </Card>
 
-          <Card title="🎯 Objectifs">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="text-center p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl">
-                <div className={cn('text-3xl font-bold', data.tauxCharge >= 75 ? 'text-green-600' : 'text-blue-600')}>{data.tauxCharge}%</div>
-                <div className="text-sm text-slate-600 font-medium">Chargeabilité</div>
-                <div className="text-xs text-slate-400">Objectif: 75%</div>
-                <div className="mt-2"><ProgressBar value={data.tauxCharge} max={100} color={data.tauxCharge >= 75 ? 'green' : 'blue'} size="sm" /></div>
+          <Card title="📋 Missions">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="text-center p-2 bg-green-50 rounded-lg">
+                <div className="text-xl font-bold text-green-600">{data.missionsByStatus?.active || 0}</div>
+                <div className="text-xs text-green-700">Actives</div>
               </div>
-              <div className="text-center p-4 bg-gradient-to-br from-green-50 to-green-100 rounded-xl">
-                <div className={cn('text-3xl font-bold', data.rentabilite >= 100 ? 'text-green-600' : 'text-amber-600')}>{data.rentabilite}%</div>
-                <div className="text-sm text-slate-600 font-medium">Rentabilité</div>
-                <div className="text-xs text-slate-400">Objectif: 100%</div>
-                <div className="mt-2"><ProgressBar value={data.rentabilite} max={100} color={data.rentabilite >= 100 ? 'green' : 'amber'} size="sm" /></div>
+              <div className="text-center p-2 bg-blue-50 rounded-lg">
+                <div className="text-xl font-bold text-blue-600">{data.missionsByStatus?.completed || 0}</div>
+                <div className="text-xs text-blue-700">Terminées</div>
+              </div>
+              <div className="text-center p-2 bg-slate-50 rounded-lg">
+                <div className="text-xl font-bold text-slate-600">{data.missionsByStatus?.draft || 0}</div>
+                <div className="text-xs text-slate-700">Brouillon</div>
+              </div>
+              <div className="text-center p-2 bg-red-50 rounded-lg">
+                <div className="text-xl font-bold text-red-600">{data.missionsByStatus?.cancelled || 0}</div>
+                <div className="text-xs text-red-700">Annulées</div>
+              </div>
+            </div>
+          </Card>
+
+          <Card title="👥 Ressources">
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600">Collaborateurs</span>
+                <span className="font-bold text-blue-600">{data.nbCollabs}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600">Clients</span>
+                <span className="font-bold text-green-600">{data.nbClients}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600">Jours congés</span>
+                <span className="font-bold text-purple-600">{data.joursConges}j</span>
+              </div>
+            </div>
+          </Card>
+
+          <Card title="💡 Indicateurs">
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600 text-sm">Prod. valorisée</span>
+                <span className="font-bold text-green-600 text-sm">{fmtMoney(data.production)}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600 text-sm">H/collab moy.</span>
+                <span className="font-bold text-blue-600 text-sm">{fmt(data.productiviteMoyenne)}h</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600 text-sm">CA/mission moy.</span>
+                <span className="font-bold text-purple-600 text-sm">{fmtMoney(data.caMoyenMission)}</span>
               </div>
             </div>
           </Card>
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-6 mt-6">
+        {/* Top listes */}
+        <div className="grid lg:grid-cols-2 gap-6">
           <Card title="🏆 Top 5 Clients (CA)">
-            {data.topClients?.length > 0 ? (
+            {data.topClients?.slice(0, 5).length > 0 ? (
               <div className="space-y-3">
-                {data.topClients.map((c, i) => (
+                {data.topClients.slice(0, 5).map((c, i) => (
                   <div key={c.id} className="flex items-center gap-3">
-                    <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">{i + 1}</div>
-                    <div className="flex-1 font-medium">{c.nom}</div>
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold ${
+                      i === 0 ? 'bg-amber-100 text-amber-700' : 
+                      i === 1 ? 'bg-slate-200 text-slate-700' : 
+                      i === 2 ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500'
+                    }`}>{i + 1}</div>
+                    <div className="flex-1 font-medium truncate">{c.nom}</div>
                     <div className="font-bold text-green-600">{fmtMoney(c.ca)}</div>
                   </div>
                 ))}
@@ -5811,13 +6024,23 @@ const RapportsPage = () => {
           </Card>
 
           <Card title="⏱️ Top 5 Missions (Heures)">
-            {data.topMissions?.length > 0 ? (
+            {data.topMissions?.slice(0, 5).length > 0 ? (
               <div className="space-y-3">
-                {data.topMissions.map((m, i) => (
+                {data.topMissions.slice(0, 5).map((m, i) => (
                   <div key={m.id} className="flex items-center gap-3">
-                    <div className="w-6 h-6 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center text-xs font-bold">{i + 1}</div>
-                    <div className="flex-1"><div className="font-medium">{m.nom}</div><div className="text-xs text-slate-400">{m.code}</div></div>
-                    <div className="font-bold text-purple-600">{m.heures}h</div>
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold ${
+                      i === 0 ? 'bg-blue-100 text-blue-700' : 
+                      i === 1 ? 'bg-slate-200 text-slate-700' : 
+                      i === 2 ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-500'
+                    }`}>{i + 1}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">{m.nom}</div>
+                      <div className="text-xs text-slate-400">{m.code}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-bold text-blue-600">{m.heures}h</div>
+                      {m.budget > 0 && <div className="text-xs text-slate-400">/ {m.budget}h</div>}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -5826,6 +6049,7 @@ const RapportsPage = () => {
         </div>
       </>)}
 
+      {/* ========== ONGLET TEMPS ========== */}
       {tab === 'temps' && (<>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <StatCard title="Heures totales" value={fmt(data.heuresTotal) + 'h'} icon="⏱️" color="blue" />
@@ -5834,47 +6058,76 @@ const RapportsPage = () => {
           <StatCard title="Taux facturable" value={data.tauxCharge + '%'} icon="📊" color="purple" />
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-6">
-          <Card title="📊 Répartition du temps">
-            <div className="space-y-4">
-              <div>
-                <div className="flex justify-between text-sm mb-1"><span>Heures facturables</span><span className="text-green-600 font-medium">{fmt(data.heuresFact)}h ({data.tauxCharge}%)</span></div>
-                <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-green-500 rounded-full" style={{width: data.tauxCharge + '%'}}></div>
+        <div className="grid lg:grid-cols-2 gap-6 mb-6">
+          <Card title="📊 Répartition globale">
+            <div className="flex items-center gap-8">
+              <div className="relative w-40 h-40">
+                <svg className="w-full h-full transform -rotate-90">
+                  <circle cx="80" cy="80" r="60" stroke="#e2e8f0" strokeWidth="20" fill="none" />
+                  <circle cx="80" cy="80" r="60" stroke="#22c55e" strokeWidth="20" fill="none" 
+                    strokeDasharray={`${(data.tauxCharge / 100) * 377} 377`} strokeLinecap="round" />
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <div className="text-3xl font-bold">{data.tauxCharge}%</div>
+                  <div className="text-xs text-slate-500">Facturable</div>
                 </div>
               </div>
-              <div>
-                <div className="flex justify-between text-sm mb-1"><span>Heures non-facturables</span><span className="text-slate-500 font-medium">{fmt(data.heuresNonFact)}h ({100 - data.tauxCharge}%)</span></div>
-                <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-slate-400 rounded-full" style={{width: (100 - data.tauxCharge) + '%'}}></div>
+              <div className="flex-1 space-y-4">
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="flex items-center gap-2"><span className="w-3 h-3 bg-green-500 rounded-full"></span> Facturable</span>
+                    <span className="font-medium">{fmt(data.heuresFact)}h</span>
+                  </div>
+                  <div className="h-2 bg-green-500 rounded-full" style={{width: `${data.tauxCharge}%`}}></div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="flex items-center gap-2"><span className="w-3 h-3 bg-slate-300 rounded-full"></span> Non-facturable</span>
+                    <span className="font-medium">{fmt(data.heuresNonFact)}h</span>
+                  </div>
+                  <div className="h-2 bg-slate-300 rounded-full" style={{width: `${100 - data.tauxCharge}%`}}></div>
                 </div>
               </div>
             </div>
           </Card>
 
-          <Card title="👥 Ressources">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="text-center p-4 bg-slate-50 rounded-xl">
-                <div className="text-3xl font-bold text-blue-600">{data.nbCollabs}</div>
-                <div className="text-sm text-slate-500">Collaborateurs actifs</div>
-              </div>
-              <div className="text-center p-4 bg-slate-50 rounded-xl">
-                <div className="text-3xl font-bold text-amber-600">{data.joursConges}</div>
-                <div className="text-sm text-slate-500">Jours de congés pris</div>
-              </div>
-              <div className="text-center p-4 bg-slate-50 rounded-xl">
-                <div className="text-3xl font-bold text-green-600">{fmt(data.tauxMoyen)}</div>
-                <div className="text-sm text-slate-500">Taux horaire moyen (F)</div>
-              </div>
-              <div className="text-center p-4 bg-slate-50 rounded-xl">
-                <div className="text-3xl font-bold text-purple-600">{data.missionsActives}</div>
-                <div className="text-sm text-slate-500">Missions actives</div>
+          <Card title="📈 Évolution mensuelle">
+            <div className="h-48">
+              <div className="flex items-end justify-between h-40 gap-1">
+                {data.heuresParMois?.map((m, i) => {
+                  const maxH = Math.max(...data.heuresParMois.map(x => x.total), 1);
+                  const height = (m.total / maxH) * 100;
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center group">
+                      <div className="text-xs text-slate-500 mb-1 opacity-0 group-hover:opacity-100">{m.total}h</div>
+                      <div className="w-full bg-gradient-to-t from-blue-600 to-blue-400 rounded-t-lg" style={{height: `${Math.max(height, 4)}%`}}></div>
+                      <div className="text-xs mt-1 text-slate-500">{m.mois}</div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </Card>
         </div>
+
+        <Card title="🏆 Top 10 Missions (Heures consommées)">
+          {data.topMissions?.length > 0 ? (
+            <Table columns={[
+              {header: '#', render: (r, i) => <span className="font-bold text-slate-400">{i + 1}</span>},
+              {header: 'Mission', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.code}</div></div>},
+              {header: 'Heures', render: r => <span className="font-bold text-blue-600">{r.heures}h</span>},
+              {header: 'Budget', render: r => r.budget > 0 ? <span className="text-slate-500">{r.budget}h</span> : '-'},
+              {header: 'Consommé', render: r => r.budget > 0 ? (
+                <div className="w-24">
+                  <ProgressBar value={r.heures} max={r.budget} color={r.heures > r.budget ? 'red' : 'blue'} size="sm" />
+                </div>
+              ) : '-'}
+            ]} data={data.topMissions} />
+          ) : <EmptyState icon="📊" title="Pas de données" />}
+        </Card>
       </>)}
 
+      {/* ========== ONGLET FINANCE ========== */}
       {tab === 'finance' && (<>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <StatCard title="CA facturé" value={fmtMoney(data.caTotal)} icon="📄" color="blue" />
@@ -5883,39 +6136,163 @@ const RapportsPage = () => {
           <StatCard title="Budget total" value={fmtMoney(data.budgetTotal)} icon="🎯" color="purple" />
         </div>
 
-        <div className="grid lg:grid-cols-2 gap-6">
-          <Card title="💰 Flux de trésorerie">
-            <div className="space-y-4">
-              <div className="flex justify-between items-center p-3 bg-green-50 rounded-xl">
-                <span className="text-green-700">Encaissé</span>
-                <span className="font-bold text-green-700">{fmtMoney(data.caEncaisse)}</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-amber-50 rounded-xl">
-                <span className="text-amber-700">À encaisser</span>
-                <span className="font-bold text-amber-700">{fmtMoney(data.caEnAttente)}</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-blue-50 rounded-xl">
-                <span className="text-blue-700">Production non facturée</span>
-                <span className="font-bold text-blue-700">{fmtMoney(data.production - data.caTotal)}</span>
+        <div className="grid lg:grid-cols-2 gap-6 mb-6">
+          <Card title={`📈 CA Mensuel ${selectedYear}`}>
+            <div className="h-52">
+              <div className="flex items-end justify-between h-44 gap-1">
+                {data.caParMois?.map((m, i) => {
+                  const maxCA = Math.max(...data.caParMois.map(x => x.montant), 1);
+                  const height = (m.montant / maxCA) * 100;
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center group">
+                      <div className="text-xs text-slate-500 mb-1 opacity-0 group-hover:opacity-100 whitespace-nowrap">{fmtMoney(m.montant)}</div>
+                      <div className={`w-full rounded-t-lg ${m.isFuture ? 'bg-slate-200' : 'bg-gradient-to-t from-green-600 to-green-400'}`} style={{height: `${Math.max(height, 4)}%`}}></div>
+                      <div className="text-xs mt-1 text-slate-500">{m.mois}</div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </Card>
 
-          <Card title="📈 Indicateurs">
+          <Card title="💰 Flux de trésorerie">
             <div className="space-y-4">
-              <div>
-                <div className="flex justify-between text-sm mb-1"><span>Taux de recouvrement</span><span>{data.caTotal > 0 ? Math.round((data.caEncaisse / data.caTotal) * 100) : 0}%</span></div>
-                <ProgressBar value={data.caEncaisse} max={data.caTotal} color="green" />
+              <div className="flex justify-between items-center p-4 bg-green-50 rounded-xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">✅</div>
+                  <span className="text-green-700 font-medium">Encaissé</span>
+                </div>
+                <span className="font-bold text-green-700 text-lg">{fmtMoney(data.caEncaisse)}</span>
               </div>
-              <div>
-                <div className="flex justify-between text-sm mb-1"><span>Consommation budget</span><span>{Math.round((data.caTotal / data.budgetTotal) * 100) || 0}%</span></div>
-                <ProgressBar value={data.caTotal} max={data.budgetTotal} color="blue" />
+              <div className="flex justify-between items-center p-4 bg-amber-50 rounded-xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center">⏳</div>
+                  <span className="text-amber-700 font-medium">À encaisser</span>
+                </div>
+                <span className="font-bold text-amber-700 text-lg">{fmtMoney(data.caEnAttente)}</span>
+              </div>
+              <div className="flex justify-between items-center p-4 bg-blue-50 rounded-xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">📝</div>
+                  <span className="text-blue-700 font-medium">Non facturé</span>
+                </div>
+                <span className="font-bold text-blue-700 text-lg">{fmtMoney(Math.max(0, data.production - data.caTotal))}</span>
               </div>
             </div>
           </Card>
         </div>
+
+        <div className="grid lg:grid-cols-2 gap-6">
+          <Card title="📊 Indicateurs financiers">
+            <div className="space-y-4">
+              <div>
+                <div className="flex justify-between text-sm mb-2"><span>Taux de recouvrement</span><span className="font-medium">{data.caTotal > 0 ? Math.round((data.caEncaisse / data.caTotal) * 100) : 0}%</span></div>
+                <ProgressBar value={data.caEncaisse} max={data.caTotal || 1} color="green" />
+              </div>
+              <div>
+                <div className="flex justify-between text-sm mb-2"><span>Consommation budget</span><span className="font-medium">{data.budgetTotal > 0 ? Math.round((data.caTotal / data.budgetTotal) * 100) : 0}%</span></div>
+                <ProgressBar value={data.caTotal} max={data.budgetTotal || 1} color="blue" />
+              </div>
+              <div>
+                <div className="flex justify-between text-sm mb-2"><span>Production vs Facturation</span><span className="font-medium">{data.production > 0 ? Math.round((data.caTotal / data.production) * 100) : 0}%</span></div>
+                <ProgressBar value={data.caTotal} max={data.production || 1} color="purple" />
+              </div>
+            </div>
+          </Card>
+
+          <Card title="🏆 Top Clients (CA)">
+            {data.topClients?.slice(0, 5).length > 0 ? (
+              <div className="space-y-3">
+                {data.topClients.slice(0, 5).map((c, i) => (
+                  <div key={c.id} className="flex items-center gap-3">
+                    <div className="w-6 h-6 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-xs font-bold">{i + 1}</div>
+                    <div className="flex-1 font-medium truncate">{c.nom}</div>
+                    <div className="font-bold text-green-600">{fmtMoney(c.ca)}</div>
+                  </div>
+                ))}
+              </div>
+            ) : <EmptyState icon="👥" title="Pas de données" />}
+          </Card>
+        </div>
       </>)}
 
+      {/* ========== ONGLET ÉQUIPE ========== */}
+      {tab === 'equipe' && (<>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <StatCard title="Collaborateurs" value={data.nbCollabs} icon="👥" color="blue" />
+          <StatCard title="Heures totales" value={fmt(data.heuresTotal) + 'h'} icon="⏱️" color="green" />
+          <StatCard title="H/Collab moyenne" value={fmt(data.productiviteMoyenne) + 'h'} icon="📊" color="purple" />
+          <StatCard title="Jours congés" value={data.joursConges + 'j'} icon="🏖️" color="amber" />
+        </div>
+
+        <div className="grid lg:grid-cols-2 gap-6 mb-6">
+          <Card title="👥 Performance par collaborateur">
+            {data.collabPerf?.length > 0 ? (
+              <div className="space-y-3 max-h-80 overflow-y-auto">
+                {data.collabPerf.map((c, i) => (
+                  <div key={c.id} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-lg">
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
+                      {c.nom.split(' ').map(n => n[0]).join('')}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-sm truncate">{c.nom}</span>
+                        <span className="text-xs text-slate-400">{c.grade}</span>
+                      </div>
+                      <div className="h-1.5 bg-slate-100 rounded-full mt-1 overflow-hidden">
+                        <div className={`h-full rounded-full ${c.taux >= 75 ? 'bg-green-500' : c.taux >= 50 ? 'bg-amber-500' : 'bg-red-500'}`} style={{width: `${c.taux}%`}}></div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className={`font-bold text-sm ${c.taux >= 75 ? 'text-green-600' : c.taux >= 50 ? 'text-amber-600' : 'text-red-600'}`}>{c.taux}%</div>
+                      <div className="text-xs text-slate-400">{c.heures}h</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : <EmptyState icon="👥" title="Pas de données" />}
+          </Card>
+
+          <Card title="🏢 Performance par département">
+            {data.deptPerf?.length > 0 ? (
+              <div className="space-y-4">
+                {data.deptPerf.map((d, i) => (
+                  <div key={d.id} className="p-3 bg-slate-50 rounded-xl">
+                    <div className="flex justify-between items-center mb-2">
+                      <div>
+                        <span className="font-medium">{d.nom}</span>
+                        <span className="text-xs text-slate-400 ml-2">({d.nbCollabs} pers.)</span>
+                      </div>
+                      <span className={`font-bold ${d.taux >= 75 ? 'text-green-600' : d.taux >= 50 ? 'text-amber-600' : 'text-red-600'}`}>{d.taux}%</span>
+                    </div>
+                    <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${d.taux >= 75 ? 'bg-green-500' : d.taux >= 50 ? 'bg-amber-500' : 'bg-red-500'}`} style={{width: `${d.taux}%`}}></div>
+                    </div>
+                    <div className="flex justify-between text-xs text-slate-400 mt-1">
+                      <span>{d.heuresFact}h fact. / {d.heures}h total</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : <EmptyState icon="🏢" title="Pas de données" />}
+          </Card>
+        </div>
+
+        <Card title="📊 Classement chargeabilité">
+          {data.collabPerf?.length > 0 ? (
+            <Table columns={[
+              {header: '#', render: (r, i) => <span className={`font-bold ${i < 3 ? 'text-amber-500' : 'text-slate-400'}`}>{i + 1}</span>},
+              {header: 'Collaborateur', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.grade} - {r.dept}</div></div>},
+              {header: 'Heures', render: r => <span>{r.heures}h</span>},
+              {header: 'Facturable', render: r => <span className="text-green-600">{r.heuresFact}h</span>},
+              {header: 'Taux', render: r => <Badge color={r.taux >= 75 ? 'green' : r.taux >= 50 ? 'amber' : 'red'}>{r.taux}%</Badge>},
+              {header: 'Production', render: r => <span className="font-medium">{fmtMoney(r.production)}</span>}
+            ]} data={data.collabPerf} />
+          ) : <EmptyState icon="👥" title="Pas de données" />}
+        </Card>
+      </>)}
+
+      {/* ========== ONGLET CLIENTS ========== */}
       {tab === 'clients' && (<>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <StatCard title="Total clients" value={data.nbClients} icon="👥" color="blue" />
@@ -5924,16 +6301,67 @@ const RapportsPage = () => {
           <StatCard title="CA moyen/client" value={fmtMoney(data.nbClients > 0 ? data.caTotal / data.nbClients : 0)} icon="💰" color="amber" />
         </div>
 
-        <Card title="🏆 Classement clients par CA">
+        <Card title="🏆 Classement clients par CA" className="mb-6">
           {data.topClients?.length > 0 ? (
             <Table columns={[
-              {header: '#', render: (r, i) => <span className="font-bold text-slate-400">{i + 1}</span>},
+              {header: '#', render: (r, i) => <span className={`font-bold ${i < 3 ? 'text-amber-500' : 'text-slate-400'}`}>{i + 1}</span>},
               {header: 'Client', render: r => <span className="font-medium">{r.nom}</span>},
               {header: 'CA Total', render: r => <span className="font-bold text-green-600">{fmtMoney(r.ca)}</span>},
-              {header: '% du CA', render: r => <div><ProgressBar value={r.ca} max={data.caTotal} color="green" size="sm" /></div>}
+              {header: '% du CA', render: r => (
+                <div className="flex items-center gap-2">
+                  <div className="w-20"><ProgressBar value={r.ca} max={data.caTotal || 1} color="green" size="sm" /></div>
+                  <span className="text-xs text-slate-500">{data.caTotal > 0 ? Math.round((r.ca / data.caTotal) * 100) : 0}%</span>
+                </div>
+              )}
             ]} data={data.topClients} />
           ) : <EmptyState icon="👥" title="Pas de données clients" />}
         </Card>
+
+        <div className="grid lg:grid-cols-2 gap-6">
+          <Card title="📊 Répartition du CA">
+            {data.topClients?.length > 0 ? (
+              <div className="space-y-3">
+                {data.topClients.slice(0, 5).map((c, i) => {
+                  const pct = data.caTotal > 0 ? Math.round((c.ca / data.caTotal) * 100) : 0;
+                  const colors = ['bg-blue-500', 'bg-green-500', 'bg-purple-500', 'bg-amber-500', 'bg-red-500'];
+                  return (
+                    <div key={c.id} className="flex items-center gap-3">
+                      <div className={`w-4 h-4 rounded ${colors[i]}`}></div>
+                      <div className="flex-1 truncate">{c.nom}</div>
+                      <div className="font-medium">{pct}%</div>
+                    </div>
+                  );
+                })}
+                {data.topClients.length > 5 && (
+                  <div className="flex items-center gap-3">
+                    <div className="w-4 h-4 rounded bg-slate-300"></div>
+                    <div className="flex-1">Autres</div>
+                    <div className="font-medium">{100 - data.topClients.slice(0, 5).reduce((s, c) => s + (data.caTotal > 0 ? Math.round((c.ca / data.caTotal) * 100) : 0), 0)}%</div>
+                  </div>
+                )}
+              </div>
+            ) : <EmptyState icon="📊" title="Pas de données" />}
+          </Card>
+
+          <Card title="📈 Statistiques clients">
+            <div className="space-y-4">
+              <div className="p-4 bg-blue-50 rounded-xl">
+                <div className="text-sm text-blue-700">CA Total</div>
+                <div className="text-2xl font-bold text-blue-800">{fmtMoney(data.caTotal)}</div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-green-50 rounded-xl text-center">
+                  <div className="text-2xl font-bold text-green-700">{data.nbClients}</div>
+                  <div className="text-sm text-green-600">Clients</div>
+                </div>
+                <div className="p-4 bg-purple-50 rounded-xl text-center">
+                  <div className="text-2xl font-bold text-purple-700">{fmtMoney(data.nbClients > 0 ? data.caTotal / data.nbClients : 0)}</div>
+                  <div className="text-sm text-purple-600">CA moyen</div>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
       </>)}
     </div>
   );
