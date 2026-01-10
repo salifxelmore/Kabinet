@@ -2148,8 +2148,10 @@ const FacturationPage = () => {
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null);
+  const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState('toutes');
 
   useEffect(() => { loadData(); }, []);
 
@@ -2166,7 +2168,8 @@ const FacturationPage = () => {
   };
 
   const openNew = () => {
-    setForm({reference: genCode('FAC'), projet_id: '', client_id: '', type_facture: 'acompte', date_emission: today(), date_echeance: addDays(today(), 30), montant_ht: 0, taux_tva: 18, statut: 'draft'});
+    setEditItem(null);
+    setForm({reference: genCode('FAC'), projet_id: '', client_id: '', type_facture: 'standard', date_emission: today(), date_echeance: addDays(today(), 30), montant_ht: 0, taux_tva: 18, statut: 'draft', montant_encaisse: 0, date_encaissement: ''});
     setModal('facture');
   };
 
@@ -2175,13 +2178,48 @@ const FacturationPage = () => {
     setSaving(true);
     try {
       const tva = form.montant_ht * form.taux_tva / 100;
-      await supabase.from('factures').insert([{...form, montant_tva: tva, montant_total: form.montant_ht + tva, organisation_id: org.id}]);
+      const data = {...form, montant_tva: tva, montant_total: parseFloat(form.montant_ht) + tva, projet_id: form.projet_id || null};
+      if (editItem?.id) await supabase.from('factures').update(data).eq('id', editItem.id);
+      else await supabase.from('factures').insert([{...data, organisation_id: org.id}]);
       setModal(null); loadData();
     } catch (e) { alert(e.message); }
     setSaving(false);
   };
 
-  const updateStatus = async (f, statut) => { await supabase.from('factures').update({statut}).eq('id', f.id); loadData(); };
+  const updateStatus = async (f, statut) => { 
+    const updates = {statut};
+    if (statut === 'paid') {
+      updates.montant_encaisse = f.montant_total;
+      updates.date_encaissement = today();
+    }
+    await supabase.from('factures').update(updates).eq('id', f.id); 
+    loadData(); 
+  };
+
+  // Encaissement partiel
+  const openEncaissement = (f) => {
+    setEditItem(f);
+    setForm({montant_encaisse: f.montant_encaisse || 0, date_encaissement: f.date_encaissement || today()});
+    setModal('encaissement');
+  };
+
+  const saveEncaissement = async () => {
+    setSaving(true);
+    try {
+      const montant = parseFloat(form.montant_encaisse) || 0;
+      let statut = editItem.statut;
+      if (montant >= editItem.montant_total) statut = 'paid';
+      else if (montant > 0) statut = 'partial';
+      
+      await supabase.from('factures').update({
+        montant_encaisse: montant,
+        date_encaissement: form.date_encaissement,
+        statut
+      }).eq('id', editItem.id);
+      setModal(null); loadData();
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
 
   const exportPDF = (f) => {
     const {jsPDF} = window.jspdf;
@@ -2221,14 +2259,33 @@ const FacturationPage = () => {
     doc.save('Facture_' + f.reference + '.pdf');
   };
 
-  const stats = {total: factures.reduce((s, f) => s + (f.montant_total || 0), 0), encaisse: factures.filter(f => f.statut === 'paid').reduce((s, f) => s + (f.montant_total || 0), 0)};
+  const stats = {
+    total: factures.reduce((s, f) => s + (f.montant_total || 0), 0), 
+    encaisse: factures.reduce((s, f) => s + (f.montant_encaisse || 0), 0),
+    enAttente: factures.filter(f => f.statut === 'sent').reduce((s, f) => s + (f.montant_total - (f.montant_encaisse || 0)), 0)
+  };
+
+  const filteredFactures = tab === 'toutes' ? factures : 
+    tab === 'draft' ? factures.filter(f => f.statut === 'draft') :
+    tab === 'sent' ? factures.filter(f => f.statut === 'sent') :
+    tab === 'paid' ? factures.filter(f => f.statut === 'paid') : factures;
 
   return (
     <div>
-      <PageHeader title="Facturation" subtitle={factures.length + ' factures'} action={<Button onClick={openNew} icon="➕">Nouvelle</Button>} />
-      <div className="grid grid-cols-2 gap-4 mb-6">
+      <PageHeader title="Facturation" subtitle={factures.length + ' factures'} 
+        tabs={[
+          {key: 'toutes', label: 'Toutes', count: factures.length},
+          {key: 'draft', label: 'Brouillons', count: factures.filter(f => f.statut === 'draft').length},
+          {key: 'sent', label: 'Envoyées', count: factures.filter(f => f.statut === 'sent').length},
+          {key: 'paid', label: 'Payées', count: factures.filter(f => f.statut === 'paid').length}
+        ]}
+        activeTab={tab} onTabChange={setTab}
+        action={<Button onClick={openNew} icon="➕">Nouvelle</Button>} 
+      />
+      <div className="grid grid-cols-3 gap-4 mb-6">
         <StatCard title="Total facturé" value={fmtMoney(stats.total)} icon="📄" color="blue" />
         <StatCard title="Encaissé" value={fmtMoney(stats.encaisse)} icon="✅" color="green" />
+        <StatCard title="En attente" value={fmtMoney(stats.enAttente)} icon="⏳" color="amber" />
       </div>
       {loading ? <Loader /> : (
         <Card>
@@ -2237,29 +2294,53 @@ const FacturationPage = () => {
             {header: 'Client', render: r => r.clients?.nom || '-'},
             {header: 'Mission', render: r => r.projets?.code || '-'},
             {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant_total)}</span>},
+            {header: 'Encaissé', render: r => r.montant_encaisse > 0 ? <span className="text-green-600">{fmtMoney(r.montant_encaisse)}</span> : '-'},
             {header: 'Statut', render: r => <Badge color={INVOICE_STATUS[r.statut]?.color}>{INVOICE_STATUS[r.statut]?.label}</Badge>}
-          ]} data={factures} actions={r => (
+          ]} data={filteredFactures} actions={r => (
             <div className="flex gap-1">
-              <Button variant="ghost" size="xs" onClick={() => exportPDF(r)}>📄</Button>
-              {r.statut === 'draft' && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'sent')}>📤</Button>}
-              {r.statut === 'sent' && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'paid')}>✅</Button>}
+              <Button variant="ghost" size="xs" onClick={() => exportPDF(r)} title="PDF">📄</Button>
+              {r.statut === 'draft' && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'sent')} title="Envoyer">📤</Button>}
+              {(r.statut === 'sent' || r.statut === 'partial') && <Button variant="ghost" size="xs" onClick={() => openEncaissement(r)} title="Encaisser">💰</Button>}
+              {r.statut === 'sent' && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'paid')} title="Payé 100%">✅</Button>}
             </div>
           )} />
         </Card>
       )}
+
+      {/* Modal Nouvelle Facture */}
       <Modal isOpen={modal === 'facture'} onClose={() => setModal(null)} title="Nouvelle facture" size="lg">
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <Input label="Référence" value={form.reference} onChange={v => setForm(p => ({...p, reference: v}))} />
-            <Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" required />
+            <Select label="Type" value={form.type_facture} onChange={v => setForm(p => ({...p, type_facture: v}))} options={[{value: 'standard', label: 'Standard'}, {value: 'acompte', label: 'Acompte'}, {value: 'solde', label: 'Solde'}, {value: 'avoir', label: 'Avoir'}]} />
           </div>
-          <Select label="Mission" value={form.projet_id} onChange={v => { const m = missions.find(x => x.id === v); setForm(p => ({...p, projet_id: v, client_id: m?.client_id || p.client_id})); }} options={missions.map(m => ({value: m.id, label: m.code + ' - ' + m.nom}))} placeholder="Sélectionner" />
+          <div className="grid grid-cols-2 gap-4">
+            <Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" required />
+            <Select label="Mission" value={form.projet_id} onChange={v => { const m = missions.find(x => x.id === v); setForm(p => ({...p, projet_id: v, client_id: m?.client_id || p.client_id})); }} options={missions.map(m => ({value: m.id, label: m.code + ' - ' + m.nom}))} placeholder="Sélectionner (optionnel)" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Date émission" type="date" value={form.date_emission} onChange={v => setForm(p => ({...p, date_emission: v}))} />
+            <Input label="Date échéance" type="date" value={form.date_echeance} onChange={v => setForm(p => ({...p, date_echeance: v}))} />
+          </div>
           <div className="grid grid-cols-3 gap-4">
-            <Input label="Montant HT" type="number" value={form.montant_ht} onChange={v => setForm(p => ({...p, montant_ht: v}))} />
+            <Input label="Montant HT (FCFA)" type="number" value={form.montant_ht} onChange={v => setForm(p => ({...p, montant_ht: v}))} />
             <Input label="TVA %" type="number" value={form.taux_tva} onChange={v => setForm(p => ({...p, taux_tva: v}))} />
-            <div><label className="block text-sm font-medium mb-1.5">Total TTC</label><div className="px-4 py-2.5 bg-slate-100 rounded-xl font-bold">{fmtMoney(form.montant_ht * (1 + form.taux_tva / 100))}</div></div>
+            <div><label className="block text-sm font-medium mb-1.5">Total TTC</label><div className="px-4 py-2.5 bg-green-50 rounded-xl font-bold text-green-700">{fmtMoney((form.montant_ht || 0) * (1 + (form.taux_tva || 0) / 100))}</div></div>
           </div>
           <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Créer</Button></div>
+        </div>
+      </Modal>
+
+      {/* Modal Encaissement */}
+      <Modal isOpen={modal === 'encaissement'} onClose={() => setModal(null)} title={`Encaissement - ${editItem?.reference}`} size="sm">
+        <div className="space-y-4">
+          <div className="p-4 bg-slate-50 rounded-xl">
+            <div className="flex justify-between mb-2"><span className="text-slate-500">Montant facture:</span><span className="font-bold">{fmtMoney(editItem?.montant_total)}</span></div>
+            <div className="flex justify-between"><span className="text-slate-500">Déjà encaissé:</span><span className="text-green-600">{fmtMoney(editItem?.montant_encaisse || 0)}</span></div>
+          </div>
+          <Input label="Montant encaissé (FCFA)" type="number" value={form.montant_encaisse} onChange={v => setForm(p => ({...p, montant_encaisse: v}))} />
+          <Input label="Date encaissement" type="date" value={form.date_encaissement} onChange={v => setForm(p => ({...p, date_encaissement: v}))} />
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveEncaissement} loading={saving} className="flex-1">Enregistrer</Button></div>
         </div>
       </Modal>
     </div>
@@ -2270,41 +2351,124 @@ const FacturationPage = () => {
 const SoustraitancePage = () => {
   const {org} = useApp();
   const [prestataires, setPrestataires] = useState([]);
+  const [missions, setMissions] = useState([]);
   const [contrats, setContrats] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState('presta');
   const [modal, setModal] = useState(null);
+  const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { loadData(); }, []);
   const loadData = async () => {
-    const [p, c] = await Promise.all([
-      supabase.from('prestataires').select('*').eq('organisation_id', org.id),
+    const [p, m, c] = await Promise.all([
+      supabase.from('prestataires').select('*').eq('organisation_id', org.id).order('nom'),
+      supabase.from('projets').select('id,nom,code').eq('organisation_id', org.id),
       supabase.from('contrats_soustraitance').select('*,prestataires(nom),projets(nom,code)').eq('organisation_id', org.id)
     ]);
-    setPrestataires(p.data || []); setContrats(c.data || []); setLoading(false);
+    setPrestataires(p.data || []); setMissions(m.data || []); setContrats(c.data || []); setLoading(false);
   };
 
-  const openNewPresta = () => { setForm({code: genCode('PRE'), nom: '', email: '', telephone: ''}); setModal('presta'); };
-  const savePresta = async () => { setSaving(true); try { await supabase.from('prestataires').insert([{...form, organisation_id: org.id}]); setModal(null); loadData(); } catch(e) { alert(e.message); } setSaving(false); };
+  // Prestataire CRUD
+  const openNewPresta = () => { setEditItem(null); setForm({code: genCode('PRE'), nom: '', prenom: '', type: 'entreprise', ninea: '', adresse: '', email: '', telephone: '', rib: '', specialite: ''}); setModal('presta'); };
+  const openEditPresta = (p) => { setEditItem(p); setForm({...p}); setModal('presta'); };
+  const savePresta = async () => {
+    if (!form.nom) return alert('Nom requis');
+    setSaving(true);
+    try {
+      if (editItem?.id) await supabase.from('prestataires').update(form).eq('id', editItem.id);
+      else await supabase.from('prestataires').insert([{...form, organisation_id: org.id}]);
+      setModal(null); loadData();
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+  const deletePresta = async (p) => { if (!confirm(`Supprimer "${p.nom}" ?`)) return; await supabase.from('prestataires').delete().eq('id', p.id); loadData(); };
+
+  // Contrat CRUD
+  const openNewContrat = () => { setEditItem(null); setForm({prestataire_id: '', projet_id: '', montant: 0, date_debut: today(), date_fin: '', description: '', statut: 'actif'}); setModal('contrat'); };
+  const saveContrat = async () => {
+    if (!form.prestataire_id) return alert('Prestataire requis');
+    setSaving(true);
+    try { await supabase.from('contrats_soustraitance').insert([{...form, organisation_id: org.id}]); setModal(null); loadData(); }
+    catch(e) { alert(e.message); }
+    setSaving(false);
+  };
 
   return (
     <div>
-      <PageHeader title="Sous-traitance" subtitle={prestataires.length + ' prestataires'} action={<Button onClick={openNewPresta} icon="➕">Prestataire</Button>} />
-      {loading ? <Loader /> : (
-        <Card>
-          <Table columns={[
-            {header: 'Prestataire', render: r => <div className="font-medium">{r.nom}</div>},
-            {header: 'Email', key: 'email'},
-            {header: 'Téléphone', key: 'telephone'}
-          ]} data={prestataires} />
-        </Card>
-      )}
-      <Modal isOpen={modal === 'presta'} onClose={() => setModal(null)} title="Nouveau prestataire">
+      <PageHeader title="Sous-traitance" subtitle={prestataires.length + ' prestataires'}
+        tabs={[{key: 'presta', label: 'Prestataires', count: prestataires.length}, {key: 'contrats', label: 'Contrats', count: contrats.length}]}
+        activeTab={tab} onTabChange={setTab}
+        action={tab === 'presta' ? <Button onClick={openNewPresta} icon="➕">Prestataire</Button> : <Button onClick={openNewContrat} icon="➕">Contrat</Button>}
+      />
+      {loading ? <Loader /> : (<>
+        {tab === 'presta' && (
+          <Card>
+            <Table columns={[
+              {header: 'Prestataire', render: r => <div><div className="font-medium">{r.prenom ? r.prenom + ' ' : ''}{r.nom}</div><div className="text-xs text-slate-400">{r.code} • {r.type === 'entreprise' ? 'Entreprise' : 'Indépendant'}</div></div>},
+              {header: 'Spécialité', key: 'specialite'},
+              {header: 'Contact', render: r => <div><div>{r.email}</div><div className="text-xs text-slate-400">{r.telephone}</div></div>},
+              {header: 'RIB', render: r => r.rib ? <span className="text-xs font-mono">{r.rib}</span> : '-'}
+            ]} data={prestataires} actions={r => (
+              <div className="flex gap-1">
+                <Button variant="ghost" size="xs" onClick={() => openEditPresta(r)}>✏️</Button>
+                <Button variant="ghost" size="xs" onClick={() => deletePresta(r)}>🗑️</Button>
+              </div>
+            )} />
+          </Card>
+        )}
+        {tab === 'contrats' && (
+          <Card>
+            <Table columns={[
+              {header: 'Prestataire', render: r => r.prestataires?.nom || '-'},
+              {header: 'Mission', render: r => r.projets ? r.projets.code + ' - ' + r.projets.nom : '-'},
+              {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant)}</span>},
+              {header: 'Période', render: r => <span>{fmtDate(r.date_debut)} → {fmtDate(r.date_fin)}</span>},
+              {header: 'Statut', render: r => <Badge color={r.statut === 'actif' ? 'green' : 'gray'}>{r.statut}</Badge>}
+            ]} data={contrats} />
+          </Card>
+        )}
+      </>)}
+
+      {/* Modal Prestataire */}
+      <Modal isOpen={modal === 'presta'} onClose={() => setModal(null)} title={editItem ? 'Modifier prestataire' : 'Nouveau prestataire'} size="lg">
         <div className="space-y-4">
-          <Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
-          <div className="grid grid-cols-2 gap-4"><Input label="Email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} /><Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} /></div>
-          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={savePresta} loading={saving} className="flex-1">Créer</Button></div>
+          <div className="grid grid-cols-3 gap-4">
+            <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
+            <Select label="Type" value={form.type} onChange={v => setForm(p => ({...p, type: v}))} options={[{value: 'entreprise', label: 'Entreprise'}, {value: 'independant', label: 'Indépendant'}]} />
+            <Input label="NINEA" value={form.ninea} onChange={v => setForm(p => ({...p, ninea: v}))} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Nom / Raison sociale" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
+            <Input label="Prénom (si indépendant)" value={form.prenom} onChange={v => setForm(p => ({...p, prenom: v}))} />
+          </div>
+          <Input label="Spécialité" value={form.specialite} onChange={v => setForm(p => ({...p, specialite: v}))} placeholder="Ex: Développement web, Audit fiscal..." />
+          <Input label="Adresse" value={form.adresse} onChange={v => setForm(p => ({...p, adresse: v}))} />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} />
+            <Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} />
+          </div>
+          <Input label="RIB / IBAN" value={form.rib} onChange={v => setForm(p => ({...p, rib: v}))} placeholder="SN..." />
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={savePresta} loading={saving} className="flex-1">Enregistrer</Button></div>
+        </div>
+      </Modal>
+
+      {/* Modal Contrat */}
+      <Modal isOpen={modal === 'contrat'} onClose={() => setModal(null)} title="Nouveau contrat" size="md">
+        <div className="space-y-4">
+          <Select label="Prestataire" value={form.prestataire_id} onChange={v => setForm(p => ({...p, prestataire_id: v}))} options={prestataires.map(p => ({value: p.id, label: p.nom}))} placeholder="Sélectionner" required />
+          <Select label="Mission" value={form.projet_id} onChange={v => setForm(p => ({...p, projet_id: v}))} options={missions.map(m => ({value: m.id, label: m.code + ' - ' + m.nom}))} placeholder="Sélectionner (optionnel)" />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Montant" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} />
+            <Select label="Statut" value={form.statut} onChange={v => setForm(p => ({...p, statut: v}))} options={[{value: 'actif', label: 'Actif'}, {value: 'termine', label: 'Terminé'}, {value: 'annule', label: 'Annulé'}]} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Date début" type="date" value={form.date_debut} onChange={v => setForm(p => ({...p, date_debut: v}))} />
+            <Input label="Date fin" type="date" value={form.date_fin} onChange={v => setForm(p => ({...p, date_fin: v}))} />
+          </div>
+          <TextArea label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} rows={2} />
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveContrat} loading={saving} className="flex-1">Créer</Button></div>
         </div>
       </Modal>
     </div>
@@ -2316,6 +2480,7 @@ const IntercoPage = () => {
   const {org} = useApp();
   const [transactions, setTransactions] = useState([]);
   const [depts, setDepts] = useState([]);
+  const [missions, setMissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState({});
@@ -2323,45 +2488,54 @@ const IntercoPage = () => {
 
   useEffect(() => { loadData(); }, []);
   const loadData = async () => {
-    const [t, d] = await Promise.all([
-      supabase.from('transactions_interco').select('*').eq('organisation_id', org.id).order('created_at', {ascending: false}),
-      supabase.from('departements').select('*').eq('organisation_id', org.id)
+    const [t, d, m] = await Promise.all([
+      supabase.from('transactions_interco').select('*,projets(nom,code)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
+      supabase.from('departements').select('*').eq('organisation_id', org.id),
+      supabase.from('projets').select('id,nom,code').eq('organisation_id', org.id)
     ]);
-    setTransactions(t.data || []); setDepts(d.data || []); setLoading(false);
+    setTransactions(t.data || []); setDepts(d.data || []); setMissions(m.data || []); setLoading(false);
   };
 
-  const openNew = () => { setForm({dept_vendeur: '', dept_acheteur: '', description: '', montant: 0, date: today()}); setModal(true); };
+  const openNew = () => { setForm({dept_vendeur: '', dept_acheteur: '', projet_id: '', description: '', montant: 0, date: today()}); setModal(true); };
   const save = async () => {
     if (!form.dept_vendeur || !form.dept_acheteur) return alert('Départements requis');
     setSaving(true);
-    try { await supabase.from('transactions_interco').insert([{...form, organisation_id: org.id}]); setModal(false); loadData(); }
+    try { 
+      const data = {...form, projet_id: form.projet_id || null};
+      await supabase.from('transactions_interco').insert([{...data, organisation_id: org.id}]); 
+      setModal(false); loadData(); 
+    }
     catch(e) { alert(e.message); }
     setSaving(false);
   };
 
+  const totalVentes = transactions.reduce((s, t) => s + (t.montant || 0), 0);
+
   return (
     <div>
-      <PageHeader title="Ventes/Achats Interco" subtitle="Transactions entre départements" action={<Button onClick={openNew} icon="➕">Transaction</Button>} />
+      <PageHeader title="Ventes/Achats Interco" subtitle={`${transactions.length} transactions • Total: ${fmtMoney(totalVentes)}`} action={<Button onClick={openNew} icon="➕">Transaction</Button>} />
       {loading ? <Loader /> : (
         <Card>
           <Table columns={[
-            {header: 'Vendeur', render: r => depts.find(d => d.id === r.dept_vendeur)?.nom || '-'},
-            {header: 'Acheteur', render: r => depts.find(d => d.id === r.dept_acheteur)?.nom || '-'},
+            {header: 'Vendeur', render: r => <Badge color="green">{depts.find(d => d.id === r.dept_vendeur)?.nom || '-'}</Badge>},
+            {header: 'Acheteur', render: r => <Badge color="blue">{depts.find(d => d.id === r.dept_acheteur)?.nom || '-'}</Badge>},
+            {header: 'Mission', render: r => r.projets ? <span className="text-sm">{r.projets.code}</span> : '-'},
             {header: 'Description', key: 'description'},
             {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant)}</span>},
             {header: 'Date', render: r => fmtDate(r.date)}
           ]} data={transactions} empty="Aucune transaction interco" />
         </Card>
       )}
-      <Modal isOpen={modal} onClose={() => setModal(false)} title="Nouvelle transaction">
+      <Modal isOpen={modal} onClose={() => setModal(false)} title="Nouvelle transaction interco">
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            <Select label="Dept. vendeur" value={form.dept_vendeur} onChange={v => setForm(p => ({...p, dept_vendeur: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" required />
-            <Select label="Dept. acheteur" value={form.dept_acheteur} onChange={v => setForm(p => ({...p, dept_acheteur: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" required />
+            <Select label="Département vendeur" value={form.dept_vendeur} onChange={v => setForm(p => ({...p, dept_vendeur: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" required />
+            <Select label="Département acheteur" value={form.dept_acheteur} onChange={v => setForm(p => ({...p, dept_acheteur: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" required />
           </div>
-          <Input label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} />
+          <Select label="Mission concernée" value={form.projet_id} onChange={v => setForm(p => ({...p, projet_id: v}))} options={missions.map(m => ({value: m.id, label: m.code + ' - ' + m.nom}))} placeholder="Sélectionner (optionnel)" />
+          <Input label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} placeholder="Ex: Heures de conseil, Formation..." />
           <div className="grid grid-cols-2 gap-4">
-            <Input label="Montant" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} />
+            <Input label="Montant (FCFA)" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} />
             <Input label="Date" type="date" value={form.date} onChange={v => setForm(p => ({...p, date: v}))} />
           </div>
           <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">Créer</Button></div>
