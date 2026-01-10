@@ -885,12 +885,20 @@ const MainApp = ({user, onLogout}) => {
   // ========== SYSTÈME DE PERMISSIONS ==========
   // Niveaux: 1=Junior, 2=Senior, 3=Manager, 4=Senior Manager, 5=Associé
   const gradeNiveau = collabData?.grades?.niveau || 0;
-  const isAdmin = userData.role === 'admin' || isSuperAdmin;
+  const userRole = (userData.role || '').toLowerCase();
+  const isAdmin = userRole === 'admin' || isSuperAdmin;
+  
+  // IMPORTANT: Les permissions sont basées UNIQUEMENT sur le grade du collaborateur
+  // isAdmin donne tous les droits, sinon c'est le niveau du grade qui compte
   const isAssocie = gradeNiveau >= 5 || isAdmin;
   const isManager = gradeNiveau >= 3 || isAdmin;
-  const isSenior = gradeNiveau >= 2;
-  const isJunior = gradeNiveau >= 1;
+  const isSenior = gradeNiveau === 2;
+  const isJunior = gradeNiveau === 1;
+  const isCollaborateur = gradeNiveau <= 2 && !isAdmin; // Junior ou Senior sans droits admin
   const userDeptId = collabData?.departement_id;
+  
+  // Debug permissions (à retirer en prod)
+  console.log('Permissions debug:', { gradeNiveau, userRole, isAdmin, isManager, isCollaborateur, collabGrade: collabData?.grades?.nom });
   
   // Permissions par fonctionnalité
   const permissions = {
@@ -900,13 +908,13 @@ const MainApp = ({user, onLogout}) => {
     conges: true, // Tout le monde
     frais: true, // Tout le monde
     profil: true, // Tout le monde peut voir son profil
-    crm: isManager, // Manager+ seulement
-    missions: isManager, // Manager+ seulement
-    facturation: isManager, // Manager+ (leurs missions) et Associé+ (toutes)
-    soustraitance: isManager, // Manager+ seulement
-    interco: isManager, // Manager+ seulement
+    crm: isManager && !isCollaborateur, // Manager+ seulement
+    missions: isManager && !isCollaborateur, // Manager+ seulement
+    facturation: isManager && !isCollaborateur, // Manager+ (leurs missions) et Associé+ (toutes)
+    soustraitance: isManager && !isCollaborateur, // Manager+ seulement
+    interco: isManager && !isCollaborateur, // Manager+ seulement
     equipe: isAssocie, // Associé+ seulement
-    rapports: isManager, // Manager+ seulement
+    rapports: isManager && !isCollaborateur, // Manager+ seulement
     parametres: isAdmin, // Admin seulement (config organisation)
   };
 
@@ -950,6 +958,7 @@ const MainApp = ({user, onLogout}) => {
     isManager,
     isSenior,
     isJunior,
+    isCollaborateur, // Junior ou Senior
     userDeptId,
     canEdit: (ressource) => permissions[ressource] !== false,
     canView: (ressource) => permissions[ressource] !== false,
@@ -1234,7 +1243,7 @@ const SuperAdminApp = ({user, onLogout, onSwitchToOrg, hasOrg = true}) => {
 };
 // ========== DASHBOARD PAGE ==========
 const DashboardPage = () => {
-  const {org, user, collab, isManager, isAdmin, setPage} = useApp();
+  const {org, user, collab, isManager, isAdmin, isCollaborateur, setPage} = useApp();
   const [stats, setStats] = useState({});
   const [myStats, setMyStats] = useState({});
   const [loading, setLoading] = useState(true);
@@ -1316,7 +1325,7 @@ const DashboardPage = () => {
   if (loading) return <Loader text="Chargement..." />;
 
   // Dashboard Collaborateur (Junior/Senior)
-  if (!isManager && !isAdmin) {
+  if (isCollaborateur) {
     return (
       <div>
         <PageHeader title="Mon espace" subtitle={`Bienvenue, ${user.prenom} !`} />
@@ -2264,7 +2273,7 @@ const MissionsPage = () => {
 
 // ========== STAFFING PAGE ==========
 const StaffingPage = () => {
-  const {org, collab, isManager, isAdmin, isSuperAdmin, userDeptId, gradeNiveau} = useApp();
+  const {org, collab, isManager, isAdmin, isSuperAdmin, userDeptId, gradeNiveau, isCollaborateur} = useApp();
   const [affectations, setAffectations] = useState([]);
   const [allCollaborateurs, setAllCollaborateurs] = useState([]); // Tous les collabs
   const [depts, setDepts] = useState([]);
@@ -2277,11 +2286,11 @@ const StaffingPage = () => {
   const [filterDept, setFilterDept] = useState(''); // Filtre département
   
   // Permissions: Manager+ peut modifier, Junior/Senior lecture seule
-  const canEdit = isManager || isAdmin;
+  const canEdit = isManager && !isCollaborateur;
   // Super Admin peut voir tous les départements, Manager+ seulement le leur
   const canChooseDept = isSuperAdmin || isAdmin;
-  // Junior/Senior ne voit que sa propre ligne
-  const isJuniorSenior = gradeNiveau < 3 && !isAdmin;
+  // Junior/Senior ne voit que sa propre ligne (utilise isCollaborateur du contexte)
+  const isJuniorSenior = isCollaborateur;
 
   useEffect(() => { loadData(); }, []);
   
