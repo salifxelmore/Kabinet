@@ -844,10 +844,10 @@ const MainApp = ({user, onLogout}) => {
         const {data: a} = await supabase.from('abonnements').select('*').eq('organisation_id', u.organisation_id).order('created_at', {ascending: false}).limit(1).single();
         // Charger le collaborateur associé avec son grade
         const {data: collab} = await supabase.from('collaborateurs')
-          .select('*,grades(id,nom,niveau),departements(id,nom)')
+          .select('*,grades:grade_id(id,nom,niveau),departements:departement_id(id,nom)')
           .eq('organisation_id', u.organisation_id)
           .eq('email', user.email)
-          .single();
+          .maybeSingle(); // maybeSingle au lieu de single pour éviter erreur si pas de collab
         
         setUserData(u);
         setOrgData(org);
@@ -1844,11 +1844,11 @@ const MissionsPage = () => {
 
   const loadData = async () => {
     const [m, c, d, a, collabs, grades] = await Promise.all([
-      supabase.from('projets').select('*,clients(nom),departements(nom),responsable:collaborateurs!projets_responsable_id_fkey(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
+      supabase.from('projets').select('*,clients(nom),departements:departement_id(nom),responsable:responsable_id(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
       supabase.from('clients').select('id,nom').eq('organisation_id', org.id).eq('est_prospect', false),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
       supabase.from('acomptes').select('*').eq('organisation_id', org.id),
-      supabase.from('collaborateurs').select('*,grades(nom,niveau)').eq('organisation_id', org.id).eq('actif', true),
+      supabase.from('collaborateurs').select('*,grades:grade_id(nom,niveau)').eq('organisation_id', org.id).eq('actif', true),
       supabase.from('grades').select('*').eq('organisation_id', org.id)
     ]);
     setMissions(m.data || []);
@@ -2163,7 +2163,7 @@ const StaffingPage = () => {
   const loadData = async () => {
     const [a, c, m, d] = await Promise.all([
       supabase.from('affectations').select('*,collaborateurs(nom,prenom,departement_id),projets(nom,code,clients(nom))').eq('organisation_id', org.id),
-      supabase.from('collaborateurs').select('*,grades(nom,niveau),departements(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
+      supabase.from('collaborateurs').select('*,grades:grade_id(nom,niveau),departements:departement_id(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
       supabase.from('projets').select('id,nom,code,clients(nom)').eq('organisation_id', org.id).eq('statut', 'active'),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id).order('nom')
     ]);
@@ -2968,7 +2968,7 @@ const FacturationPage = () => {
   const loadData = async () => {
     const [f, m, c] = await Promise.all([
       supabase.from('factures').select('*,clients(nom),projets(nom,code)').eq('organisation_id', org.id).order('date_emission', {ascending: false}),
-      supabase.from('projets').select('*,clients(nom),departements(nom)').eq('organisation_id', org.id),
+      supabase.from('projets').select('*,clients(nom),departements:departement_id(nom)').eq('organisation_id', org.id),
       supabase.from('clients').select('id,nom').eq('organisation_id', org.id)
     ]);
     setFactures(f.data || []);
@@ -3913,7 +3913,7 @@ const EquipePage = () => {
 
   const loadData = async () => {
     const [c, g, d] = await Promise.all([
-      supabase.from('collaborateurs').select('*,grades(nom,taux_journalier),departements(nom)').eq('organisation_id', org.id).order('nom'),
+      supabase.from('collaborateurs').select('*,grades:grade_id(nom,taux_journalier),departements:departement_id(nom)').eq('organisation_id', org.id).order('nom'),
       supabase.from('grades').select('*').eq('organisation_id', org.id).order('niveau', {ascending: false}),
       supabase.from('departements').select('*').eq('organisation_id', org.id).order('nom')
     ]);
@@ -4101,7 +4101,7 @@ const RapportsPage = () => {
     const [temps, factures, collabs, missions, clients, conges] = await Promise.all([
       supabase.from('saisies_temps').select('heures,facturable,date,projet_id').eq('organisation_id', org.id).gte('date', start).lte('date', end),
       supabase.from('factures').select('montant_total,montant_encaisse,statut,date_emission,client_id').eq('organisation_id', org.id),
-      supabase.from('collaborateurs').select('*,grades(taux_journalier)').eq('organisation_id', org.id).eq('actif', true),
+      supabase.from('collaborateurs').select('*,grades:grade_id(taux_journalier)').eq('organisation_id', org.id).eq('actif', true),
       supabase.from('projets').select('*,clients(nom)').eq('organisation_id', org.id),
       supabase.from('clients').select('*').eq('organisation_id', org.id),
       supabase.from('conges').select('*').eq('organisation_id', org.id).eq('statut', 'approved')
@@ -4402,8 +4402,8 @@ const ParametresPage = () => {
       supabase.from('grades').select('*').eq('organisation_id', org.id).order('niveau', {ascending: false}),
       supabase.from('categories_taches').select('*').eq('organisation_id', org.id).order('nom'),
       supabase.from('jours_feries').select('*').eq('organisation_id', org.id).order('date'),
-      supabase.from('collaborateurs').select('*,grades(nom,niveau),departements(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
-      supabase.from('validateurs_departement').select('*,collaborateur:collaborateurs(nom,prenom),departement:departements(nom)').eq('organisation_id', org.id)
+      supabase.from('collaborateurs').select('*,grades:grade_id(nom,niveau),departements:departement_id(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
+      supabase.from('validateurs_departement').select('*,collaborateur:collaborateur_id(nom,prenom),departement:departement_id(nom)').eq('organisation_id', org.id)
     ]);
     setDepts(d.data || []); 
     setGrades(g.data || []); 
