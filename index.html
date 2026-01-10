@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>KabiNet - ERP Cabinets de Conseil</title>
+<title>Missura - Professional Services Management</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='t' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%2360A5FA'/%3E%3Cstop offset='100%25' style='stop-color:%233B82F6'/%3E%3C/linearGradient%3E%3ClinearGradient id='l' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%232563EB'/%3E%3Cstop offset='100%25' style='stop-color:%231D4ED8'/%3E%3C/linearGradient%3E%3ClinearGradient id='r' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%231E40AF'/%3E%3Cstop offset='100%25' style='stop-color:%231E3A8A'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpolygon points='32,5 58,18 32,31 6,18' fill='url(%23t)'/%3E%3Cpolygon points='6,18 32,31 32,57 6,44' fill='url(%23l)'/%3E%3Cpolygon points='58,18 32,31 32,57 58,44' fill='url(%23r)'/%3E%3Cpath d='M19 18 L19 13 L24 13 L32 20 L40 13 L45 13 L45 18 L40 18 L32 25 L24 18 Z' fill='white' opacity='0.95'/%3E%3C/svg%3E">
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -14,7 +15,7 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,-apple-system,sans-serif;background:#f8fafc}
-.gradient-primary{background:linear-gradient(135deg,#2563eb,#0891b2)}
+.gradient-primary{background:linear-gradient(135deg,#3B82F6,#1E40AF)}
 .gradient-success{background:linear-gradient(135deg,#059669,#10b981)}
 .gradient-warning{background:linear-gradient(135deg,#d97706,#f59e0b)}
 .gradient-danger{background:linear-gradient(135deg,#dc2626,#ef4444)}
@@ -56,7 +57,7 @@ const {useState, useEffect, useRef, useMemo, useCallback, createContext, useCont
 const SUPABASE_URL = 'https://uttiaboublcmwuzvdjxz.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV0dGlhYm91YmxjbXd1enZkanh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc5ODg0MTMsImV4cCI6MjA4MzU2NDQxM30.67uuDVwa3uAclqDfxOOzcFi3K6KT4VW2OHytqEoa5Lo';
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-const SUPER_ADMINS = ['sawadgsalif@gmail.com', 'admin@kabinet.sn'];
+const SUPER_ADMINS = ['sawadgsalif@gmail.com', 'admin@missura.sn'];
 
 // ========== CONSTANTES ==========
 const PLANS = {
@@ -156,6 +157,30 @@ const fmtDateTime = (d) => d ? new Date(d).toLocaleString('fr-FR') : '';
 const today = () => new Date().toISOString().split('T')[0];
 const genCode = (prefix) => prefix + Date.now().toString().slice(-6);
 const uuid = () => crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).substr(2, 9);
+
+// Logo 3D Missura Component
+const MissuraLogo = ({size = 40, className = ''}) => (
+  <svg viewBox="0 0 200 200" width={size} height={size} className={className}>
+    <defs>
+      <linearGradient id="logoTop" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style={{stopColor:'#60A5FA'}}/>
+        <stop offset="100%" style={{stopColor:'#3B82F6'}}/>
+      </linearGradient>
+      <linearGradient id="logoLeft" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style={{stopColor:'#2563EB'}}/>
+        <stop offset="100%" style={{stopColor:'#1D4ED8'}}/>
+      </linearGradient>
+      <linearGradient id="logoRight" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style={{stopColor:'#1E40AF'}}/>
+        <stop offset="100%" style={{stopColor:'#1E3A8A'}}/>
+      </linearGradient>
+    </defs>
+    <polygon points="100,15 175,55 100,95 25,55" fill="url(#logoTop)"/>
+    <polygon points="25,55 100,95 100,175 25,135" fill="url(#logoLeft)"/>
+    <polygon points="175,55 100,95 100,175 175,135" fill="url(#logoRight)"/>
+    <path d="M60 55 L60 42 L75 42 L100 62 L125 42 L140 42 L140 55 L125 55 L100 75 L75 55 Z" fill="white" opacity="0.95"/>
+  </svg>
+);
 
 // Fonction d'export Excel générique
 const exportToExcel = (data, columns, filename) => {
@@ -517,8 +542,8 @@ const LandingPage = ({onLogin, onRegister}) => (
     <header className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur border-b border-slate-100">
       <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold">K</div>
-          <span className="text-xl font-bold">KabiNet</span>
+          <MissuraLogo size={40} />
+          <span className="text-xl font-bold">Missura</span>
         </div>
         <div className="flex gap-3">
           <button onClick={onLogin} className="px-4 py-2 text-slate-600 font-medium hover:text-slate-800">Connexion</button>
@@ -617,7 +642,7 @@ const LandingPage = ({onLogin, onRegister}) => (
         </div>
       </div>
     </section>
-    <footer className="py-8 px-4 border-t text-center text-slate-400 text-sm">© 2025 KabiNet. Tous droits réservés.</footer>
+    <footer className="py-8 px-4 border-t text-center text-slate-400 text-sm">© 2025 Missura. Tous droits réservés.</footer>
   </div>
 );
 
@@ -647,7 +672,7 @@ const LoginPage = ({onLogin, onRegister, onBack}) => {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <button onClick={onBack} className="text-slate-400 hover:text-slate-600 text-sm mb-4">← Retour à l'accueil</button>
-          <div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center text-white font-bold text-3xl shadow-lg mx-auto mb-4">K</div>
+          <div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center text-white font-bold text-3xl shadow-lg mx-auto mb-4">M</div>
           <h1 className="text-2xl font-bold text-slate-800">Connexion</h1>
         </div>
         <form onSubmit={handleSubmit} className="card p-6 space-y-4">
@@ -707,7 +732,7 @@ const RegisterPage = ({onLogin, onBack, onConfirm}) => {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <button onClick={onBack} className="text-slate-400 hover:text-slate-600 text-sm mb-4">← Retour</button>
-          <div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center text-white font-bold text-3xl shadow-lg mx-auto mb-4">K</div>
+          <div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center text-white font-bold text-3xl shadow-lg mx-auto mb-4">M</div>
           <h1 className="text-2xl font-bold text-slate-800">Créer votre compte</h1>
           <p className="text-slate-500 mt-2">14 jours d'essai gratuit</p>
         </div>
@@ -763,7 +788,7 @@ const ConfirmPage = ({email, onLogin}) => (
         <ol className="list-decimal list-inside space-y-1">
           <li>Ouvrez votre boîte email</li>
           <li>Cliquez sur le lien de confirmation</li>
-          <li>Connectez-vous à KabiNet</li>
+          <li>Connectez-vous à Missura</li>
         </ol>
       </div>
       <Button onClick={onLogin} className="w-full">Aller à la connexion</Button>
@@ -997,9 +1022,9 @@ const MainApp = ({user, onLogout}) => {
         
         <aside className={cn('sidebar w-64 bg-white border-r border-slate-100 flex flex-col fixed lg:relative h-screen z-50 transition-transform', sidebarOpen && 'open')}>
           <div className="p-4 border-b border-slate-100 flex items-center gap-3">
-            <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold shadow-lg shadow-blue-500/25">K</div>
+            <MissuraLogo size={40} />
             <div className="flex-1 min-w-0">
-              <div className="font-bold text-slate-800">KabiNet</div>
+              <div className="font-bold text-slate-800">Missura</div>
               <div className="text-xs text-slate-400 truncate">{orgData.nom}</div>
             </div>
           </div>
@@ -1034,7 +1059,7 @@ const MainApp = ({user, onLogout}) => {
         <main className="flex-1 min-w-0">
           <header className="lg:hidden flex items-center justify-between p-4 bg-white border-b border-slate-100 sticky top-0 z-30">
             <button onClick={() => setSidebarOpen(true)} className="p-2 text-2xl hover:bg-slate-100 rounded-lg">☰</button>
-            <div className="font-bold text-slate-800">KabiNet</div>
+            <div className="font-bold text-slate-800">Missura</div>
             <div className="w-10"></div>
           </header>
           
@@ -1162,9 +1187,9 @@ const SuperAdminApp = ({user, onLogout, onSwitchToOrg, hasOrg = true}) => {
     <div className="min-h-screen bg-slate-50">
       <header className="bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center text-white font-bold">K</div>
+          <MissuraLogo size={40} />
           <div>
-            <div className="font-bold text-slate-800">KabiNet</div>
+            <div className="font-bold text-slate-800">Missura</div>
             <div className="text-xs text-amber-600 font-medium">🛡️ Super Admin</div>
           </div>
         </div>
@@ -3100,7 +3125,7 @@ const CongesPage = () => {
       <Modal isOpen={modal === 'import'} onClose={() => setModal(null)} title="Importer solde antérieur" size="sm">
         <div className="space-y-4">
           <div className="p-4 bg-amber-50 rounded-xl text-amber-700 text-sm">
-            <strong>⚠️ Important:</strong> Cette opération ne peut être effectuée qu'une seule fois. Entrez le solde de congés que vous aviez avant d'utiliser KabiNet.
+            <strong>⚠️ Important:</strong> Cette opération ne peut être effectuée qu'une seule fois. Entrez le solde de congés que vous aviez avant d'utiliser Missura.
           </div>
           <Input 
             label="Solde antérieur (jours)" 
@@ -4141,7 +4166,7 @@ const EquipePage = () => {
   
   // Créer un compte utilisateur pour le collaborateur
   const createUserAccount = async (email, prenom, nom, orgId) => {
-    const DEFAULT_PASSWORD = 'Kabinet2024!';
+    const DEFAULT_PASSWORD = 'Missura2024!';
     
     try {
       // 1. Créer le compte auth dans Supabase
@@ -4372,7 +4397,7 @@ const EquipePage = () => {
           {!editItem && (
             <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-sm">
               <strong>💡 Création de compte automatique</strong><br/>
-              Un compte de connexion sera créé avec le mot de passe par défaut : <code className="bg-blue-100 px-1 rounded">Kabinet2024!</code>
+              Un compte de connexion sera créé avec le mot de passe par défaut : <code className="bg-blue-100 px-1 rounded">Missura2024!</code>
             </div>
           )}
           
@@ -5047,7 +5072,7 @@ const ParametresPage = () => {
     const data = {organisation: org, clients: c.data, projets: p.data, temps: t.data, factures: f.data, exportedAt: new Date().toISOString()};
     const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'kabinet_backup_' + today() + '.json'; a.click();
+    const a = document.createElement('a'); a.href = url; a.download = 'missura_backup_' + today() + '.json'; a.click();
   };
 
   const joursRestants = abo?.date_fin ? Math.ceil((new Date(abo.date_fin) - new Date()) / (1000*60*60*24)) : 0;
