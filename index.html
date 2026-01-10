@@ -3544,6 +3544,7 @@ const NotesFraisPage = () => {
     try {
       const data = {
         reference: form.reference,
+        titre: form.description || form.type_frais || 'Note de frais',
         utilisateur_id: user.id,
         projet_id: form.projet_id || null,
         type_frais: form.type_frais,
