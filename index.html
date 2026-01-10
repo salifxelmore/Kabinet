@@ -1770,6 +1770,7 @@ const MissionsPage = () => {
   const [missions, setMissions] = useState([]);
   const [clients, setClients] = useState([]);
   const [depts, setDepts] = useState([]);
+  const [managers, setManagers] = useState([]); // Collaborateurs grade >= Manager
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -1782,16 +1783,22 @@ const MissionsPage = () => {
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    const [m, c, d, a] = await Promise.all([
-      supabase.from('projets').select('*,clients(nom),departements(nom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
-      supabase.from('clients').select('id,nom').eq('organisation_id', org.id),
+    const [m, c, d, a, collabs, grades] = await Promise.all([
+      supabase.from('projets').select('*,clients(nom),departements(nom),responsable:collaborateurs!projets_responsable_id_fkey(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
+      supabase.from('clients').select('id,nom').eq('organisation_id', org.id).eq('est_prospect', false),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
-      supabase.from('acomptes').select('*').eq('organisation_id', org.id)
+      supabase.from('acomptes').select('*').eq('organisation_id', org.id),
+      supabase.from('collaborateurs').select('*,grades(nom,niveau)').eq('organisation_id', org.id).eq('actif', true),
+      supabase.from('grades').select('*').eq('organisation_id', org.id)
     ]);
     setMissions(m.data || []);
     setClients(c.data || []);
     setDepts(d.data || []);
     setAcomptes(a.data || []);
+    // Filtrer les collaborateurs avec grade >= Manager (niveau >= 3)
+    const allCollabs = collabs.data || [];
+    const mgrs = allCollabs.filter(c => c.grades?.niveau >= 3);
+    setManagers(mgrs);
     setLoading(false);
   };
 
@@ -1800,7 +1807,8 @@ const MissionsPage = () => {
     setForm({
       code: genCode('MIS'), nom: '', client_id: '', departement_id: '',
       type_facturation: 'regie', statut: 'draft', budget_montant: 0,
-      date_debut: today(), date_fin_prevue: '', description: '', facturable: true
+      date_debut: today(), date_fin_prevue: '', description: '', facturable: true,
+      responsable_id: ''
     });
     setModal('mission');
   };
@@ -1821,6 +1829,7 @@ const MissionsPage = () => {
         nom: form.nom,
         client_id: form.client_id || null,
         departement_id: form.departement_id || null,
+        responsable_id: form.responsable_id || null,
         type_facturation: form.type_facturation,
         statut: form.statut,
         budget_montant: parseFloat(form.budget_montant) || 0,
@@ -1958,6 +1967,9 @@ const MissionsPage = () => {
               </div>
             )},
             {header: 'Client', render: r => r.clients?.nom || '-'},
+            {header: 'Responsable', render: r => r.responsable ? (
+              <span className="text-sm">{r.responsable.prenom} {r.responsable.nom}</span>
+            ) : <span className="text-slate-400">-</span>},
             {header: 'Type', render: r => <Badge>{r.type_facturation === 'forfait' ? 'Forfait' : 'Régie'}</Badge>},
             {header: 'Budget', render: r => (
               <div>
@@ -1990,8 +2002,11 @@ const MissionsPage = () => {
             <Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" required />
           </div>
           <Input label="Nom de la mission" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-4">
             <Select label="Département" value={form.departement_id} onChange={v => setForm(p => ({...p, departement_id: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" />
+            <Select label="Responsable (Manager+)" value={form.responsable_id} onChange={v => setForm(p => ({...p, responsable_id: v}))} options={managers.map(m => ({value: m.id, label: `${m.prenom} ${m.nom}`}))} placeholder="Sélectionner" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
             <Select label="Type facturation" value={form.type_facturation} onChange={v => setForm(p => ({...p, type_facturation: v}))} options={BILLING_TYPES} />
             <Select label="Statut" value={form.statut} onChange={v => setForm(p => ({...p, statut: v}))} options={Object.entries(MISSION_STATUS).map(([k, v]) => ({value: k, label: v.label}))} />
           </div>
@@ -4163,6 +4178,8 @@ const ParametresPage = () => {
   const [grades, setGrades] = useState([]);
   const [categories, setCategories] = useState([]);
   const [holidays, setHolidays] = useState([]);
+  const [collaborateurs, setCollaborateurs] = useState([]);
+  const [validateurs, setValidateurs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editModal, setEditModal] = useState(null);
   const [editForm, setEditForm] = useState({});
@@ -4170,16 +4187,50 @@ const ParametresPage = () => {
   useEffect(() => { setForm({nom: org.nom, adresse: org.adresse || '', ville: org.ville || '', email: org.email || '', telephone: org.telephone || ''}); loadParams(); }, [org]);
 
   const loadParams = async () => {
-    const [d, g, c, h] = await Promise.all([
+    const [d, g, c, h, col, val] = await Promise.all([
       supabase.from('departements').select('*').eq('organisation_id', org.id).order('nom'),
       supabase.from('grades').select('*').eq('organisation_id', org.id).order('niveau', {ascending: false}),
       supabase.from('categories_taches').select('*').eq('organisation_id', org.id).order('nom'),
-      supabase.from('jours_feries').select('*').eq('organisation_id', org.id).order('date')
+      supabase.from('jours_feries').select('*').eq('organisation_id', org.id).order('date'),
+      supabase.from('collaborateurs').select('*,grades(nom,niveau),departements(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
+      supabase.from('validateurs').select('*,collaborateur:collaborateurs(nom,prenom),departement:departements(nom)').eq('organisation_id', org.id)
     ]);
-    setDepts(d.data || []); setGrades(g.data || []); setCategories(c.data || []); setHolidays(h.data || []); setLoading(false);
+    setDepts(d.data || []); 
+    setGrades(g.data || []); 
+    setCategories(c.data || []); 
+    setHolidays(h.data || []); 
+    setCollaborateurs(col.data || []);
+    setValidateurs(val.data || []);
+    setLoading(false);
   };
 
   const saveOrg = async () => { setSaving(true); try { await supabase.from('organisations').update(form).eq('id', org.id); reload(); alert('Enregistré!'); } catch(e) { alert(e.message); } setSaving(false); };
+
+  // Gestion des validateurs
+  const addValidateur = async (type, deptId, collabId) => {
+    if (!deptId || !collabId) return alert('Département et collaborateur requis');
+    try {
+      // Vérifier si déjà validateur
+      const exists = validateurs.find(v => v.type_validation === type && v.departement_id === deptId && v.collaborateur_id === collabId);
+      if (exists) return alert('Ce collaborateur est déjà validateur pour ce département');
+      
+      await supabase.from('validateurs_departement').insert([{
+        organisation_id: org.id,
+        departement_id: deptId,
+        collaborateur_id: collabId,
+        type_validation: type // 'conges' ou 'frais'
+      }]);
+      loadParams();
+      // Réinitialiser le formulaire
+      setEditForm(p => ({...p, validateur_dept_conges: '', validateur_collab_conges: '', validateur_dept_frais: '', validateur_collab_frais: ''}));
+    } catch(e) { alert(e.message); }
+  };
+  
+  const removeValidateur = async (id) => {
+    if (!confirm('Retirer ce validateur ?')) return;
+    await supabase.from('validateurs_departement').delete().eq('id', id);
+    loadParams();
+  };
 
   // CRUD générique
   const openEdit = (type, item = null) => {
@@ -4189,14 +4240,25 @@ const ParametresPage = () => {
     else if (type === 'grade') setEditForm({code: '', nom: '', niveau: 1, taux_journalier: 0, taux_cible: 80});
     else if (type === 'categorie') setEditForm({code: '', nom: '', facturable: true, couleur: '#2563eb'});
     else if (type === 'holiday') setEditForm({date: '', nom: ''});
+    else if (type === 'validateur_conges') setEditForm({departement_id: '', collaborateur_id: '', type_validation: 'conges'});
+    else if (type === 'validateur_frais') setEditForm({departement_id: '', collaborateur_id: '', type_validation: 'frais'});
   };
 
   const saveEdit = async () => {
     setSaving(true);
     try {
-      const table = editModal === 'dept' ? 'departements' : editModal === 'grade' ? 'grades' : editModal === 'categorie' ? 'categories_taches' : 'jours_feries';
-      if (editForm.id) await supabase.from(table).update(editForm).eq('id', editForm.id);
-      else await supabase.from(table).insert([{...editForm, organisation_id: org.id}]);
+      let table;
+      if (editModal === 'dept') table = 'departements';
+      else if (editModal === 'grade') table = 'grades';
+      else if (editModal === 'categorie') table = 'categories_taches';
+      else if (editModal === 'holiday') table = 'jours_feries';
+      else if (editModal === 'validateur_conges' || editModal === 'validateur_frais') table = 'validateurs_departement';
+      
+      if (editForm.id) {
+        await supabase.from(table).update(editForm).eq('id', editForm.id);
+      } else {
+        await supabase.from(table).insert([{...editForm, organisation_id: org.id}]);
+      }
       setEditModal(null); loadParams();
     } catch(e) { alert(e.message); }
     setSaving(false);
@@ -4227,7 +4289,13 @@ const ParametresPage = () => {
   return (
     <div>
       <PageHeader title="Paramètres" />
-      <Tabs tabs={[{key: 'org', label: '🏢 Organisation'}, {key: 'abo', label: '💳 Abonnement'}, {key: 'config', label: '⚙️ Configuration'}, {key: 'backup', label: '💾 Sauvegarde'}]} active={tab} onChange={setTab} />
+      <Tabs tabs={[
+        {key: 'org', label: '🏢 Organisation'}, 
+        {key: 'abo', label: '💳 Abonnement'}, 
+        {key: 'config', label: '⚙️ Configuration'}, 
+        {key: 'validateurs', label: '✅ Validateurs'},
+        {key: 'backup', label: '💾 Sauvegarde'}
+      ]} active={tab} onChange={setTab} />
 
       <div className="mt-6">
         {tab === 'org' && (
@@ -4280,10 +4348,13 @@ const ParametresPage = () => {
 
             {/* Grades */}
             <Card title="Grades" collapsible defaultOpen={false} action={<Button size="xs" onClick={() => openEdit('grade')}>➕</Button>}>
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                <b>💡 Niveaux recommandés :</b> 1-2 = Junior/Senior, 3-4 = Manager/Senior Manager, 5+ = Associé/Partner
+              </div>
               <Table columns={[
                 {header: 'Code', key: 'code'},
                 {header: 'Nom', render: r => <b>{r.nom}</b>},
-                {header: 'Niveau', key: 'niveau'},
+                {header: 'Niveau', render: r => <Badge color={r.niveau >= 3 ? 'green' : 'gray'}>{r.niveau}</Badge>},
                 {header: 'Taux journalier', render: r => fmtMoney(r.taux_journalier)},
                 {header: 'Cible', render: r => (r.taux_cible || 0) + '%'}
               ]} data={grades} actions={r => (
@@ -4310,6 +4381,126 @@ const ParametresPage = () => {
               ]} data={holidays} actions={r => (
                 <Button variant="ghost" size="xs" onClick={() => deleteItem('jours_feries', r.id)}>🗑️</Button>
               )} />
+            </Card>
+            
+            {/* Validateurs Congés */}
+            <Card title="🏖️ Validateurs Congés" collapsible defaultOpen={false} action={<Button size="xs" onClick={() => openEdit('validateur_conges')}>➕</Button>}>
+              <p className="text-sm text-slate-500 mb-4">Désignez les collaborateurs qui peuvent valider les demandes de congés par département.</p>
+              {validateurs.filter(v => v.type_validation === 'conges').length === 0 ? (
+                <div className="text-center py-8 text-slate-400">Aucun validateur configuré</div>
+              ) : (
+                <Table columns={[
+                  {header: 'Département', render: r => <Badge color="blue">{r.departement?.nom || 'Tous'}</Badge>},
+                  {header: 'Validateur', render: r => <span className="font-medium">{r.collaborateur?.prenom} {r.collaborateur?.nom}</span>}
+                ]} data={validateurs.filter(v => v.type_validation === 'conges')} actions={r => (
+                  <Button variant="ghost" size="xs" onClick={() => deleteItem('validateurs_departement', r.id)}>🗑️</Button>
+                )} />
+              )}
+            </Card>
+            
+            {/* Validateurs Notes de frais */}
+            <Card title="🧾 Validateurs Notes de frais" collapsible defaultOpen={false} action={<Button size="xs" onClick={() => openEdit('validateur_frais')}>➕</Button>}>
+              <p className="text-sm text-slate-500 mb-4">Désignez les collaborateurs qui peuvent valider les notes de frais par département.</p>
+              {validateurs.filter(v => v.type_validation === 'frais').length === 0 ? (
+                <div className="text-center py-8 text-slate-400">Aucun validateur configuré</div>
+              ) : (
+                <Table columns={[
+                  {header: 'Département', render: r => <Badge color="purple">{r.departement?.nom || 'Tous'}</Badge>},
+                  {header: 'Validateur', render: r => <span className="font-medium">{r.collaborateur?.prenom} {r.collaborateur?.nom}</span>}
+                ]} data={validateurs.filter(v => v.type_validation === 'frais')} actions={r => (
+                  <Button variant="ghost" size="xs" onClick={() => deleteItem('validateurs_departement', r.id)}>🗑️</Button>
+                )} />
+              )}
+            </Card>
+          </div>
+        )}
+
+        {tab === 'validateurs' && loading ? <Loader /> : tab === 'validateurs' && (
+          <div className="space-y-6">
+            {/* Validateurs Congés */}
+            <Card title="🏖️ Validateurs des Congés" collapsible defaultOpen={true}>
+              <p className="text-sm text-slate-500 mb-4">Ces personnes peuvent approuver les demandes de congés des collaborateurs de leur département.</p>
+              
+              {/* Formulaire ajout */}
+              <div className="flex gap-4 mb-4 p-4 bg-slate-50 rounded-xl">
+                <Select 
+                  value={editForm.validateur_dept_conges || ''} 
+                  onChange={v => setEditForm(p => ({...p, validateur_dept_conges: v}))} 
+                  options={depts.map(d => ({value: d.id, label: d.nom}))} 
+                  placeholder="Département" 
+                  className="w-48" 
+                />
+                <Select 
+                  value={editForm.validateur_collab_conges || ''} 
+                  onChange={v => setEditForm(p => ({...p, validateur_collab_conges: v}))} 
+                  options={collaborateurs.filter(c => c.grades?.niveau >= 3).map(c => ({value: c.id, label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'})`}))} 
+                  placeholder="Collaborateur (Manager+)" 
+                  className="flex-1" 
+                />
+                <Button onClick={() => addValidateur('conges', editForm.validateur_dept_conges, editForm.validateur_collab_conges)} icon="➕">Ajouter</Button>
+              </div>
+              
+              {/* Liste validateurs congés */}
+              <Table columns={[
+                {header: 'Département', render: r => <b>{r.departement?.nom || '-'}</b>},
+                {header: 'Validateur', render: r => `${r.collaborateur?.prenom || ''} ${r.collaborateur?.nom || ''}`}
+              ]} data={validateurs.filter(v => v.type_validation === 'conges')} actions={r => (
+                <Button variant="ghost" size="xs" onClick={() => removeValidateur(r.id)}>🗑️</Button>
+              )} />
+              {validateurs.filter(v => v.type_validation === 'conges').length === 0 && (
+                <div className="text-center py-8 text-slate-400">Aucun validateur configuré pour les congés</div>
+              )}
+            </Card>
+            
+            {/* Validateurs Notes de frais */}
+            <Card title="🧾 Validateurs des Notes de Frais" collapsible defaultOpen={true}>
+              <p className="text-sm text-slate-500 mb-4">Ces personnes peuvent approuver les notes de frais des collaborateurs de leur département.</p>
+              
+              {/* Formulaire ajout */}
+              <div className="flex gap-4 mb-4 p-4 bg-slate-50 rounded-xl">
+                <Select 
+                  value={editForm.validateur_dept_frais || ''} 
+                  onChange={v => setEditForm(p => ({...p, validateur_dept_frais: v}))} 
+                  options={depts.map(d => ({value: d.id, label: d.nom}))} 
+                  placeholder="Département" 
+                  className="w-48" 
+                />
+                <Select 
+                  value={editForm.validateur_collab_frais || ''} 
+                  onChange={v => setEditForm(p => ({...p, validateur_collab_frais: v}))} 
+                  options={collaborateurs.filter(c => c.grades?.niveau >= 3).map(c => ({value: c.id, label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'})`}))} 
+                  placeholder="Collaborateur (Manager+)" 
+                  className="flex-1" 
+                />
+                <Button onClick={() => addValidateur('frais', editForm.validateur_dept_frais, editForm.validateur_collab_frais)} icon="➕">Ajouter</Button>
+              </div>
+              
+              {/* Liste validateurs frais */}
+              <Table columns={[
+                {header: 'Département', render: r => <b>{r.departement?.nom || '-'}</b>},
+                {header: 'Validateur', render: r => `${r.collaborateur?.prenom || ''} ${r.collaborateur?.nom || ''}`}
+              ]} data={validateurs.filter(v => v.type_validation === 'frais')} actions={r => (
+                <Button variant="ghost" size="xs" onClick={() => removeValidateur(r.id)}>🗑️</Button>
+              )} />
+              {validateurs.filter(v => v.type_validation === 'frais').length === 0 && (
+                <div className="text-center py-8 text-slate-400">Aucun validateur configuré pour les notes de frais</div>
+              )}
+            </Card>
+            
+            {/* Info */}
+            <Card className="bg-blue-50 border-blue-200">
+              <div className="flex gap-4">
+                <span className="text-2xl">💡</span>
+                <div>
+                  <h4 className="font-bold text-blue-800">Comment ça fonctionne ?</h4>
+                  <ul className="text-sm text-blue-700 mt-2 space-y-1">
+                    <li>• Seuls les collaborateurs de grade <b>Manager</b> ou supérieur peuvent être validateurs</li>
+                    <li>• Un validateur peut approuver les demandes des membres de son département</li>
+                    <li>• Vous pouvez désigner plusieurs validateurs par département</li>
+                    <li>• Les notifications seront envoyées automatiquement lors des soumissions</li>
+                  </ul>
+                </div>
+              </div>
             </Card>
           </div>
         )}
@@ -4353,6 +4544,24 @@ const ParametresPage = () => {
         <div className="space-y-4">
           <Input label="Date" type="date" value={editForm.date} onChange={v => setEditForm(p => ({...p, date: v}))} required />
           <Input label="Nom" value={editForm.nom} onChange={v => setEditForm(p => ({...p, nom: v}))} placeholder="Ex: Tabaski" required />
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setEditModal(null)} className="flex-1">Annuler</Button><Button onClick={saveEdit} loading={saving} className="flex-1">Ajouter</Button></div>
+        </div>
+      </Modal>
+      
+      {/* Modal Validateur Congés */}
+      <Modal isOpen={editModal === 'validateur_conges'} onClose={() => setEditModal(null)} title="Ajouter validateur congés" size="sm">
+        <div className="space-y-4">
+          <Select label="Département" value={editForm.departement_id} onChange={v => setEditForm(p => ({...p, departement_id: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" required />
+          <Select label="Collaborateur (Manager+)" value={editForm.collaborateur_id} onChange={v => setEditForm(p => ({...p, collaborateur_id: v}))} options={collaborateurs.filter(c => c.grades?.niveau >= 3).map(c => ({value: c.id, label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'})`}))} placeholder="Sélectionner" required />
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setEditModal(null)} className="flex-1">Annuler</Button><Button onClick={saveEdit} loading={saving} className="flex-1">Ajouter</Button></div>
+        </div>
+      </Modal>
+      
+      {/* Modal Validateur Notes de frais */}
+      <Modal isOpen={editModal === 'validateur_frais'} onClose={() => setEditModal(null)} title="Ajouter validateur notes de frais" size="sm">
+        <div className="space-y-4">
+          <Select label="Département" value={editForm.departement_id} onChange={v => setEditForm(p => ({...p, departement_id: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" required />
+          <Select label="Collaborateur (Manager+)" value={editForm.collaborateur_id} onChange={v => setEditForm(p => ({...p, collaborateur_id: v}))} options={collaborateurs.filter(c => c.grades?.niveau >= 3).map(c => ({value: c.id, label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'})`}))} placeholder="Sélectionner" required />
           <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setEditModal(null)} className="flex-1">Annuler</Button><Button onClick={saveEdit} loading={saving} className="flex-1">Ajouter</Button></div>
         </div>
       </Modal>
