@@ -528,6 +528,54 @@ const LandingPage = ({onLogin, onRegister}) => (
         </div>
       </div>
     </section>
+    <section className="py-20 px-4">
+      <div className="max-w-5xl mx-auto">
+        <h2 className="text-3xl font-bold text-center mb-4">Tarifs simples et transparents</h2>
+        <p className="text-center text-slate-500 mb-12">Choisissez le plan adapté à votre cabinet</p>
+        <div className="grid md:grid-cols-3 gap-8">
+          <div className="card p-8 border-2 border-slate-200 hover:border-slate-300 transition-all">
+            <div className="text-4xl mb-4">🎁</div>
+            <h3 className="text-2xl font-bold mb-2">Essai</h3>
+            <div className="text-3xl font-bold mb-1">Gratuit</div>
+            <p className="text-slate-500 mb-6">14 jours</p>
+            <ul className="space-y-3 text-sm text-slate-600 mb-8">
+              <li className="flex items-center gap-2"><span className="text-green-500">✓</span> Toutes les fonctionnalités</li>
+              <li className="flex items-center gap-2"><span className="text-green-500">✓</span> 5 utilisateurs max</li>
+              <li className="flex items-center gap-2"><span className="text-green-500">✓</span> Support par email</li>
+            </ul>
+            <button onClick={onRegister} className="w-full py-3 bg-slate-100 text-slate-700 rounded-xl font-semibold hover:bg-slate-200 transition-colors">Commencer</button>
+          </div>
+          <div className="card p-8 border-2 border-blue-500 shadow-xl relative">
+            <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-500 text-white text-xs font-bold px-3 py-1 rounded-full">POPULAIRE</div>
+            <div className="text-4xl mb-4">⭐</div>
+            <h3 className="text-2xl font-bold mb-2">Standard</h3>
+            <div className="text-3xl font-bold mb-1">25 000 <span className="text-lg font-normal">FCFA</span></div>
+            <p className="text-slate-500 mb-6">par mois</p>
+            <ul className="space-y-3 text-sm text-slate-600 mb-8">
+              <li className="flex items-center gap-2"><span className="text-green-500">✓</span> Toutes les fonctionnalités</li>
+              <li className="flex items-center gap-2"><span className="text-green-500">✓</span> 20 utilisateurs max</li>
+              <li className="flex items-center gap-2"><span className="text-green-500">✓</span> Support prioritaire</li>
+              <li className="flex items-center gap-2"><span className="text-green-500">✓</span> Export PDF illimité</li>
+            </ul>
+            <button onClick={onRegister} className="w-full py-3 gradient-primary text-white rounded-xl font-semibold hover:shadow-lg transition-all">Choisir Standard</button>
+          </div>
+          <div className="card p-8 border-2 border-amber-400 hover:border-amber-500 transition-all">
+            <div className="text-4xl mb-4">👑</div>
+            <h3 className="text-2xl font-bold mb-2">Premium</h3>
+            <div className="text-3xl font-bold mb-1">75 000 <span className="text-lg font-normal">FCFA</span></div>
+            <p className="text-slate-500 mb-6">par mois</p>
+            <ul className="space-y-3 text-sm text-slate-600 mb-8">
+              <li className="flex items-center gap-2"><span className="text-green-500">✓</span> Toutes les fonctionnalités</li>
+              <li className="flex items-center gap-2"><span className="text-green-500">✓</span> Utilisateurs illimités</li>
+              <li className="flex items-center gap-2"><span className="text-green-500">✓</span> Support dédié 24/7</li>
+              <li className="flex items-center gap-2"><span className="text-green-500">✓</span> Personnalisation avancée</li>
+              <li className="flex items-center gap-2"><span className="text-green-500">✓</span> API & Intégrations</li>
+            </ul>
+            <button onClick={onRegister} className="w-full py-3 bg-amber-100 text-amber-700 rounded-xl font-semibold hover:bg-amber-200 transition-colors">Choisir Premium</button>
+          </div>
+        </div>
+      </div>
+    </section>
     <footer className="py-8 px-4 border-t text-center text-slate-400 text-sm">© 2025 KabiNet. Tous droits réservés.</footer>
   </div>
 );
@@ -735,7 +783,7 @@ const MainApp = ({user, onLogout}) => {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [viewMode, setViewMode] = useState('auto'); // 'auto', 'admin', 'org'
+  const [viewMode, setViewMode] = useState('org'); // 'admin' ou 'org' - défaut: org
   const isSuperAdmin = SUPER_ADMINS.includes(user?.email);
 
   useEffect(() => { loadUser(); }, [user]);
@@ -748,6 +796,9 @@ const MainApp = ({user, onLogout}) => {
         setUserData(u);
         setOrgData(u.organisations);
         setAboData(a);
+      } else if (isSuperAdmin) {
+        // Super admin sans organisation - afficher admin par défaut
+        setViewMode('admin');
       }
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -755,18 +806,23 @@ const MainApp = ({user, onLogout}) => {
 
   if (loading) return <Loader text="Chargement..." />;
   
-  // Si Super Admin et pas d'org OU mode admin forcé
-  if (isSuperAdmin && (!userData || viewMode === 'admin')) {
-    return <SuperAdminApp user={user} onLogout={onLogout} onSwitchToOrg={() => setViewMode('org')} />;
+  // Si mode admin forcé (Super Admin uniquement)
+  if (isSuperAdmin && viewMode === 'admin') {
+    return <SuperAdminApp user={user} onLogout={onLogout} onSwitchToOrg={() => setViewMode('org')} hasOrg={!!userData} />;
   }
   
-  // Si pas de données utilisateur
-  if (!userData || !orgData) return (
-    <div className="min-h-screen flex items-center justify-center flex-col gap-4">
-      <p className="text-slate-600">Erreur de chargement des données utilisateur.</p>
-      <Button onClick={onLogout}>Déconnexion</Button>
-    </div>
-  );
+  // Si pas de données utilisateur et pas super admin
+  if (!userData || !orgData) {
+    if (isSuperAdmin) {
+      return <SuperAdminApp user={user} onLogout={onLogout} onSwitchToOrg={() => setViewMode('org')} hasOrg={false} />;
+    }
+    return (
+      <div className="min-h-screen flex items-center justify-center flex-col gap-4">
+        <p className="text-slate-600">Erreur de chargement des données utilisateur.</p>
+        <Button onClick={onLogout}>Déconnexion</Button>
+      </div>
+    );
+  }
 
   const nav = [
     {k: 'dashboard', l: 'Dashboard', i: '📊'},
@@ -856,7 +912,7 @@ const MainApp = ({user, onLogout}) => {
 };
 
 // ========== SUPER ADMIN APP ==========
-const SuperAdminApp = ({user, onLogout, onSwitchToOrg}) => {
+const SuperAdminApp = ({user, onLogout, onSwitchToOrg, hasOrg = true}) => {
   const [orgs, setOrgs] = useState([]);
   const [users, setUsers] = useState([]);
   const [abos, setAbos] = useState([]);
@@ -865,14 +921,8 @@ const SuperAdminApp = ({user, onLogout, onSwitchToOrg}) => {
   const [editOrg, setEditOrg] = useState(null);
   const [editForm, setEditForm] = useState({plan: 'trial', date_fin: ''});
   const [saving, setSaving] = useState(false);
-  const [myOrg, setMyOrg] = useState(null);
 
-  useEffect(() => { loadData(); checkMyOrg(); }, []);
-
-  const checkMyOrg = async () => {
-    const {data} = await supabase.from('utilisateurs').select('*,organisations(nom)').eq('auth_id', user.id).single();
-    if (data) setMyOrg(data);
-  };
+  useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     const [o, u, a] = await Promise.all([
@@ -934,7 +984,7 @@ const SuperAdminApp = ({user, onLogout, onSwitchToOrg}) => {
         </div>
         <div className="flex items-center gap-4">
           <span className="text-sm text-slate-500 hidden sm:block">{user.email}</span>
-          {myOrg && <Button variant="primary" size="sm" onClick={onSwitchToOrg}>🏢 Mon Cabinet</Button>}
+          {hasOrg && <Button variant="primary" size="sm" onClick={onSwitchToOrg}>🏢 Mon Cabinet</Button>}
           <Button variant="secondary" size="sm" onClick={onLogout}>Déconnexion</Button>
         </div>
       </header>
