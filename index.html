@@ -819,6 +819,7 @@ async function initOrgData(orgId) {
 // ========== MAIN APP ==========
 const MainApp = ({user, onLogout}) => {
   const [userData, setUserData] = useState(null);
+  const [collabData, setCollabData] = useState(null); // Collaborateur avec grade
   const [orgData, setOrgData] = useState(null);
   const [aboData, setAboData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -841,11 +842,18 @@ const MainApp = ({user, onLogout}) => {
         const {data: org} = await supabase.from('organisations').select('*').eq('id', u.organisation_id).single();
         // Charger l'abonnement
         const {data: a} = await supabase.from('abonnements').select('*').eq('organisation_id', u.organisation_id).order('created_at', {ascending: false}).limit(1).single();
+        // Charger le collaborateur associé avec son grade
+        const {data: collab} = await supabase.from('collaborateurs')
+          .select('*,grades(id,nom,niveau),departements(id,nom)')
+          .eq('organisation_id', u.organisation_id)
+          .eq('email', user.email)
+          .single();
         
         setUserData(u);
         setOrgData(org);
         setAboData(a);
-        console.log('User loaded successfully:', u, org, a);
+        setCollabData(collab);
+        console.log('User loaded successfully:', u, org, a, 'Collab:', collab);
       } else if (isSuperAdmin) {
         console.log('Super admin without org, showing admin panel');
         setViewMode('admin');
@@ -874,9 +882,37 @@ const MainApp = ({user, onLogout}) => {
     );
   }
 
-  const nav = [
+  // ========== SYSTÈME DE PERMISSIONS ==========
+  // Niveaux: 1=Junior, 2=Senior, 3=Manager, 4=Senior Manager, 5=Associé
+  const gradeNiveau = collabData?.grades?.niveau || 0;
+  const isAdmin = userData.role === 'admin' || isSuperAdmin;
+  const isAssocie = gradeNiveau >= 5 || isAdmin;
+  const isManager = gradeNiveau >= 3 || isAdmin;
+  const isSenior = gradeNiveau >= 2;
+  const isJunior = gradeNiveau >= 1;
+  const userDeptId = collabData?.departement_id;
+  
+  // Permissions par fonctionnalité
+  const permissions = {
+    dashboard: true, // Tout le monde (mais contenu différent)
+    staffing: true, // Tout le monde (mais lecture seule pour junior/senior)
+    timesheet: true, // Tout le monde
+    conges: true, // Tout le monde
+    frais: true, // Tout le monde
+    crm: isManager, // Manager+ seulement
+    missions: isManager, // Manager+ seulement (lecture seule sinon)
+    facturation: isAssocie, // Associé+ seulement
+    soustraitance: isManager, // Manager+ seulement
+    interco: isManager, // Manager+ seulement
+    equipe: isAssocie, // Associé+ seulement
+    rapports: isManager, // Manager+ seulement
+    parametres: isAdmin, // Admin seulement
+  };
+
+  // Menu filtré selon permissions
+  const fullNav = [
     {k: 'dashboard', l: 'Dashboard', i: '📊'},
-    {k: 'crm', l: 'CRM', i: '🏢', sub: ['clients', 'contacts', 'opportunites']},
+    {k: 'crm', l: 'CRM', i: '🏢'},
     {k: 'missions', l: 'Missions', i: '📋'},
     {k: 'staffing', l: 'Staffing', i: '📅'},
     {k: 'timesheet', l: 'Temps', i: '⏱️'},
@@ -889,9 +925,33 @@ const MainApp = ({user, onLogout}) => {
     {k: 'rapports', l: 'Rapports', i: '📈'},
     {k: 'parametres', l: 'Paramètres', i: '⚙️'}
   ];
+  
+  // Filtrer le menu selon les permissions
+  const nav = fullNav.filter(n => permissions[n.k]);
   if (isSuperAdmin) nav.push({k: 'admin', l: 'Admin', i: '🛡️'});
 
-  const ctx = {user: userData, org: orgData, abo: aboData, reload: loadUser, isSuperAdmin, setPage, setViewMode};
+  // Contexte enrichi avec permissions
+  const ctx = {
+    user: userData, 
+    collab: collabData,
+    org: orgData, 
+    abo: aboData, 
+    reload: loadUser, 
+    isSuperAdmin, 
+    setPage, 
+    setViewMode,
+    // Permissions
+    permissions,
+    gradeNiveau,
+    isAdmin,
+    isAssocie,
+    isManager,
+    isSenior,
+    isJunior,
+    userDeptId,
+    canEdit: (ressource) => permissions[ressource] !== false,
+    canView: (ressource) => permissions[ressource] !== false,
+  };
 
   return (
     <AppContext.Provider value={ctx}>
@@ -925,7 +985,7 @@ const MainApp = ({user, onLogout}) => {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-slate-800 truncate">{userData.prenom} {userData.nom}</div>
-                <div className="text-xs text-slate-400">{userData.role}</div>
+                <div className="text-xs text-slate-400">{collabData?.grades?.nom || userData.role}</div>
               </div>
             </div>
             <button onClick={onLogout} className="w-full flex items-center gap-2 px-4 py-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors">
@@ -2065,7 +2125,7 @@ const MissionsPage = () => {
 
 // ========== STAFFING PAGE ==========
 const StaffingPage = () => {
-  const {org} = useApp();
+  const {org, collab, isManager, isAdmin} = useApp();
   const [affectations, setAffectations] = useState([]);
   const [collaborateurs, setCollaborateurs] = useState([]);
   const [missions, setMissions] = useState([]);
@@ -2074,6 +2134,9 @@ const StaffingPage = () => {
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  
+  // Permissions: Manager+ peut modifier, Junior/Senior lecture seule
+  const canEdit = isManager || isAdmin;
 
   useEffect(() => { loadData(); }, []);
 
@@ -2084,7 +2147,14 @@ const StaffingPage = () => {
       supabase.from('projets').select('id,nom,code,clients(nom)').eq('organisation_id', org.id).eq('statut', 'active')
     ]);
     setAffectations(a.data || []);
-    setCollaborateurs(c.data || []);
+    
+    // Filtrer les collaborateurs selon permissions
+    let filteredCollabs = c.data || [];
+    if (!canEdit && collab?.id) {
+      // Junior/Senior: ne voit que sa propre ligne
+      filteredCollabs = filteredCollabs.filter(col => col.id === collab.id);
+    }
+    setCollaborateurs(filteredCollabs);
     setMissions(m.data || []);
     setLoading(false);
   };
@@ -2094,11 +2164,13 @@ const StaffingPage = () => {
   const getAffectation = (collabId, date) => affectations.find(a => a.collaborateur_id === collabId && a.date === date);
 
   const openNew = (collabId = '', date = '') => {
+    if (!canEdit) return; // Ne peut pas créer si pas Manager+
     setForm({collaborateur_id: collabId, projet_id: '', date: date || today(), heures: 8});
     setModal(true);
   };
 
   const saveAffectation = async () => {
+    if (!canEdit) return;
     if (!form.collaborateur_id || !form.projet_id) return alert('Collaborateur et mission requis');
     setSaving(true);
     try {
@@ -2111,6 +2183,7 @@ const StaffingPage = () => {
   };
 
   const deleteAffectation = async (a) => {
+    if (!canEdit) return;
     await supabase.from('affectations').delete().eq('id', a.id);
     loadData();
   };
@@ -2154,15 +2227,21 @@ const StaffingPage = () => {
 
   return (
     <div>
-      <PageHeader title="Staffing" subtitle="Planning des affectations"
+      <PageHeader title="Staffing" subtitle={canEdit ? "Planning des affectations" : "Mon planning (lecture seule)"}
         action={<div className="flex gap-2">
           <Button variant="secondary" size="sm" onClick={exportStaffing} icon="📥">Export</Button>
           <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, -7))}>← Sem. préc.</Button>
           <Button variant="secondary" onClick={() => setWeekStart(getWeekStart())}>Aujourd'hui</Button>
           <Button variant="secondary" onClick={() => setWeekStart(addDays(weekStart, 7))}>Sem. suiv. →</Button>
-          <Button onClick={() => openNew()} icon="➕">Affecter</Button>
+          {canEdit && <Button onClick={() => openNew()} icon="➕">Affecter</Button>}
         </div>}
       />
+      
+      {!canEdit && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-sm">
+          ℹ️ Vous consultez votre planning en lecture seule. Seuls les managers peuvent modifier les affectations.
+        </div>
+      )}
 
       {loading ? <Loader /> : (
         <Card title={`Semaine du ${fmtDate(weekStart)}`}>
@@ -2190,13 +2269,21 @@ const StaffingPage = () => {
                         return (
                           <td key={d.date} className="px-1 py-2 text-center">
                             {aff ? (
-                              <div className="bg-blue-100 text-blue-700 rounded-lg p-2 text-xs cursor-pointer hover:bg-blue-200" onClick={() => deleteAffectation(aff)} title={`${aff.projets?.nom} - ${aff.projets?.clients?.nom || 'Sans client'}\nCliquer pour supprimer`}>
+                              <div 
+                                className={cn("bg-blue-100 text-blue-700 rounded-lg p-2 text-xs", canEdit && "cursor-pointer hover:bg-blue-200")} 
+                                onClick={() => canEdit && deleteAffectation(aff)} 
+                                title={canEdit ? `${aff.projets?.nom} - ${aff.projets?.clients?.nom || 'Sans client'}\nCliquer pour supprimer` : `${aff.projets?.nom}`}
+                              >
                                 <div className="font-medium truncate" title={aff.projets?.nom}>{aff.projets?.code}</div>
                                 <div className="text-[10px] text-blue-500 truncate">{aff.projets?.clients?.nom || '-'}</div>
                                 <div>{aff.heures}h</div>
                               </div>
                             ) : (
-                              <button onClick={() => openNew(c.id, d.date)} className="w-full h-14 border-2 border-dashed border-slate-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-colors text-slate-400">+</button>
+                              canEdit ? (
+                                <button onClick={() => openNew(c.id, d.date)} className="w-full h-14 border-2 border-dashed border-slate-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-colors text-slate-400">+</button>
+                              ) : (
+                                <div className="w-full h-14 border-2 border-dashed border-slate-100 rounded-lg text-slate-300 flex items-center justify-center">-</div>
+                              )
                             )}
                           </td>
                         );
@@ -2235,7 +2322,7 @@ const StaffingPage = () => {
 };
 // ========== TIMESHEET PAGE ==========
 const TimesheetPage = () => {
-  const {org, user} = useApp();
+  const {org, user, collab, isManager, userDeptId} = useApp();
   const [weekStart, setWeekStart] = useState(getWeekStart());
   const [entries, setEntries] = useState([]);
   const [missions, setMissions] = useState([]);
@@ -2271,7 +2358,17 @@ const TimesheetPage = () => {
       supabase.from('clients').select('id,nom').eq('organisation_id', org.id)
     ]);
     setEntries(t.data || []);
-    setMissions(m.data || []);
+    
+    // Filtrer missions selon permissions
+    let filteredMissions = m.data || [];
+    if (!isManager && userDeptId) {
+      // Junior/Senior: uniquement missions de leur département ou sans département
+      filteredMissions = filteredMissions.filter(mission => 
+        !mission.departement_id || mission.departement_id === userDeptId
+      );
+    }
+    setMissions(filteredMissions);
+    
     setCategories(cat.data || []);
     setHolidays((h.data || []).map(x => x.date));
     setConges(cg.data || []);
@@ -2544,8 +2641,9 @@ const TimesheetPage = () => {
 
 // ========== CONGES PAGE ==========
 const CongesPage = () => {
-  const {org, user} = useApp();
+  const {org, user, collab, isManager, isAdmin, userDeptId} = useApp();
   const [conges, setConges] = useState([]);
+  const [validateurs, setValidateurs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // 'conge' ou 'import'
   const [form, setForm] = useState({});
@@ -2553,20 +2651,32 @@ const CongesPage = () => {
   const [tab, setTab] = useState('mes');
   const [soldeAnterieur, setSoldeAnterieur] = useState(0);
   const [importDone, setImportDone] = useState(false);
+  
+  // Vérifier si l'utilisateur est validateur congés
+  const [isValidateur, setIsValidateur] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    const {data, error} = await supabase.from('conges').select('*').eq('organisation_id', org.id).order('date_debut', {ascending: false});
-    if (error) console.error('Conges error:', error);
-    setConges(data || []);
+    const [congesRes, validRes] = await Promise.all([
+      supabase.from('conges').select('*,collaborateurs:utilisateur_id(nom,prenom,departement_id)').eq('organisation_id', org.id).order('date_debut', {ascending: false}),
+      supabase.from('validateurs_departement').select('*').eq('organisation_id', org.id).eq('type_validation', 'conges')
+    ]);
+    
+    if (congesRes.error) console.error('Conges error:', congesRes.error);
+    setConges(congesRes.data || []);
+    setValidateurs(validRes.data || []);
+    
+    // Vérifier si l'utilisateur courant est validateur
+    const isVal = (validRes.data || []).some(v => v.collaborateur_id === collab?.id);
+    setIsValidateur(isVal || isAdmin);
     
     // Vérifier si un import a déjà été fait (chercher un congé de type 'report_anterieur')
-    const hasImport = (data || []).some(c => c.type_conge === 'report_anterieur' && c.utilisateur_id === user.id);
+    const hasImport = (congesRes.data || []).some(c => c.type_conge === 'report_anterieur' && c.utilisateur_id === user.id);
     setImportDone(hasImport);
     
     // Récupérer le solde antérieur s'il existe
-    const importConge = (data || []).find(c => c.type_conge === 'report_anterieur' && c.utilisateur_id === user.id);
+    const importConge = (congesRes.data || []).find(c => c.type_conge === 'report_anterieur' && c.utilisateur_id === user.id);
     if (importConge) setSoldeAnterieur(importConge.nb_jours || 0);
     
     setLoading(false);
@@ -2657,7 +2767,16 @@ const CongesPage = () => {
   };
 
   const mesConges = conges.filter(c => c.utilisateur_id === user.id && c.type_conge !== 'report_anterieur');
-  const congesAValider = conges.filter(c => c.statut === 'pending');
+  // Congés à valider: seulement si l'utilisateur est validateur
+  // Et uniquement pour les collaborateurs de son département (si validateur département) ou tous (si admin)
+  const congesAValider = isValidateur ? conges.filter(c => {
+    if (c.statut !== 'pending') return false;
+    if (isAdmin) return true; // Admin voit tous les pending
+    // Validateur département: voir seulement les congés de son département
+    const validDepts = validateurs.filter(v => v.collaborateur_id === collab?.id).map(v => v.departement_id);
+    return validDepts.includes(c.collaborateurs?.departement_id);
+  }) : [];
+  
   const congesApprouves = mesConges.filter(c => c.statut === 'approved' && c.type_conge === 'conge_paye');
   
   // Récupérer le solde antérieur importé
@@ -2675,11 +2794,22 @@ const CongesPage = () => {
   const soldeConges = Math.max(0, joursAcquis - joursPris);
   const joursEnAttente = mesConges.filter(c => c.statut === 'pending' && c.type_conge === 'conge_paye').reduce((s, c) => s + (c.nb_jours || 0), 0);
 
+  // Tabs dynamiques selon permissions
+  const tabs = [
+    {key: 'mes', label: 'Mes congés', count: mesConges.length}
+  ];
+  if (isValidateur) {
+    tabs.push({key: 'valider', label: 'À valider', count: congesAValider.length, icon: '🔔'});
+  }
+  if (isManager || isAdmin) {
+    tabs.push({key: 'tous', label: 'Tous', count: conges.length});
+  }
+
   return (
     <div>
       <PageHeader title="Congés & Absences" 
         subtitle={`Solde: ${soldeConges} jours disponibles`}
-        tabs={[{key: 'mes', label: 'Mes congés', count: mesConges.length}, {key: 'valider', label: 'À valider', count: congesAValider.length}, {key: 'tous', label: 'Tous', count: conges.length}]}
+        tabs={tabs}
         activeTab={tab} onTabChange={setTab}
         action={<div className="flex gap-2">
           {!importDone && <Button variant="secondary" size="sm" onClick={openImport} icon="📥">Import solde</Button>}
@@ -3080,25 +3210,36 @@ const EXPENSE_STATUS = {
 };
 
 const NotesFraisPage = () => {
-  const {org, user} = useApp();
+  const {org, user, collab, isManager, isAdmin, userDeptId} = useApp();
   const [notes, setNotes] = useState([]);
   const [missions, setMissions] = useState([]);
+  const [validateurs, setValidateurs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState('mes');
+  
+  // Vérifier si l'utilisateur est validateur notes de frais
+  const [isValidateur, setIsValidateur] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    const [n, m] = await Promise.all([
-      supabase.from('notes_frais').select('*,projets(nom,code)').eq('organisation_id', org.id).order('date_frais', {ascending: false}),
-      supabase.from('projets').select('id,nom,code').eq('organisation_id', org.id)
+    const [n, m, v] = await Promise.all([
+      supabase.from('notes_frais').select('*,projets(nom,code),collaborateurs:utilisateur_id(nom,prenom,departement_id)').eq('organisation_id', org.id).order('date_frais', {ascending: false}),
+      supabase.from('projets').select('id,nom,code').eq('organisation_id', org.id),
+      supabase.from('validateurs_departement').select('*').eq('organisation_id', org.id).eq('type_validation', 'frais')
     ]);
     setNotes(n.data || []);
     setMissions(m.data || []);
+    setValidateurs(v.data || []);
+    
+    // Vérifier si l'utilisateur courant est validateur
+    const isVal = (v.data || []).some(val => val.collaborateur_id === collab?.id);
+    setIsValidateur(isVal || isAdmin);
+    
     setLoading(false);
   };
 
@@ -3190,7 +3331,16 @@ const NotesFraisPage = () => {
   };
 
   const mesNotes = notes.filter(n => n.utilisateur_id === user.id);
-  const notesAValider = notes.filter(n => n.statut === 'submitted');
+  
+  // Notes à valider: seulement si l'utilisateur est validateur
+  const notesAValider = isValidateur ? notes.filter(n => {
+    if (n.statut !== 'submitted') return false;
+    if (isAdmin) return true;
+    // Validateur département: voir seulement les notes de son département
+    const validDepts = validateurs.filter(v => v.collaborateur_id === collab?.id).map(v => v.departement_id);
+    return validDepts.includes(n.collaborateurs?.departement_id);
+  }) : [];
+  
   const notesApprouvees = notes.filter(n => n.statut === 'approved');
 
   const stats = {
@@ -3212,16 +3362,23 @@ const NotesFraisPage = () => {
     {header: 'Justificatif', getValue: r => r.justificatif ? 'Oui' : 'Non'},
     {header: 'Statut', getValue: r => EXPENSE_STATUS[r.statut]?.label || ''}
   ], 'notes_frais');
+  
+  // Tabs dynamiques selon permissions
+  const tabsList = [
+    {key: 'mes', label: 'Mes notes', count: mesNotes.length}
+  ];
+  if (isValidateur) {
+    tabsList.push({key: 'valider', label: 'À valider', count: notesAValider.length, icon: '🔔'});
+  }
+  if (isManager || isAdmin) {
+    tabsList.push({key: 'approuvees', label: 'À rembourser', count: notesApprouvees.length});
+    tabsList.push({key: 'toutes', label: 'Toutes', count: notes.length});
+  }
 
   return (
     <div>
       <PageHeader title="Notes de Frais" subtitle={`${mesNotes.length} notes • ${fmtMoney(stats.totalMes)} total`}
-        tabs={[
-          {key: 'mes', label: 'Mes notes', count: mesNotes.length},
-          {key: 'valider', label: 'À valider', count: notesAValider.length},
-          {key: 'approuvees', label: 'À rembourser', count: notesApprouvees.length},
-          {key: 'toutes', label: 'Toutes', count: notes.length}
-        ]}
+        tabs={tabsList}
         activeTab={tab} onTabChange={setTab}
         action={<div className="flex gap-2">
           <Button variant="secondary" size="sm" onClick={exportNotes} icon="📥">Export</Button>
