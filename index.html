@@ -1253,10 +1253,30 @@ const CRMPage = () => {
     if (!form.nom || !form.client_id) return alert('Client et nom requis');
     setSaving(true);
     try {
-      if (editItem?.id) await supabase.from('contacts').update(form).eq('id', editItem.id);
-      else await supabase.from('contacts').insert([{...form, organisation_id: org.id}]);
+      const data = {
+        client_id: form.client_id,
+        nom: form.nom,
+        prenom: form.prenom || '',
+        fonction: form.fonction || '',
+        email: form.email || '',
+        telephone: form.telephone || '',
+        mobile: form.mobile || '',
+        principal: form.principal || false
+      };
+      
+      let result;
+      if (editItem?.id) {
+        result = await supabase.from('contacts').update(data).eq('id', editItem.id);
+      } else {
+        result = await supabase.from('contacts').insert([{...data, organisation_id: org.id}]);
+      }
+      
+      if (result.error) throw result.error;
       setModal(null); loadData();
-    } catch (e) { alert(e.message); }
+    } catch (e) { 
+      console.error('Contact save error:', e);
+      alert('Erreur: ' + e.message); 
+    }
     setSaving(false);
   };
   const deleteContact = async (c) => { if (!confirm(`Supprimer "${c.prenom} ${c.nom}" ?`)) return; await supabase.from('contacts').delete().eq('id', c.id); loadData(); };
@@ -1268,10 +1288,30 @@ const CRMPage = () => {
     if (!form.nom || !form.client_id) return alert('Client et nom requis');
     setSaving(true);
     try {
-      if (editItem?.id) await supabase.from('opportunites').update(form).eq('id', editItem.id);
-      else await supabase.from('opportunites').insert([{...form, organisation_id: org.id}]);
+      const data = {
+        code: form.code,
+        nom: form.nom,
+        client_id: form.client_id,
+        description: form.description || '',
+        montant: parseFloat(form.montant) || 0,
+        probabilite: parseInt(form.probabilite) || 50,
+        stage: form.stage || 'prospect',
+        date_cloture_prevue: form.date_cloture_prevue || null
+      };
+      
+      let result;
+      if (editItem?.id) {
+        result = await supabase.from('opportunites').update(data).eq('id', editItem.id);
+      } else {
+        result = await supabase.from('opportunites').insert([{...data, organisation_id: org.id}]);
+      }
+      
+      if (result.error) throw result.error;
       setModal(null); loadData();
-    } catch (e) { alert(e.message); }
+    } catch (e) { 
+      console.error('Opportunite save error:', e);
+      alert('Erreur: ' + e.message); 
+    }
     setSaving(false);
   };
   const updateOppStage = async (o, stage) => { await supabase.from('opportunites').update({stage}).eq('id', o.id); loadData(); };
@@ -1457,11 +1497,34 @@ const MissionsPage = () => {
     if (!form.nom || !form.client_id) return alert('Client et nom requis');
     setSaving(true);
     try {
-      const data = {...form, client_id: form.client_id || null, departement_id: form.departement_id || null};
-      if (editItem?.id) await supabase.from('projets').update(data).eq('id', editItem.id);
-      else await supabase.from('projets').insert([{...data, organisation_id: org.id}]);
-      setModal(null); loadData();
-    } catch (e) { alert(e.message); }
+      // Ne garder que les champs valides pour la table projets
+      const data = {
+        code: form.code,
+        nom: form.nom,
+        client_id: form.client_id || null,
+        departement_id: form.departement_id || null,
+        type_facturation: form.type_facturation,
+        statut: form.statut,
+        budget_montant: parseFloat(form.budget_montant) || 0,
+        date_debut: form.date_debut || null,
+        date_fin_prevue: form.date_fin_prevue || null,
+        description: form.description || '',
+        facturable: form.facturable !== false
+      };
+      
+      if (editItem?.id) {
+        const {error} = await supabase.from('projets').update(data).eq('id', editItem.id);
+        if (error) throw error;
+      } else {
+        const {error} = await supabase.from('projets').insert([{...data, organisation_id: org.id}]);
+        if (error) throw error;
+      }
+      setModal(null); 
+      loadData();
+    } catch (e) { 
+      console.error('Save error:', e);
+      alert('Erreur: ' + e.message); 
+    }
     setSaving(false);
   };
 
@@ -2544,6 +2607,135 @@ const IntercoPage = () => {
     </div>
   );
 };
+// ========== PROMOTIONS TAB COMPONENT ==========
+const PromotionsTab = ({org, collaborateurs, grades}) => {
+  const [passages, setPassages] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(false);
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { loadPassages(); }, []);
+
+  const loadPassages = async () => {
+    const {data} = await supabase.from('passages_grade').select('*').eq('organisation_id', org.id).order('date_effet', {ascending: false});
+    setPassages(data || []);
+    setLoading(false);
+  };
+
+  const openNew = () => {
+    setForm({collaborateur_id: '', ancien_grade_id: '', nouveau_grade_id: '', date_effet: today(), motif: ''});
+    setModal(true);
+  };
+
+  const handleCollabChange = (collabId) => {
+    const collab = collaborateurs.find(c => c.id === collabId);
+    setForm(p => ({...p, collaborateur_id: collabId, ancien_grade_id: collab?.grade_id || ''}));
+  };
+
+  const save = async () => {
+    if (!form.collaborateur_id || !form.nouveau_grade_id) return alert('Collaborateur et nouveau grade requis');
+    setSaving(true);
+    try {
+      // Enregistrer le passage
+      const {error: e1} = await supabase.from('passages_grade').insert([{
+        organisation_id: org.id,
+        collaborateur_id: form.collaborateur_id,
+        ancien_grade_id: form.ancien_grade_id || null,
+        nouveau_grade_id: form.nouveau_grade_id,
+        date_effet: form.date_effet,
+        motif: form.motif
+      }]);
+      if (e1) throw e1;
+
+      // Mettre à jour le grade du collaborateur
+      const grade = grades.find(g => g.id === form.nouveau_grade_id);
+      const {error: e2} = await supabase.from('collaborateurs').update({
+        grade_id: form.nouveau_grade_id, 
+        taux_journalier: grade?.taux_journalier || 0
+      }).eq('id', form.collaborateur_id);
+      if (e2) throw e2;
+
+      setModal(false); 
+      loadPassages();
+    } catch(e) { alert('Erreur: ' + e.message); }
+    setSaving(false);
+  };
+
+  const getCollab = (id) => collaborateurs.find(c => c.id === id);
+  const getGrade = (id) => grades.find(g => g.id === id);
+
+  if (loading) return <Loader />;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-semibold">Historique des promotions</h3>
+          <Button onClick={openNew} icon="➕" size="sm">Nouvelle promotion</Button>
+        </div>
+
+        {passages.length === 0 ? (
+          <EmptyState icon="🎖️" title="Aucune promotion" description="Enregistrez les passages de grade ici" />
+        ) : (
+          <Table columns={[
+            {header: 'Collaborateur', render: r => {
+              const c = getCollab(r.collaborateur_id);
+              return c ? <span className="font-medium">{c.prenom} {c.nom}</span> : '-';
+            }},
+            {header: 'Ancien grade', render: r => {
+              const g = getGrade(r.ancien_grade_id);
+              return g ? <Badge color="gray">{g.nom}</Badge> : <span className="text-slate-400">-</span>;
+            }},
+            {header: '', render: () => <span className="text-green-500">→</span>},
+            {header: 'Nouveau grade', render: r => {
+              const g = getGrade(r.nouveau_grade_id);
+              return g ? <Badge color="green">{g.nom}</Badge> : '-';
+            }},
+            {header: 'Date effet', render: r => fmtDate(r.date_effet)},
+            {header: 'Motif', render: r => <span className="text-sm text-slate-500">{r.motif || '-'}</span>}
+          ]} data={passages} />
+        )}
+      </Card>
+
+      {/* Statistiques */}
+      <div className="grid grid-cols-3 gap-4">
+        <StatCard title="Promotions ce mois" value={passages.filter(p => p.date_effet?.startsWith(today().substring(0, 7))).length} icon="🎖️" color="green" />
+        <StatCard title="Total promotions" value={passages.length} icon="📈" color="blue" />
+        <StatCard title="Collaborateurs promouvables" value={collaborateurs.filter(c => c.actif).length} icon="👥" color="purple" />
+      </div>
+
+      {/* Modal nouvelle promotion */}
+      <Modal isOpen={modal} onClose={() => setModal(false)} title="Nouvelle promotion" size="md">
+        <div className="space-y-4">
+          <Select label="Collaborateur" value={form.collaborateur_id} onChange={handleCollabChange} 
+            options={collaborateurs.filter(c => c.actif).map(c => ({value: c.id, label: c.prenom + ' ' + c.nom}))} 
+            placeholder="Sélectionner" required />
+          
+          {form.collaborateur_id && (
+            <div className="p-4 bg-slate-50 rounded-xl">
+              <div className="text-sm text-slate-500">Grade actuel</div>
+              <div className="font-bold">{getGrade(form.ancien_grade_id)?.nom || 'Non défini'}</div>
+            </div>
+          )}
+
+          <Select label="Nouveau grade" value={form.nouveau_grade_id} onChange={v => setForm(p => ({...p, nouveau_grade_id: v}))} 
+            options={grades.filter(g => g.id !== form.ancien_grade_id).map(g => ({value: g.id, label: g.nom + ' (' + fmt(g.taux_journalier) + ' F/j)'}))} 
+            placeholder="Sélectionner" required />
+
+          <Input label="Date d'effet" type="date" value={form.date_effet} onChange={v => setForm(p => ({...p, date_effet: v}))} />
+          <TextArea label="Motif" value={form.motif} onChange={v => setForm(p => ({...p, motif: v}))} rows={2} placeholder="Promotion annuelle, performance exceptionnelle..." />
+
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button>
+            <Button onClick={save} loading={saving} className="flex-1">Valider promotion</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+};
+
 // ========== EQUIPE PAGE ==========
 const EquipePage = () => {
   const {org} = useApp();
@@ -2632,9 +2824,7 @@ const EquipePage = () => {
         )}
 
         {tab === 'grades' && (
-          <Card title="Campagnes de passage de grade">
-            <EmptyState icon="🎖️" title="Passages de grade" description="Gérez les promotions de fin de saison ici." action={<Button onClick={() => setTab('collab')}>Voir collaborateurs</Button>} />
-          </Card>
+          <PromotionsTab org={org} collaborateurs={collaborateurs} grades={grades} />
         )}
       </>)}
 
@@ -2682,68 +2872,313 @@ const RapportsPage = () => {
   const {org} = useApp();
   const [data, setData] = useState({});
   const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState('month'); // month, quarter, year
+  const [tab, setTab] = useState('global');
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadData(); }, [period]);
+
+  const getPeriodDates = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    
+    if (period === 'month') {
+      const start = new Date(year, month, 1);
+      const end = new Date(year, month + 1, 0);
+      return { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0], label: 'Ce mois' };
+    } else if (period === 'quarter') {
+      const qMonth = Math.floor(month / 3) * 3;
+      const start = new Date(year, qMonth, 1);
+      const end = new Date(year, qMonth + 3, 0);
+      return { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0], label: 'Ce trimestre' };
+    } else {
+      const start = new Date(year, 0, 1);
+      const end = new Date(year, 11, 31);
+      return { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0], label: 'Cette année' };
+    }
+  };
 
   const loadData = async () => {
-    const [temps, factures, collabs, missions] = await Promise.all([
-      supabase.from('saisies_temps').select('heures,facturable,date').eq('organisation_id', org.id),
-      supabase.from('factures').select('montant_total,statut').eq('organisation_id', org.id),
+    setLoading(true);
+    const {start, end} = getPeriodDates();
+    
+    const [temps, factures, collabs, missions, clients, conges] = await Promise.all([
+      supabase.from('saisies_temps').select('heures,facturable,date,projet_id').eq('organisation_id', org.id).gte('date', start).lte('date', end),
+      supabase.from('factures').select('montant_total,montant_encaisse,statut,date_emission,client_id').eq('organisation_id', org.id),
       supabase.from('collaborateurs').select('*,grades(taux_journalier)').eq('organisation_id', org.id).eq('actif', true),
-      supabase.from('projets').select('*').eq('organisation_id', org.id)
+      supabase.from('projets').select('*,clients(nom)').eq('organisation_id', org.id),
+      supabase.from('clients').select('*').eq('organisation_id', org.id),
+      supabase.from('conges').select('*').eq('organisation_id', org.id).eq('statut', 'approved')
     ]);
 
     const h = temps.data || [];
     const heuresTotal = h.reduce((s, t) => s + (t.heures || 0), 0);
     const heuresFact = h.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0);
+    const heuresNonFact = heuresTotal - heuresFact;
     
     const f = factures.data || [];
-    const caTotal = f.reduce((s, x) => s + (x.montant_total || 0), 0);
+    const fPeriod = f.filter(x => x.date_emission >= start && x.date_emission <= end);
+    const caTotal = fPeriod.reduce((s, x) => s + (x.montant_total || 0), 0);
     const caEncaisse = f.filter(x => x.statut === 'paid').reduce((s, x) => s + (x.montant_total || 0), 0);
+    const caEnAttente = f.filter(x => x.statut === 'sent').reduce((s, x) => s + ((x.montant_total || 0) - (x.montant_encaisse || 0)), 0);
     
     const m = missions.data || [];
+    const missionsActives = m.filter(x => x.statut === 'active').length;
     const budgetTotal = m.reduce((s, x) => s + (x.budget_montant || 0), 0);
     
-    // Production valorisée (heures * taux)
-    const tauxMoyen = collabs.data?.reduce((s, c) => s + (c.grades?.taux_journalier || 0), 0) / (collabs.data?.length || 1) / 8;
+    // Production valorisée (heures * taux moyen)
+    const tauxMoyen = collabs.data?.length > 0 ? collabs.data.reduce((s, c) => s + (c.grades?.taux_journalier || 0), 0) / collabs.data.length / 8 : 0;
     const production = heuresFact * tauxMoyen;
 
+    // Top clients par CA
+    const clientsCA = {};
+    f.forEach(fac => {
+      if (fac.client_id) {
+        clientsCA[fac.client_id] = (clientsCA[fac.client_id] || 0) + (fac.montant_total || 0);
+      }
+    });
+    const topClients = Object.entries(clientsCA)
+      .map(([id, ca]) => ({id, ca, nom: clients.data?.find(c => c.id === id)?.nom || 'Inconnu'}))
+      .sort((a, b) => b.ca - a.ca)
+      .slice(0, 5);
+
+    // Top missions par heures
+    const missionsHeures = {};
+    h.forEach(t => {
+      if (t.projet_id) {
+        missionsHeures[t.projet_id] = (missionsHeures[t.projet_id] || 0) + (t.heures || 0);
+      }
+    });
+    const topMissions = Object.entries(missionsHeures)
+      .map(([id, heures]) => ({id, heures, nom: m.find(x => x.id === id)?.nom || 'Inconnue', code: m.find(x => x.id === id)?.code}))
+      .sort((a, b) => b.heures - a.heures)
+      .slice(0, 5);
+
+    // Jours de congés
+    const joursConges = (conges.data || []).reduce((s, c) => s + (c.nb_jours || 0), 0);
+
     setData({
-      heuresTotal, heuresFact,
+      heuresTotal, heuresFact, heuresNonFact,
       tauxCharge: heuresTotal > 0 ? Math.round((heuresFact / heuresTotal) * 100) : 0,
-      caTotal, caEncaisse, budgetTotal, production,
-      rentabilite: budgetTotal > 0 ? Math.round((caEncaisse / budgetTotal) * 100) : 0
+      caTotal, caEncaisse, caEnAttente, budgetTotal, production,
+      rentabilite: budgetTotal > 0 ? Math.round((caEncaisse / budgetTotal) * 100) : 0,
+      missionsActives, totalMissions: m.length,
+      nbCollabs: collabs.data?.length || 0,
+      nbClients: clients.data?.length || 0,
+      topClients, topMissions, joursConges, tauxMoyen
     });
     setLoading(false);
   };
 
   if (loading) return <Loader />;
 
+  const {label} = getPeriodDates();
+
   return (
     <div>
-      <PageHeader title="Rapports" subtitle="Indicateurs de performance" />
+      <PageHeader title="Rapports & Analyses" subtitle={label}
+        tabs={[
+          {key: 'global', label: 'Vue globale'},
+          {key: 'temps', label: 'Temps'},
+          {key: 'finance', label: 'Finance'},
+          {key: 'clients', label: 'Clients'}
+        ]}
+        activeTab={tab} onTabChange={setTab}
+        action={
+          <div className="flex gap-2">
+            <Select value={period} onChange={setPeriod} options={[
+              {value: 'month', label: 'Ce mois'},
+              {value: 'quarter', label: 'Ce trimestre'},
+              {value: 'year', label: 'Cette année'}
+            ]} className="w-40" />
+          </div>
+        }
+      />
       
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatCard title="Heures totales" value={fmt(data.heuresTotal) + 'h'} icon="⏱️" color="blue" />
-        <StatCard title="Heures facturables" value={fmt(data.heuresFact) + 'h'} icon="💼" color="green" />
-        <StatCard title="Taux chargeabilité" value={data.tauxCharge + '%'} icon="📊" color="purple" />
-        <StatCard title="CA encaissé" value={fmtMoney(data.caEncaisse)} icon="💰" color="amber" />
-      </div>
+      {tab === 'global' && (<>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <StatCard title="Heures totales" value={fmt(data.heuresTotal) + 'h'} icon="⏱️" color="blue" />
+          <StatCard title="Taux chargeabilité" value={data.tauxCharge + '%'} icon="📊" color="purple" trend={data.tauxCharge >= 75 ? 'up' : 'down'} />
+          <StatCard title="CA facturé" value={fmtMoney(data.caTotal)} icon="📄" color="green" />
+          <StatCard title="CA encaissé" value={fmtMoney(data.caEncaisse)} icon="💰" color="amber" />
+        </div>
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        <Card title="📈 Performance financière">
-          <div className="space-y-4">
-            <div><div className="flex justify-between text-sm mb-1"><span>CA vs Budget</span><span>{data.rentabilite}%</span></div><ProgressBar value={data.caEncaisse} max={data.budgetTotal} color="green" /></div>
-            <div><div className="flex justify-between text-sm mb-1"><span>Production valorisée</span><span>{fmtMoney(data.production)}</span></div><ProgressBar value={data.production} max={data.budgetTotal} color="blue" /></div>
-          </div>
+        <div className="grid lg:grid-cols-2 gap-6">
+          <Card title="📈 Performance financière">
+            <div className="space-y-4">
+              <div>
+                <div className="flex justify-between text-sm mb-1"><span>CA vs Budget</span><span className="font-medium">{data.rentabilite}%</span></div>
+                <ProgressBar value={data.caEncaisse} max={data.budgetTotal} color={data.rentabilite >= 100 ? 'green' : 'blue'} />
+                <div className="text-xs text-slate-400 mt-1">{fmtMoney(data.caEncaisse)} / {fmtMoney(data.budgetTotal)}</div>
+              </div>
+              <div>
+                <div className="flex justify-between text-sm mb-1"><span>Production valorisée</span><span className="font-medium">{fmtMoney(data.production)}</span></div>
+                <ProgressBar value={data.production} max={data.budgetTotal} color="purple" />
+              </div>
+              <div className="pt-2 border-t">
+                <div className="flex justify-between text-sm"><span>En attente encaissement</span><span className="font-medium text-amber-600">{fmtMoney(data.caEnAttente)}</span></div>
+              </div>
+            </div>
+          </Card>
+
+          <Card title="🎯 Objectifs">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="text-center p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl">
+                <div className={cn('text-3xl font-bold', data.tauxCharge >= 75 ? 'text-green-600' : 'text-blue-600')}>{data.tauxCharge}%</div>
+                <div className="text-sm text-slate-600 font-medium">Chargeabilité</div>
+                <div className="text-xs text-slate-400">Objectif: 75%</div>
+                <div className="mt-2"><ProgressBar value={data.tauxCharge} max={100} color={data.tauxCharge >= 75 ? 'green' : 'blue'} size="sm" /></div>
+              </div>
+              <div className="text-center p-4 bg-gradient-to-br from-green-50 to-green-100 rounded-xl">
+                <div className={cn('text-3xl font-bold', data.rentabilite >= 100 ? 'text-green-600' : 'text-amber-600')}>{data.rentabilite}%</div>
+                <div className="text-sm text-slate-600 font-medium">Rentabilité</div>
+                <div className="text-xs text-slate-400">Objectif: 100%</div>
+                <div className="mt-2"><ProgressBar value={data.rentabilite} max={100} color={data.rentabilite >= 100 ? 'green' : 'amber'} size="sm" /></div>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        <div className="grid lg:grid-cols-2 gap-6 mt-6">
+          <Card title="🏆 Top 5 Clients (CA)">
+            {data.topClients?.length > 0 ? (
+              <div className="space-y-3">
+                {data.topClients.map((c, i) => (
+                  <div key={c.id} className="flex items-center gap-3">
+                    <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">{i + 1}</div>
+                    <div className="flex-1 font-medium">{c.nom}</div>
+                    <div className="font-bold text-green-600">{fmtMoney(c.ca)}</div>
+                  </div>
+                ))}
+              </div>
+            ) : <EmptyState icon="👥" title="Pas de données" />}
+          </Card>
+
+          <Card title="⏱️ Top 5 Missions (Heures)">
+            {data.topMissions?.length > 0 ? (
+              <div className="space-y-3">
+                {data.topMissions.map((m, i) => (
+                  <div key={m.id} className="flex items-center gap-3">
+                    <div className="w-6 h-6 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center text-xs font-bold">{i + 1}</div>
+                    <div className="flex-1"><div className="font-medium">{m.nom}</div><div className="text-xs text-slate-400">{m.code}</div></div>
+                    <div className="font-bold text-purple-600">{m.heures}h</div>
+                  </div>
+                ))}
+              </div>
+            ) : <EmptyState icon="📊" title="Pas de données" />}
+          </Card>
+        </div>
+      </>)}
+
+      {tab === 'temps' && (<>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <StatCard title="Heures totales" value={fmt(data.heuresTotal) + 'h'} icon="⏱️" color="blue" />
+          <StatCard title="Facturables" value={fmt(data.heuresFact) + 'h'} icon="💼" color="green" />
+          <StatCard title="Non-facturables" value={fmt(data.heuresNonFact) + 'h'} icon="📋" color="gray" />
+          <StatCard title="Taux facturable" value={data.tauxCharge + '%'} icon="📊" color="purple" />
+        </div>
+
+        <div className="grid lg:grid-cols-2 gap-6">
+          <Card title="📊 Répartition du temps">
+            <div className="space-y-4">
+              <div>
+                <div className="flex justify-between text-sm mb-1"><span>Heures facturables</span><span className="text-green-600 font-medium">{fmt(data.heuresFact)}h ({data.tauxCharge}%)</span></div>
+                <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-green-500 rounded-full" style={{width: data.tauxCharge + '%'}}></div>
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-sm mb-1"><span>Heures non-facturables</span><span className="text-slate-500 font-medium">{fmt(data.heuresNonFact)}h ({100 - data.tauxCharge}%)</span></div>
+                <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-slate-400 rounded-full" style={{width: (100 - data.tauxCharge) + '%'}}></div>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card title="👥 Ressources">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="text-center p-4 bg-slate-50 rounded-xl">
+                <div className="text-3xl font-bold text-blue-600">{data.nbCollabs}</div>
+                <div className="text-sm text-slate-500">Collaborateurs actifs</div>
+              </div>
+              <div className="text-center p-4 bg-slate-50 rounded-xl">
+                <div className="text-3xl font-bold text-amber-600">{data.joursConges}</div>
+                <div className="text-sm text-slate-500">Jours de congés pris</div>
+              </div>
+              <div className="text-center p-4 bg-slate-50 rounded-xl">
+                <div className="text-3xl font-bold text-green-600">{fmt(data.tauxMoyen)}</div>
+                <div className="text-sm text-slate-500">Taux horaire moyen (F)</div>
+              </div>
+              <div className="text-center p-4 bg-slate-50 rounded-xl">
+                <div className="text-3xl font-bold text-purple-600">{data.missionsActives}</div>
+                <div className="text-sm text-slate-500">Missions actives</div>
+              </div>
+            </div>
+          </Card>
+        </div>
+      </>)}
+
+      {tab === 'finance' && (<>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <StatCard title="CA facturé" value={fmtMoney(data.caTotal)} icon="📄" color="blue" />
+          <StatCard title="CA encaissé" value={fmtMoney(data.caEncaisse)} icon="✅" color="green" />
+          <StatCard title="En attente" value={fmtMoney(data.caEnAttente)} icon="⏳" color="amber" />
+          <StatCard title="Budget total" value={fmtMoney(data.budgetTotal)} icon="🎯" color="purple" />
+        </div>
+
+        <div className="grid lg:grid-cols-2 gap-6">
+          <Card title="💰 Flux de trésorerie">
+            <div className="space-y-4">
+              <div className="flex justify-between items-center p-3 bg-green-50 rounded-xl">
+                <span className="text-green-700">Encaissé</span>
+                <span className="font-bold text-green-700">{fmtMoney(data.caEncaisse)}</span>
+              </div>
+              <div className="flex justify-between items-center p-3 bg-amber-50 rounded-xl">
+                <span className="text-amber-700">À encaisser</span>
+                <span className="font-bold text-amber-700">{fmtMoney(data.caEnAttente)}</span>
+              </div>
+              <div className="flex justify-between items-center p-3 bg-blue-50 rounded-xl">
+                <span className="text-blue-700">Production non facturée</span>
+                <span className="font-bold text-blue-700">{fmtMoney(data.production - data.caTotal)}</span>
+              </div>
+            </div>
+          </Card>
+
+          <Card title="📈 Indicateurs">
+            <div className="space-y-4">
+              <div>
+                <div className="flex justify-between text-sm mb-1"><span>Taux de recouvrement</span><span>{data.caTotal > 0 ? Math.round((data.caEncaisse / data.caTotal) * 100) : 0}%</span></div>
+                <ProgressBar value={data.caEncaisse} max={data.caTotal} color="green" />
+              </div>
+              <div>
+                <div className="flex justify-between text-sm mb-1"><span>Consommation budget</span><span>{Math.round((data.caTotal / data.budgetTotal) * 100) || 0}%</span></div>
+                <ProgressBar value={data.caTotal} max={data.budgetTotal} color="blue" />
+              </div>
+            </div>
+          </Card>
+        </div>
+      </>)}
+
+      {tab === 'clients' && (<>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <StatCard title="Total clients" value={data.nbClients} icon="👥" color="blue" />
+          <StatCard title="Missions" value={data.totalMissions} icon="📋" color="green" />
+          <StatCard title="Missions actives" value={data.missionsActives} icon="🚀" color="purple" />
+          <StatCard title="CA moyen/client" value={fmtMoney(data.nbClients > 0 ? data.caTotal / data.nbClients : 0)} icon="💰" color="amber" />
+        </div>
+
+        <Card title="🏆 Classement clients par CA">
+          {data.topClients?.length > 0 ? (
+            <Table columns={[
+              {header: '#', render: (r, i) => <span className="font-bold text-slate-400">{i + 1}</span>},
+              {header: 'Client', render: r => <span className="font-medium">{r.nom}</span>},
+              {header: 'CA Total', render: r => <span className="font-bold text-green-600">{fmtMoney(r.ca)}</span>},
+              {header: '% du CA', render: r => <div><ProgressBar value={r.ca} max={data.caTotal} color="green" size="sm" /></div>}
+            ]} data={data.topClients} />
+          ) : <EmptyState icon="👥" title="Pas de données clients" />}
         </Card>
-        <Card title="🎯 Objectifs">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="text-center p-4 bg-slate-50 rounded-xl"><div className="text-3xl font-bold text-blue-600">{data.tauxCharge}%</div><div className="text-sm text-slate-500">Chargeabilité</div><div className="text-xs text-slate-400">Objectif: 75%</div></div>
-            <div className="text-center p-4 bg-slate-50 rounded-xl"><div className="text-3xl font-bold text-green-600">{data.rentabilite}%</div><div className="text-sm text-slate-500">Rentabilité</div><div className="text-xs text-slate-400">Objectif: 100%</div></div>
-          </div>
-        </Card>
-      </div>
+      </>)}
     </div>
   );
 };
