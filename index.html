@@ -735,6 +735,7 @@ const MainApp = ({user, onLogout}) => {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [viewMode, setViewMode] = useState('auto'); // 'auto', 'admin', 'org'
   const isSuperAdmin = SUPER_ADMINS.includes(user?.email);
 
   useEffect(() => { loadUser(); }, [user]);
@@ -753,7 +754,13 @@ const MainApp = ({user, onLogout}) => {
   };
 
   if (loading) return <Loader text="Chargement..." />;
-  if (isSuperAdmin && !userData) return <SuperAdminApp user={user} onLogout={onLogout} />;
+  
+  // Si Super Admin et pas d'org OU mode admin forcé
+  if (isSuperAdmin && (!userData || viewMode === 'admin')) {
+    return <SuperAdminApp user={user} onLogout={onLogout} onSwitchToOrg={() => setViewMode('org')} />;
+  }
+  
+  // Si pas de données utilisateur
   if (!userData || !orgData) return (
     <div className="min-h-screen flex items-center justify-center flex-col gap-4">
       <p className="text-slate-600">Erreur de chargement des données utilisateur.</p>
@@ -777,7 +784,7 @@ const MainApp = ({user, onLogout}) => {
   ];
   if (isSuperAdmin) nav.push({k: 'admin', l: 'Admin', i: '🛡️'});
 
-  const ctx = {user: userData, org: orgData, abo: aboData, reload: loadUser, isSuperAdmin, setPage};
+  const ctx = {user: userData, org: orgData, abo: aboData, reload: loadUser, isSuperAdmin, setPage, setViewMode};
 
   return (
     <AppContext.Provider value={ctx}>
@@ -849,7 +856,7 @@ const MainApp = ({user, onLogout}) => {
 };
 
 // ========== SUPER ADMIN APP ==========
-const SuperAdminApp = ({user, onLogout}) => {
+const SuperAdminApp = ({user, onLogout, onSwitchToOrg}) => {
   const [orgs, setOrgs] = useState([]);
   const [users, setUsers] = useState([]);
   const [abos, setAbos] = useState([]);
@@ -858,8 +865,14 @@ const SuperAdminApp = ({user, onLogout}) => {
   const [editOrg, setEditOrg] = useState(null);
   const [editForm, setEditForm] = useState({plan: 'trial', date_fin: ''});
   const [saving, setSaving] = useState(false);
+  const [myOrg, setMyOrg] = useState(null);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadData(); checkMyOrg(); }, []);
+
+  const checkMyOrg = async () => {
+    const {data} = await supabase.from('utilisateurs').select('*,organisations(nom)').eq('auth_id', user.id).single();
+    if (data) setMyOrg(data);
+  };
 
   const loadData = async () => {
     const [o, u, a] = await Promise.all([
@@ -921,6 +934,7 @@ const SuperAdminApp = ({user, onLogout}) => {
         </div>
         <div className="flex items-center gap-4">
           <span className="text-sm text-slate-500 hidden sm:block">{user.email}</span>
+          {myOrg && <Button variant="primary" size="sm" onClick={onSwitchToOrg}>🏢 Mon Cabinet</Button>}
           <Button variant="secondary" size="sm" onClick={onLogout}>Déconnexion</Button>
         </div>
       </header>
@@ -2594,9 +2608,21 @@ const ParametresPage = () => {
 
 // ========== ADMIN PAGE ==========
 const AdminPage = () => {
-  const {isSuperAdmin} = useApp();
+  const {isSuperAdmin, setViewMode} = useApp();
   if (!isSuperAdmin) return <EmptyState icon="🔒" title="Accès refusé" description="Cette section est réservée aux super administrateurs." />;
-  return <div><PageHeader title="Administration" /><Card><p className="text-slate-500">Pour l'administration globale, déconnectez-vous et reconnectez-vous avec un compte super admin sans organisation.</p></Card></div>;
+  return (
+    <div>
+      <PageHeader title="Administration" />
+      <Card>
+        <div className="text-center py-8">
+          <div className="text-5xl mb-4">🛡️</div>
+          <h3 className="text-xl font-bold mb-2">Accès Super Admin</h3>
+          <p className="text-slate-500 mb-6">Basculez vers l'interface d'administration globale pour gérer toutes les organisations, utilisateurs et abonnements.</p>
+          <Button onClick={() => setViewMode('admin')} icon="🚀" size="lg">Ouvrir Admin Global</Button>
+        </div>
+      </Card>
+    </div>
+  );
 };
 // ========== ROOT APP ==========
 const App = () => {
