@@ -1824,30 +1824,31 @@ const DashboardPage = () => {
       const heuresTotal = temps.data?.reduce((s, t) => s + (t.heures || 0), 0) || 0;
       const heuresFact = temps.data?.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0) || 0;
       
-      // CA encaissé = montant_encaisse de toutes les factures OU montant_total des factures payées
-      const caEncaisse = factures.data?.reduce((s, f) => {
-        // Si montant_encaisse existe, on l'utilise
-        if (f.montant_encaisse && f.montant_encaisse > 0) {
-          return s + f.montant_encaisse;
-        }
-        // Sinon, si la facture est payée, on prend le montant total
-        if (f.statut === 'paid') {
-          return s + (f.montant_total || 0);
-        }
-        return s;
-      }, 0) || 0;
+      // Debug: Afficher les factures
+      console.log('Factures brutes:', factures.data);
       
-      // CA en attente = factures envoyées non encore encaissées
-      const caEnAttente = factures.data?.filter(f => f.statut === 'sent' || f.statut === 'overdue').reduce((s, f) => s + ((f.montant_total || 0) - (f.montant_encaisse || 0)), 0) || 0;
-      const budgetTotal = projets.data?.reduce((s, p) => s + (p.budget_montant || 0), 0) || 0;
-      const caFacture = factures.data?.reduce((s, f) => s + (f.montant_total || 0), 0) || 0;
+      // CA Facturé = somme de tous les montants des factures
+      const caFacture = (factures.data || []).reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
       
-      console.log('Dashboard stats:', { 
-        facturesCount: factures.data?.length, 
+      // CA Encaissé = somme de tous les montants_encaisse
+      const caEncaisse = (factures.data || []).reduce((s, f) => s + (parseFloat(f.montant_encaisse) || 0), 0);
+      
+      // CA en attente = CA facturé - CA encaissé
+      const caEnAttente = caFacture - caEncaisse;
+      
+      // Budget total des missions
+      const budgetTotal = projets.data?.reduce((s, p) => s + (parseFloat(p.budget_montant) || 0), 0) || 0;
+      
+      // Reste à facturer = Budget - CA Facturé
+      const resteFacturer = budgetTotal - caFacture;
+      
+      console.log('Dashboard calculs:', { 
+        nbFactures: factures.data?.length,
+        caFacture, 
         caEncaisse, 
-        caEnAttente, 
-        caFacture,
-        facturesStatuts: factures.data?.map(f => ({statut: f.statut, montant: f.montant_total, encaisse: f.montant_encaisse}))
+        caEnAttente,
+        budgetTotal,
+        resteFacturer
       });
       
       // CA par mois (Janvier à Décembre de l'année courante)
@@ -1860,16 +1861,16 @@ const DashboardPage = () => {
         const monthStart = date.toISOString().split('T')[0];
         const monthEnd = new Date(currentYear, i + 1, 0).toISOString().split('T')[0];
         const montant = factures.data?.filter(f => f.date_facture >= monthStart && f.date_facture <= monthEnd)
-          .reduce((s, f) => s + (f.montant_total || 0), 0) || 0;
+          .reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0) || 0;
         caParMois.push({mois: mois.charAt(0).toUpperCase() + mois.slice(1), montant, isFuture: i > now.getMonth()});
       }
       
-      // Top missions par CA
+      // Top missions par budget
       const missionsAvecCA = projets.data?.map(p => ({
         ...p,
-        ca: factures.data?.filter(f => f.projet_id === p.id).reduce((s, f) => s + (f.montant_total || 0), 0) || 0,
+        ca: factures.data?.filter(f => f.projet_id === p.id).reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0) || 0,
         heuresConsommees: temps.data?.filter(t => t.projet_id === p.id).reduce((s, t) => s + (t.heures || 0), 0) || 0
-      })).sort((a, b) => (b.budget_montant || 0) - (a.budget_montant || 0)).slice(0, 5) || [];
+      })).sort((a, b) => (parseFloat(b.budget_montant) || 0) - (parseFloat(a.budget_montant) || 0)).slice(0, 5) || [];
       
       // Performance équipe
       const collabsActifs = collabList.data?.filter(c => c.actif) || [];
@@ -1891,10 +1892,9 @@ const DashboardPage = () => {
         projetsTotal: projets.data?.length || 0,
         heuresTotal, heuresFact,
         tauxCharge: heuresTotal > 0 ? Math.round((heuresFact / heuresTotal) * 100) : 0,
-        caEncaisse, caEnAttente, budgetTotal, caFacture,
-        resteFacturer: budgetTotal - caFacture,
+        caEncaisse, caEnAttente, budgetTotal, caFacture, resteFacturer,
         collaborateurs: collabsActifs.length,
-        facturesEnAttente: factures.data?.filter(f => f.statut === 'sent').length || 0,
+        facturesEnAttente: factures.data?.filter(f => f.statut === 'sent' || f.statut === 'partial').length || 0,
         facturesPaid: factures.data?.filter(f => f.statut === 'paid').length || 0
       });
       
@@ -5447,7 +5447,7 @@ const EquipePage = () => {
     
     try {
       const {error} = await supabase.auth.resetPasswordForEmail(collab.email, {
-        redirectTo: window.location.origin + '/#'
+        redirectTo: window.location.origin
       });
       
       if (error) throw error;
@@ -5725,16 +5725,22 @@ const RapportsPage = () => {
     const heuresNonFact = heuresTotal - heuresFact;
     
     const f = factures.data || [];
-    const caTotal = fPeriod.reduce((s, x) => s + (x.montant_total || 0), 0);
-    const caEncaisse = f.filter(x => x.statut === 'paid').reduce((s, x) => s + (x.montant_total || 0), 0);
-    const caEnAttente = f.filter(x => x.statut === 'sent').reduce((s, x) => s + ((x.montant_total || 0) - (x.montant_encaisse || 0)), 0);
+    
+    // CA Total facturé sur la période
+    const caTotal = fPeriod.reduce((s, x) => s + (parseFloat(x.montant_total) || 0), 0);
+    
+    // CA Encaissé = somme de tous les montants_encaisse (toutes factures, pas que période)
+    const caEncaisse = f.reduce((s, x) => s + (parseFloat(x.montant_encaisse) || 0), 0);
+    
+    // CA En attente = Total facturé - Total encaissé
+    const caEnAttente = f.reduce((s, x) => s + (parseFloat(x.montant_total) || 0), 0) - caEncaisse;
     
     const m = missions.data || [];
     const missionsActives = m.filter(x => x.statut === 'active').length;
-    const budgetTotal = m.reduce((s, x) => s + (x.budget_montant || 0), 0);
+    const budgetTotal = m.reduce((s, x) => s + (parseFloat(x.budget_montant) || 0), 0);
     
     // Production valorisée
-    const tauxMoyen = collabs.data?.length > 0 ? collabs.data.reduce((s, c) => s + (c.grades?.taux_journalier || 0), 0) / collabs.data.length / 8 : 0;
+    const tauxMoyen = collabs.data?.length > 0 ? collabs.data.reduce((s, c) => s + (parseFloat(c.grades?.taux_journalier) || 0), 0) / collabs.data.length / 8 : 0;
     const production = heuresFact * tauxMoyen;
 
     // CA par mois (Janvier à Décembre)
@@ -5746,7 +5752,7 @@ const RapportsPage = () => {
       const moisLabel = new Date(selectedYear, i, 1).toLocaleDateString('fr-FR', {month: 'short'});
       
       const montantCA = f.filter(x => x.date_facture >= monthStart && x.date_facture <= monthEnd)
-        .reduce((s, x) => s + (x.montant_total || 0), 0);
+        .reduce((s, x) => s + (parseFloat(x.montant_total) || 0), 0);
       caParMois.push({mois: moisLabel.charAt(0).toUpperCase() + moisLabel.slice(1), montant: montantCA, isFuture: i > new Date().getMonth() && selectedYear === new Date().getFullYear()});
       
       const heuresMois = (temps.data || []).filter(t => t.date >= monthStart && t.date <= monthEnd)
@@ -5760,7 +5766,7 @@ const RapportsPage = () => {
     const clientsCA = {};
     f.forEach(fac => {
       if (fac.client_id) {
-        clientsCA[fac.client_id] = (clientsCA[fac.client_id] || 0) + (fac.montant_total || 0);
+        clientsCA[fac.client_id] = (clientsCA[fac.client_id] || 0) + (parseFloat(fac.montant_total) || 0);
       }
     });
     const topClients = Object.entries(clientsCA)
