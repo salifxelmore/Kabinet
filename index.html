@@ -921,8 +921,38 @@ const SuperAdminApp = ({user, onLogout, onSwitchToOrg, hasOrg = true}) => {
   const [editOrg, setEditOrg] = useState(null);
   const [editForm, setEditForm] = useState({plan: 'trial', date_fin: ''});
   const [saving, setSaving] = useState(false);
+  const [linkModal, setLinkModal] = useState(false);
+  const [selectedOrg, setSelectedOrg] = useState('');
 
   useEffect(() => { loadData(); }, []);
+
+  const linkToOrg = async () => {
+    if (!selectedOrg) return alert('Sélectionnez une organisation');
+    setSaving(true);
+    try {
+      // Vérifier si l'utilisateur existe déjà
+      const {data: existingUser} = await supabase.from('utilisateurs').select('id').eq('auth_id', user.id).single();
+      
+      if (existingUser) {
+        // Mettre à jour
+        await supabase.from('utilisateurs').update({organisation_id: selectedOrg}).eq('id', existingUser.id);
+      } else {
+        // Créer
+        await supabase.from('utilisateurs').insert([{
+          auth_id: user.id,
+          organisation_id: selectedOrg,
+          email: user.email,
+          nom: 'Admin',
+          prenom: 'Super',
+          role: 'Admin'
+        }]);
+      }
+      alert('Compte lié avec succès! Cliquez sur "Mon Cabinet".');
+      setLinkModal(false);
+      window.location.reload();
+    } catch(e) { alert('Erreur: ' + e.message); }
+    setSaving(false);
+  };
 
   const loadData = async () => {
     const [o, u, a] = await Promise.all([
@@ -984,7 +1014,11 @@ const SuperAdminApp = ({user, onLogout, onSwitchToOrg, hasOrg = true}) => {
         </div>
         <div className="flex items-center gap-4">
           <span className="text-sm text-slate-500 hidden sm:block">{user.email}</span>
-          {hasOrg && <Button variant="primary" size="sm" onClick={onSwitchToOrg}>🏢 Mon Cabinet</Button>}
+          {hasOrg ? (
+            <Button variant="primary" size="sm" onClick={onSwitchToOrg}>🏢 Mon Cabinet</Button>
+          ) : (
+            <Button variant="warning" size="sm" onClick={() => setLinkModal(true)}>🔗 Lier à un cabinet</Button>
+          )}
           <Button variant="secondary" size="sm" onClick={onLogout}>Déconnexion</Button>
         </div>
       </header>
@@ -1059,6 +1093,18 @@ const SuperAdminApp = ({user, onLogout, onSwitchToOrg, hasOrg = true}) => {
           <div className="flex gap-3 pt-4">
             <Button variant="secondary" onClick={() => setEditOrg(null)} className="flex-1">Annuler</Button>
             <Button onClick={saveAbo} loading={saving} className="flex-1">Enregistrer</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={linkModal} onClose={() => setLinkModal(false)} title="Lier votre compte à un cabinet" size="sm">
+        <div className="space-y-4">
+          <p className="text-slate-600 text-sm">Votre compte Super Admin n'est pas encore lié à un cabinet. Sélectionnez le cabinet auquel vous souhaitez accéder :</p>
+          <Select label="Cabinet" value={selectedOrg} onChange={setSelectedOrg} 
+            options={orgs.map(o => ({value: o.id, label: o.nom}))} placeholder="Sélectionner un cabinet" />
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setLinkModal(false)} className="flex-1">Annuler</Button>
+            <Button onClick={linkToOrg} loading={saving} className="flex-1">Lier mon compte</Button>
           </div>
         </div>
       </Modal>
