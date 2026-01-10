@@ -884,7 +884,24 @@ const MainApp = ({user, onLogout}) => {
 
   // ========== SYSTÈME DE PERMISSIONS ==========
   // Niveaux: 1=Junior, 2=Senior, 3=Manager, 4=Senior Manager, 5=Associé
-  const gradeNiveau = collabData?.grades?.niveau || 0;
+  
+  // Fallback: si niveau pas défini, déterminer par le nom du grade
+  const getGradeNiveau = () => {
+    const niveau = collabData?.grades?.niveau;
+    if (niveau && niveau > 0) return niveau;
+    
+    // Fallback basé sur le nom du grade
+    const gradeName = (collabData?.grades?.nom || '').toLowerCase();
+    if (gradeName.includes('junior') || gradeName.includes('stagiaire')) return 1;
+    if (gradeName.includes('senior') && !gradeName.includes('manager')) return 2;
+    if (gradeName.includes('manager') && !gradeName.includes('senior')) return 3;
+    if (gradeName.includes('senior manager') || gradeName.includes('directeur')) return 4;
+    if (gradeName.includes('associé') || gradeName.includes('partner') || gradeName.includes('associe')) return 5;
+    
+    return 0; // Pas de grade = pas de droits spéciaux
+  };
+  
+  const gradeNiveau = getGradeNiveau();
   const userRole = (userData.role || '').toLowerCase();
   const isAdmin = userRole === 'admin' || isSuperAdmin;
   
@@ -894,11 +911,20 @@ const MainApp = ({user, onLogout}) => {
   const isManager = gradeNiveau >= 3 || isAdmin;
   const isSenior = gradeNiveau === 2;
   const isJunior = gradeNiveau === 1;
-  const isCollaborateur = gradeNiveau <= 2 && !isAdmin; // Junior ou Senior sans droits admin
+  const isCollaborateur = gradeNiveau > 0 && gradeNiveau <= 2 && !isAdmin; // Junior ou Senior sans droits admin
   const userDeptId = collabData?.departement_id;
   
   // Debug permissions (à retirer en prod)
-  console.log('Permissions debug:', { gradeNiveau, userRole, isAdmin, isManager, isCollaborateur, collabGrade: collabData?.grades?.nom });
+  console.log('Permissions debug:', { 
+    gradeNiveau, 
+    gradeNom: collabData?.grades?.nom,
+    gradeNiveauBrut: collabData?.grades?.niveau,
+    userRole, 
+    isAdmin, 
+    isManager, 
+    isCollaborateur,
+    collabEmail: collabData?.email 
+  });
   
   // Permissions par fonctionnalité
   const permissions = {
