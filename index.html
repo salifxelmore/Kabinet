@@ -3934,7 +3934,8 @@ const EquipePage = () => {
         email: email,
         password: DEFAULT_PASSWORD,
         options: {
-          data: { prenom, nom }
+          data: { prenom, nom },
+          emailRedirectTo: window.location.origin
         }
       });
       
@@ -3954,12 +3955,26 @@ const EquipePage = () => {
           email: email,
           prenom: prenom,
           nom: nom,
-          role: 'user',
+          role: 'Membre', // Rôle par défaut pour les collaborateurs
           organisation_id: orgId
         }]);
         
-        if (userError && !userError.message?.includes('duplicate')) {
+        if (userError) {
           console.error('Erreur création utilisateur:', userError);
+          // Si erreur de contrainte, essayer avec 'Admin'
+          if (userError.message?.includes('role_check')) {
+            const {error: retryError} = await supabase.from('utilisateurs').insert([{
+              auth_id: authData.user.id,
+              email: email,
+              prenom: prenom,
+              nom: nom,
+              role: 'Admin',
+              organisation_id: orgId
+            }]);
+            if (retryError && !retryError.message?.includes('duplicate')) {
+              console.error('Erreur retry création utilisateur:', retryError);
+            }
+          }
         }
       }
       
