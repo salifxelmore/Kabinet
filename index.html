@@ -3322,6 +3322,7 @@ const FacturationPage = () => {
   const filteredFactures = tab === 'toutes' ? factures : 
     tab === 'draft' ? factures.filter(f => f.statut === 'draft') :
     tab === 'sent' ? factures.filter(f => f.statut === 'sent') :
+    tab === 'partial' ? factures.filter(f => f.statut === 'partial') :
     tab === 'paid' ? factures.filter(f => f.statut === 'paid') : factures;
   
   const exportFactures = () => exportToExcel(filteredFactures, [
@@ -3344,6 +3345,7 @@ const FacturationPage = () => {
           {key: 'toutes', label: 'Toutes', count: factures.length},
           {key: 'draft', label: 'Brouillons', count: factures.filter(f => f.statut === 'draft').length},
           {key: 'sent', label: 'Envoyées', count: factures.filter(f => f.statut === 'sent').length},
+          {key: 'partial', label: 'Partielles', count: factures.filter(f => f.statut === 'partial').length},
           {key: 'paid', label: 'Payées', count: factures.filter(f => f.statut === 'paid').length}
         ]}
         activeTab={tab} onTabChange={setTab}
@@ -3378,7 +3380,7 @@ const FacturationPage = () => {
               <Button variant="ghost" size="xs" onClick={() => exportPDF(r)} title="PDF">📄</Button>
               {r.statut === 'draft' && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'sent')} title="Envoyer">📤</Button>}
               {(r.statut === 'sent' || r.statut === 'partial') && <Button variant="ghost" size="xs" onClick={() => openEncaissement(r)} title="Encaisser">💰</Button>}
-              {r.statut === 'sent' && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'paid')} title="Payé 100%">✅</Button>}
+              {(r.statut === 'sent' || r.statut === 'partial') && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'paid')} title="Payé 100%">✅</Button>}
             </div>
           )} />
         </Card>
