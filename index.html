@@ -4887,13 +4887,42 @@ const FacturationPage = () => {
         <div className="card-animate"><StatCard title="Encaissé" value={fmtMoney(stats.encaisse)} icon="✅" color="green" /></div>
         <div className="card-animate"><StatCard title="En attente" value={fmtMoney(stats.enAttente)} icon="⏳" color="amber" /></div>
       </div>
+      
+      {/* Alerte si factures sans mission */}
+      {(() => {
+        const facturesSansMission = factures.filter(f => !f.projet_id);
+        if (facturesSansMission.length > 0) {
+          const totalSansMission = facturesSansMission.reduce((s, f) => s + (parseFloat(f.montant_ht) || 0), 0);
+          return (
+            <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+              <div className="flex items-start gap-3">
+                <span className="text-2xl">⚠️</span>
+                <div>
+                  <div className="font-medium text-amber-800">
+                    {facturesSansMission.length} facture(s) non liée(s) à une mission
+                  </div>
+                  <div className="text-sm text-amber-700 mt-1">
+                    Total HT : {fmtMoney(totalSansMission)} — Ces factures ne sont pas comptabilisées dans le suivi des missions.
+                  </div>
+                  <div className="text-xs text-amber-600 mt-2">
+                    Factures concernées : {facturesSansMission.map(f => f.reference).join(', ')}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        }
+        return null;
+      })()}
+      
       {loading ? <Loader /> : (
         <Card className="animate-fade-up">
           <Table columns={[
             {header: 'Facture', render: r => <div><div className="font-medium">{r.reference}</div><div className="text-xs text-slate-400">{r.type_facture}</div></div>},
             {header: 'Client', render: r => r.clients?.nom || '-'},
-            {header: 'Mission', render: r => r.projets?.code || '-'},
-            {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant_total)}</span>},
+            {header: 'Mission', render: r => r.projets?.code ? r.projets.code : <span className="text-amber-500 font-medium">⚠️ Non liée</span>},
+            {header: 'Montant HT', render: r => <span className="font-bold">{fmtMoney(r.montant_ht)}</span>},
+            {header: 'Montant TTC', render: r => <span className="text-slate-500">{fmtMoney(r.montant_total)}</span>},
             {header: 'Encaissé', render: r => r.montant_encaisse > 0 ? <span className="text-green-600">{fmtMoney(r.montant_encaisse)}</span> : '-'},
             {header: 'Statut', render: r => <Badge color={INVOICE_STATUS[r.statut]?.color}>{INVOICE_STATUS[r.statut]?.label}</Badge>}
           ]} data={filteredFactures} actions={r => (
