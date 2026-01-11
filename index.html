@@ -4296,17 +4296,34 @@ const TimesheetPage = () => {
     setConges(cg.data || []);
     setClients(cl.data || []);
     
-    // Calculer les heures manquantes YTD (depuis le 1er janvier jusqu'à hier)
-    const ytdStart = new Date(new Date().getFullYear(), 0, 1); // 1er janvier
-    const ytdEnd = new Date(); // Aujourd'hui
-    ytdEnd.setDate(ytdEnd.getDate() - 1); // Hier (on ne compte pas aujourd'hui)
+    // Calculer les heures manquantes YTD (depuis le 1er janvier jusqu'à aujourd'hui)
+    const now = new Date();
+    const ytdYear = now.getFullYear();
+    const ytdStart = new Date(ytdYear, 0, 1); // 1er janvier de l'année en cours
+    const ytdEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Aujourd'hui
+    
+    // Fonction pour formater une date en YYYY-MM-DD sans problème de timezone
+    const formatDateLocal = (d) => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    
+    // Vérifier que ytdEnd est bien dans l'année en cours et après ytdStart
+    if (ytdEnd < ytdStart) {
+      // On est le 1er janvier, pas de jours à vérifier
+      setYtdStats({ joursInccomplets: [], totalJoursInccomplets: 0, totalHeuresManquantes: 0 });
+      setLoading(false);
+      return;
+    }
     
     // Récupérer toutes les saisies de l'année
     const {data: allYtdEntries} = await supabase.from('saisies_temps')
       .select('date, heures')
       .eq('utilisateur_id', user.id)
-      .gte('date', ytdStart.toISOString().split('T')[0])
-      .lte('date', ytdEnd.toISOString().split('T')[0]);
+      .gte('date', formatDateLocal(ytdStart))
+      .lte('date', formatDateLocal(ytdEnd));
     
     // Calculer les heures par jour
     const heuresParJourYtd = {};
@@ -4321,13 +4338,13 @@ const TimesheetPage = () => {
     const congesList = cg.data || [];
     let totalHeuresManquantes = 0;
     
-    let currentDate = new Date(ytdStart);
+    let currentDate = new Date(ytdStart.getTime()); // Clone pour éviter mutation
     while (currentDate <= ytdEnd) {
-      const dateStr = currentDate.toISOString().split('T')[0];
-      const dayOfWeek = currentDate.getDay();
+      const dateStr = formatDateLocal(currentDate);
+      const dayOfWeek = currentDate.getDay(); // 0 = Dimanche, 6 = Samedi
       
       // Vérifier si c'est un jour ouvré (pas weekend, pas férié, pas en congé)
-      const isWeekendDay = dayOfWeek === 0 || dayOfWeek === 6;
+      const isWeekendDay = dayOfWeek === 0 || dayOfWeek === 6; // Dimanche ou Samedi
       const isHoliday = holidaysList.includes(dateStr);
       const isConge = congesList.some(c => dateStr >= c.date_debut && dateStr <= c.date_fin);
       
