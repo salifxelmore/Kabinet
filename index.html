@@ -6968,12 +6968,17 @@ const RapportsPage = () => {
               {header: '#', render: (r, i) => <span className={`font-bold ${i < 3 ? 'text-amber-500' : 'text-slate-400'}`}>{i + 1}</span>},
               {header: 'Client', render: r => <span className="font-medium">{r.nom}</span>},
               {header: 'CA Total', render: r => <span className="font-bold text-green-600">{fmtMoney(r.ca)}</span>},
-              {header: '% du CA', render: r => (
-                <div className="flex items-center gap-2">
-                  <div className="w-20"><ProgressBar value={r.ca} max={data.caTotal || 1} color="green" size="sm" /></div>
-                  <span className="text-xs text-slate-500">{data.caTotal > 0 ? Math.round((r.ca / data.caTotal) * 100) : 0}%</span>
-                </div>
-              )}
+              {header: '% du CA', render: r => {
+                const pct = data.caTotal > 0 ? Math.round((r.ca / data.caTotal) * 100) : 0;
+                return (
+                  <div className="flex items-center gap-3 min-w-32">
+                    <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-green-500 rounded-full" style={{width: `${pct}%`}}></div>
+                    </div>
+                    <span className="text-sm font-medium text-slate-600 w-12 text-right">{pct}%</span>
+                  </div>
+                );
+              }}
             ]} data={data.topClients} />
           ) : <EmptyState icon="👥" title="Pas de données clients" />}
         </Card>
