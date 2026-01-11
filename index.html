@@ -1387,6 +1387,7 @@ const MainApp = ({user, onLogout}) => {
   const [page, setPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [viewMode, setViewMode] = useState('org'); // 'admin' ou 'org' - défaut: org
+  const [userMenuOpen, setUserMenuOpen] = useState(false); // Menu utilisateur
   const isSuperAdmin = SUPER_ADMINS.includes(user?.email);
 
   useEffect(() => { loadUser(); }, [user]);
@@ -1513,9 +1514,6 @@ const MainApp = ({user, onLogout}) => {
   // Filtrer le menu selon les permissions (retirer 'profil' du nav principal)
   const nav = fullNav.filter(n => permissions[n.k]);
   if (isSuperAdmin) nav.push({k: 'admin', l: 'Admin', i: '🛡️'});
-  
-  // State pour le menu utilisateur
-  const [userMenuOpen, setUserMenuOpen] = useState(false);
 
   // Contexte enrichi avec permissions
   const ctx = {
