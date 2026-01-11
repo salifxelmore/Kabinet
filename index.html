@@ -1835,16 +1835,21 @@ const DashboardPage = () => {
       const currentYear = now.getFullYear();
       const caParMois = [];
       
+      // Debug: voir les dates des factures (temporaire)
+      if (allFactures.length > 0) {
+        console.log('Première facture - date_emission:', allFactures[0].date_emission, 'created_at:', allFactures[0].created_at);
+      }
+      
       for (let i = 0; i < 12; i++) {
         const date = new Date(currentYear, i, 1);
         const mois = date.toLocaleDateString('fr-FR', {month: 'short'});
         const monthStart = date.toISOString().split('T')[0];
         const monthEnd = new Date(currentYear, i + 1, 0).toISOString().split('T')[0];
         
-        // Utiliser date_emission (date de création de la facture)
+        // Utiliser date_emission ou created_at
         const facturesDuMois = allFactures.filter(f => {
-          const dateFacture = f.date_emission || f.date_facture;
-          return dateFacture >= monthStart && dateFacture <= monthEnd;
+          const dateFacture = f.date_emission || f.created_at?.split('T')[0];
+          return dateFacture && dateFacture >= monthStart && dateFacture <= monthEnd;
         });
         const montant = facturesDuMois.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
         
@@ -5692,8 +5697,8 @@ const RapportsPage = () => {
     const {start, end} = getPeriodDates();
     
     const [temps, factures, collabs, missions, clients, conges, affectations, departements] = await Promise.all([
-      supabase.from('saisies_temps').select('heures,facturable,date,projet_id,utilisateur_id').eq('organisation_id', org.id),
-      supabase.from('factures').select('montant_total,montant_encaisse,statut,date_facture,date_emission,client_id,projet_id').eq('organisation_id', org.id),
+      supabase.from('saisies_temps').select('*').eq('organisation_id', org.id),
+      supabase.from('factures').select('*').eq('organisation_id', org.id),
       supabase.from('collaborateurs').select('*,grades:grade_id(nom,taux_journalier),departements:departement_id(nom)').eq('organisation_id', org.id).eq('actif', true),
       supabase.from('projets').select('*,clients(nom)').eq('organisation_id', org.id),
       supabase.from('clients').select('*').eq('organisation_id', org.id),
@@ -5702,27 +5707,28 @@ const RapportsPage = () => {
       supabase.from('departements').select('*').eq('organisation_id', org.id)
     ]);
 
-    // Filtrer par période
-    const tPeriod = (temps.data || []).filter(t => t.date >= start && t.date <= end);
-    const fPeriod = (factures.data || []).filter(f => {
-      const dateFacture = f.date_emission || f.date_facture;
-      return dateFacture >= start && dateFacture <= end;
+    const allFactures = factures.data || [];
+    const allTemps = temps.data || [];
+    
+    // Filtrer par période - utiliser date_emission ou created_at
+    const tPeriod = allTemps.filter(t => t.date >= start && t.date <= end);
+    const fPeriod = allFactures.filter(f => {
+      const dateFacture = f.date_emission || f.created_at?.split('T')[0];
+      return dateFacture && dateFacture >= start && dateFacture <= end;
     });
     
-    const heuresTotal = tPeriod.reduce((s, t) => s + (t.heures || 0), 0);
-    const heuresFact = tPeriod.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0);
+    const heuresTotal = tPeriod.reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+    const heuresFact = tPeriod.filter(t => t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
     const heuresNonFact = heuresTotal - heuresFact;
     
-    const f = factures.data || [];
+    // CA Total facturé (toutes les factures, pas filtré par période pour avoir le vrai total)
+    const caTotal = allFactures.reduce((s, x) => s + (parseFloat(x.montant_total) || 0), 0);
     
-    // CA Total facturé sur la période
-    const caTotal = fPeriod.reduce((s, x) => s + (parseFloat(x.montant_total) || 0), 0);
-    
-    // CA Encaissé = somme de tous les montants_encaisse (toutes factures, pas que période)
-    const caEncaisse = f.reduce((s, x) => s + (parseFloat(x.montant_encaisse) || 0), 0);
+    // CA Encaissé = somme de tous les montants_encaisse
+    const caEncaisse = allFactures.reduce((s, x) => s + (parseFloat(x.montant_encaisse) || 0), 0);
     
     // CA En attente = Total facturé - Total encaissé
-    const caEnAttente = f.reduce((s, x) => s + (parseFloat(x.montant_total) || 0), 0) - caEncaisse;
+    const caEnAttente = caTotal - caEncaisse;
     
     const m = missions.data || [];
     const missionsActives = m.filter(x => x.statut === 'active').length;
@@ -5740,23 +5746,23 @@ const RapportsPage = () => {
       const monthEnd = new Date(selectedYear, i + 1, 0).toISOString().split('T')[0];
       const moisLabel = new Date(selectedYear, i, 1).toLocaleDateString('fr-FR', {month: 'short'});
       
-      // Utiliser date_emission (date de création) au lieu de date_facture
-      const montantCA = f.filter(x => {
-        const dateFacture = x.date_emission || x.date_facture;
-        return dateFacture >= monthStart && dateFacture <= monthEnd;
+      // Utiliser date_emission ou created_at
+      const montantCA = allFactures.filter(x => {
+        const dateFacture = x.date_emission || x.created_at?.split('T')[0];
+        return dateFacture && dateFacture >= monthStart && dateFacture <= monthEnd;
       }).reduce((s, x) => s + (parseFloat(x.montant_total) || 0), 0);
       caParMois.push({mois: moisLabel.charAt(0).toUpperCase() + moisLabel.slice(1), montant: montantCA, isFuture: i > new Date().getMonth() && selectedYear === new Date().getFullYear()});
       
-      const heuresMois = (temps.data || []).filter(t => t.date >= monthStart && t.date <= monthEnd)
-        .reduce((s, t) => s + (t.heures || 0), 0);
-      const heuresFactMois = (temps.data || []).filter(t => t.date >= monthStart && t.date <= monthEnd && t.facturable)
-        .reduce((s, t) => s + (t.heures || 0), 0);
+      const heuresMois = allTemps.filter(t => t.date >= monthStart && t.date <= monthEnd)
+        .reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+      const heuresFactMois = allTemps.filter(t => t.date >= monthStart && t.date <= monthEnd && t.facturable)
+        .reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
       heuresParMois.push({mois: moisLabel.charAt(0).toUpperCase() + moisLabel.slice(1), total: heuresMois, facturable: heuresFactMois});
     }
 
     // Top clients par CA
     const clientsCA = {};
-    f.forEach(fac => {
+    allFactures.forEach(fac => {
       if (fac.client_id) {
         clientsCA[fac.client_id] = (clientsCA[fac.client_id] || 0) + (parseFloat(fac.montant_total) || 0);
       }
@@ -5770,30 +5776,30 @@ const RapportsPage = () => {
     const missionsHeures = {};
     tPeriod.forEach(t => {
       if (t.projet_id) {
-        missionsHeures[t.projet_id] = (missionsHeures[t.projet_id] || 0) + (t.heures || 0);
+        missionsHeures[t.projet_id] = (missionsHeures[t.projet_id] || 0) + (parseFloat(t.heures) || 0);
       }
     });
     const topMissions = Object.entries(missionsHeures)
       .map(([id, heures]) => {
         const mission = m.find(x => x.id === id);
-        return {id, heures, nom: mission?.nom || 'Inconnue', code: mission?.code, budget: mission?.budget_heures || 0};
+        return {id, heures, nom: mission?.nom || 'Inconnue', code: mission?.code, budget: parseFloat(mission?.budget_heures) || 0};
       })
       .sort((a, b) => b.heures - a.heures)
       .slice(0, 10);
 
     // Performance par collaborateur
     const collabPerf = (collabs.data || []).map(c => {
-      const heures = tPeriod.filter(t => t.utilisateur_id === c.id).reduce((s, t) => s + (t.heures || 0), 0);
-      const heuresFact = tPeriod.filter(t => t.utilisateur_id === c.id && t.facturable).reduce((s, t) => s + (t.heures || 0), 0);
+      const heures = tPeriod.filter(t => t.utilisateur_id === c.id).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+      const hFact = tPeriod.filter(t => t.utilisateur_id === c.id && t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
       return {
         id: c.id,
         nom: `${c.prenom} ${c.nom}`,
         grade: c.grades?.nom || '-',
         dept: c.departements?.nom || '-',
         heures,
-        heuresFact,
-        taux: heures > 0 ? Math.round((heuresFact / heures) * 100) : 0,
-        production: heuresFact * (c.grades?.taux_journalier || 0) / 8
+        heuresFact: hFact,
+        taux: heures > 0 ? Math.round((hFact / heures) * 100) : 0,
+        production: hFact * (parseFloat(c.grades?.taux_journalier) || 0) / 8
       };
     }).sort((a, b) => b.taux - a.taux);
 
@@ -5801,15 +5807,15 @@ const RapportsPage = () => {
     const deptPerf = (departements.data || []).map(d => {
       const deptCollabs = collabs.data?.filter(c => c.departement_id === d.id) || [];
       const deptCollabIds = deptCollabs.map(c => c.id);
-      const heures = tPeriod.filter(t => deptCollabIds.includes(t.utilisateur_id)).reduce((s, t) => s + (t.heures || 0), 0);
-      const heuresFact = tPeriod.filter(t => deptCollabIds.includes(t.utilisateur_id) && t.facturable).reduce((s, t) => s + (t.heures || 0), 0);
+      const heures = tPeriod.filter(t => deptCollabIds.includes(t.utilisateur_id)).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+      const hFact = tPeriod.filter(t => deptCollabIds.includes(t.utilisateur_id) && t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
       return {
         id: d.id,
         nom: d.nom,
         nbCollabs: deptCollabs.length,
         heures,
-        heuresFact,
-        taux: heures > 0 ? Math.round((heuresFact / heures) * 100) : 0
+        heuresFact: hFact,
+        taux: heures > 0 ? Math.round((hFact / heures) * 100) : 0
       };
     }).sort((a, b) => b.taux - a.taux);
 
