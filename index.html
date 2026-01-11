@@ -1664,6 +1664,7 @@ const MainApp = ({user, onLogout}) => {
     interco: isManager && !isCollaborateur, // Manager+ seulement
     equipe: isAssocie, // Associé+ seulement
     rapports: isManager && !isCollaborateur, // Manager+ seulement
+    audit: isAdmin, // Admin seulement (logs de sécurité)
     parametres: isAdmin, // Admin seulement (config organisation)
   };
 
@@ -1681,6 +1682,7 @@ const MainApp = ({user, onLogout}) => {
     {k: 'facturation', l: 'Facturation', i: '💰'},
     {k: 'equipe', l: 'Équipe', i: '👥'},
     {k: 'rapports', l: 'Rapports', i: '📈'},
+    {k: 'audit', l: 'Audit Logs', i: '📋'},
     {k: 'parametres', l: 'Paramètres', i: '⚙️'}
   ];
   
@@ -1797,6 +1799,7 @@ const MainApp = ({user, onLogout}) => {
             {page === 'rapports' && <RapportsPage />}
             {page === 'profil' && <MonProfilPage />}
             {page === 'parametres' && <ParametresPage />}
+            {page === 'audit' && <AuditLogsPage />}
             {page === 'admin' && <AdminPage />}
           </div>
         </main>
@@ -9701,6 +9704,343 @@ const LandingLogosManager = ({org}) => {
             <Button onClick={save} loading={saving} className="flex-1">{editItem ? 'Enregistrer' : 'Ajouter'}</Button>
           </div>
         </div>
+      </Modal>
+    </div>
+  );
+};
+
+// ========== AUDIT LOGS PAGE ==========
+const AuditLogsPage = () => {
+  const {org} = useApp();
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({
+    action: '',
+    table_name: '',
+    user_id: '',
+    date_from: '',
+    date_to: ''
+  });
+  const [users, setUsers] = useState([]);
+  const [tables, setTables] = useState([]);
+  const [selectedLog, setSelectedLog] = useState(null);
+  const [page, setPage] = useState(0);
+  const pageSize = 50;
+
+  useEffect(() => { loadLogs(); loadFiltersData(); }, []);
+
+  const loadFiltersData = async () => {
+    // Charger les utilisateurs uniques
+    const {data: logsData} = await supabase
+      .from('audit_logs')
+      .select('user_id, table_name')
+      .eq('organisation_id', org.id);
+    
+    if (logsData) {
+      const uniqueUsers = [...new Set(logsData.map(l => l.user_id).filter(Boolean))];
+      const uniqueTables = [...new Set(logsData.map(l => l.table_name).filter(Boolean))];
+      setTables(uniqueTables.sort());
+      
+      // Charger les noms des collaborateurs
+      if (uniqueUsers.length > 0) {
+        const {data: collabs} = await supabase
+          .from('collaborateurs')
+          .select('user_id, nom, prenom')
+          .in('user_id', uniqueUsers);
+        setUsers(collabs || []);
+      }
+    }
+  };
+
+  const loadLogs = async () => {
+    setLoading(true);
+    let query = supabase
+      .from('audit_logs')
+      .select('*', {count: 'exact'})
+      .eq('organisation_id', org.id)
+      .order('created_at', {ascending: false})
+      .range(page * pageSize, (page + 1) * pageSize - 1);
+    
+    if (filters.action) query = query.eq('action', filters.action);
+    if (filters.table_name) query = query.eq('table_name', filters.table_name);
+    if (filters.user_id) query = query.eq('user_id', filters.user_id);
+    if (filters.date_from) query = query.gte('created_at', filters.date_from);
+    if (filters.date_to) query = query.lte('created_at', filters.date_to + 'T23:59:59');
+    
+    const {data, count} = await query;
+    setLogs(data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadLogs(); }, [filters, page]);
+
+  const getUserName = (userId) => {
+    const user = users.find(u => u.user_id === userId);
+    return user ? `${user.prenom} ${user.nom}` : userId?.substring(0, 8) || 'Système';
+  };
+
+  const getActionBadge = (action) => {
+    const styles = {
+      'INSERT': {color: 'green', label: 'Création'},
+      'UPDATE': {color: 'blue', label: 'Modification'},
+      'DELETE': {color: 'red', label: 'Suppression'}
+    };
+    const s = styles[action] || {color: 'slate', label: action};
+    return <Badge color={s.color}>{s.label}</Badge>;
+  };
+
+  const getTableLabel = (table) => {
+    const labels = {
+      'clients': 'Clients',
+      'collaborateurs': 'Collaborateurs',
+      'projets': 'Missions',
+      'factures': 'Factures',
+      'conges': 'Congés',
+      'notes_frais': 'Notes de frais',
+      'saisies_temps': 'Temps',
+      'opportunites': 'Opportunités'
+    };
+    return labels[table] || table;
+  };
+
+  const formatDateTime = (dt) => {
+    if (!dt) return '-';
+    const d = new Date(dt);
+    return d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'});
+  };
+
+  const getChangeSummary = (log) => {
+    if (log.action === 'INSERT') {
+      const name = log.new_data?.nom || log.new_data?.code || log.new_data?.libelle || '';
+      return name ? `"${name}"` : 'Nouvel enregistrement';
+    }
+    if (log.action === 'DELETE') {
+      const name = log.old_data?.nom || log.old_data?.code || log.old_data?.libelle || '';
+      return name ? `"${name}"` : 'Enregistrement supprimé';
+    }
+    if (log.action === 'UPDATE' && log.old_data && log.new_data) {
+      const changes = [];
+      Object.keys(log.new_data).forEach(key => {
+        if (JSON.stringify(log.old_data[key]) !== JSON.stringify(log.new_data[key])) {
+          if (!['updated_at', 'created_at'].includes(key)) {
+            changes.push(key);
+          }
+        }
+      });
+      return changes.length > 0 ? `Champs: ${changes.slice(0, 3).join(', ')}${changes.length > 3 ? '...' : ''}` : 'Mise à jour';
+    }
+    return '-';
+  };
+
+  const clearFilters = () => {
+    setFilters({action: '', table_name: '', user_id: '', date_from: '', date_to: ''});
+    setPage(0);
+  };
+
+  return (
+    <div>
+      <PageHeader 
+        title="Audit Logs" 
+        subtitle={`Historique des actions • ${logs.length} entrées`}
+        action={
+          <Button variant="secondary" size="sm" onClick={() => exportToExcel(logs, [
+            {header: 'Date', getValue: r => formatDateTime(r.created_at)},
+            {header: 'Utilisateur', getValue: r => getUserName(r.user_id)},
+            {header: 'Action', key: 'action'},
+            {header: 'Table', getValue: r => getTableLabel(r.table_name)},
+            {header: 'Détails', getValue: r => getChangeSummary(r)}
+          ], 'audit-logs')}>
+            📥 Export Excel
+          </Button>
+        }
+      />
+
+      {/* Filtres */}
+      <Card className="mb-6">
+        <div className="flex flex-wrap gap-4 items-end">
+          <Select 
+            label="Action" 
+            value={filters.action} 
+            onChange={v => { setFilters(p => ({...p, action: v})); setPage(0); }}
+            options={[
+              {value: '', label: 'Toutes'},
+              {value: 'INSERT', label: '🟢 Création'},
+              {value: 'UPDATE', label: '🔵 Modification'},
+              {value: 'DELETE', label: '🔴 Suppression'}
+            ]}
+            className="w-40"
+          />
+          <Select 
+            label="Table" 
+            value={filters.table_name} 
+            onChange={v => { setFilters(p => ({...p, table_name: v})); setPage(0); }}
+            options={[{value: '', label: 'Toutes'}, ...tables.map(t => ({value: t, label: getTableLabel(t)}))]}
+            className="w-40"
+          />
+          <Select 
+            label="Utilisateur" 
+            value={filters.user_id} 
+            onChange={v => { setFilters(p => ({...p, user_id: v})); setPage(0); }}
+            options={[{value: '', label: 'Tous'}, ...users.map(u => ({value: u.user_id, label: `${u.prenom} ${u.nom}`}))]}
+            className="w-48"
+          />
+          <Input 
+            label="Du" 
+            type="date" 
+            value={filters.date_from} 
+            onChange={v => { setFilters(p => ({...p, date_from: v})); setPage(0); }}
+            className="w-36"
+          />
+          <Input 
+            label="Au" 
+            type="date" 
+            value={filters.date_to} 
+            onChange={v => { setFilters(p => ({...p, date_to: v})); setPage(0); }}
+            className="w-36"
+          />
+          <Button variant="ghost" size="sm" onClick={clearFilters}>✕ Effacer</Button>
+        </div>
+      </Card>
+
+      {/* Table des logs */}
+      {loading ? <Loader /> : (
+        <Card>
+          {logs.length === 0 ? (
+            <EmptyState 
+              icon="📋" 
+              title="Aucun log trouvé" 
+              description="Les actions sur les données seront enregistrées ici automatiquement."
+            />
+          ) : (
+            <>
+              <Table 
+                columns={[
+                  {header: 'Date', render: r => (
+                    <span className="text-sm text-slate-600">{formatDateTime(r.created_at)}</span>
+                  )},
+                  {header: 'Utilisateur', render: r => (
+                    <span className="font-medium">{getUserName(r.user_id)}</span>
+                  )},
+                  {header: 'Action', render: r => getActionBadge(r.action)},
+                  {header: 'Table', render: r => (
+                    <span className="text-sm bg-slate-100 px-2 py-1 rounded">{getTableLabel(r.table_name)}</span>
+                  )},
+                  {header: 'Résumé', render: r => (
+                    <span className="text-sm text-slate-500">{getChangeSummary(r)}</span>
+                  )}
+                ]}
+                data={logs}
+                actions={r => (
+                  <Button variant="ghost" size="xs" onClick={() => setSelectedLog(r)}>🔍</Button>
+                )}
+              />
+              
+              {/* Pagination */}
+              <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                <span className="text-sm text-slate-500">
+                  Page {page + 1} • {logs.length} résultats affichés
+                </span>
+                <div className="flex gap-2">
+                  <Button 
+                    variant="secondary" 
+                    size="sm" 
+                    onClick={() => setPage(p => Math.max(0, p - 1))}
+                    disabled={page === 0}
+                  >
+                    ← Précédent
+                  </Button>
+                  <Button 
+                    variant="secondary" 
+                    size="sm" 
+                    onClick={() => setPage(p => p + 1)}
+                    disabled={logs.length < pageSize}
+                  >
+                    Suivant →
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </Card>
+      )}
+
+      {/* Modal détail */}
+      <Modal isOpen={!!selectedLog} onClose={() => setSelectedLog(null)} title="Détail de l'action" size="lg">
+        {selectedLog && (
+          <div className="space-y-4">
+            {/* Info générales */}
+            <div className="grid grid-cols-2 gap-4 p-4 bg-slate-50 rounded-xl">
+              <div>
+                <p className="text-xs text-slate-500">Date</p>
+                <p className="font-medium">{formatDateTime(selectedLog.created_at)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Utilisateur</p>
+                <p className="font-medium">{getUserName(selectedLog.user_id)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Action</p>
+                {getActionBadge(selectedLog.action)}
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Table</p>
+                <p className="font-medium">{getTableLabel(selectedLog.table_name)}</p>
+              </div>
+              <div className="col-span-2">
+                <p className="text-xs text-slate-500">ID Enregistrement</p>
+                <p className="font-mono text-sm">{selectedLog.record_id}</p>
+              </div>
+            </div>
+
+            {/* Données avant/après */}
+            {selectedLog.action === 'UPDATE' && selectedLog.old_data && selectedLog.new_data && (
+              <div>
+                <h4 className="font-bold text-sm mb-2">🔄 Modifications</h4>
+                <div className="bg-slate-900 rounded-xl p-4 overflow-auto max-h-64">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-slate-400 text-left">
+                        <th className="pb-2">Champ</th>
+                        <th className="pb-2">Avant</th>
+                        <th className="pb-2">Après</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.keys(selectedLog.new_data)
+                        .filter(key => JSON.stringify(selectedLog.old_data[key]) !== JSON.stringify(selectedLog.new_data[key]))
+                        .filter(key => !['updated_at', 'created_at'].includes(key))
+                        .map(key => (
+                          <tr key={key} className="border-t border-slate-700">
+                            <td className="py-2 text-blue-400 font-mono">{key}</td>
+                            <td className="py-2 text-red-400">{JSON.stringify(selectedLog.old_data[key])}</td>
+                            <td className="py-2 text-green-400">{JSON.stringify(selectedLog.new_data[key])}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {selectedLog.action === 'INSERT' && selectedLog.new_data && (
+              <div>
+                <h4 className="font-bold text-sm mb-2">🟢 Données créées</h4>
+                <pre className="bg-slate-900 text-green-400 rounded-xl p-4 text-xs overflow-auto max-h-64">
+                  {JSON.stringify(selectedLog.new_data, null, 2)}
+                </pre>
+              </div>
+            )}
+
+            {selectedLog.action === 'DELETE' && selectedLog.old_data && (
+              <div>
+                <h4 className="font-bold text-sm mb-2">🔴 Données supprimées</h4>
+                <pre className="bg-slate-900 text-red-400 rounded-xl p-4 text-xs overflow-auto max-h-64">
+                  {JSON.stringify(selectedLog.old_data, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
     </div>
   );
