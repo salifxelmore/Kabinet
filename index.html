@@ -3948,23 +3948,119 @@ const TachesKanban = ({ mission, onClose }) => {
   const [selectedTache, setSelectedTache] = useState(null);
   const [newComment, setNewComment] = useState('');
   const [savingComment, setSavingComment] = useState(false);
+  
+  // Documents
+  const [documents, setDocuments] = useState([]);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => { loadTaches(); }, [mission.id]);
 
   const loadTaches = async () => {
-    const [t, c, com] = await Promise.all([
+    const [t, c, com, docs] = await Promise.all([
       supabase.from('taches_projet').select('*,assignee:assignee_id(id,nom,prenom)').eq('projet_id', mission.id).order('position'),
       supabase.from('collaborateurs').select('id,nom,prenom').eq('organisation_id', org.id).eq('actif', true),
-      supabase.from('commentaires_tache').select('*,auteur:auteur_id(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: true})
+      supabase.from('commentaires_tache').select('*,auteur:auteur_id(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: true}),
+      supabase.from('documents_tache').select('*,auteur:auteur_id(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: false})
     ]);
     setTaches(t.data || []);
     setCollaborateurs(c.data || []);
     setCommentaires(com.data || []);
+    setDocuments(docs.data || []);
     setLoading(false);
   };
   
   // Obtenir les commentaires d'une tâche
   const getCommentairesTache = (tacheId) => commentaires.filter(c => c.tache_id === tacheId);
+  
+  // Obtenir les documents d'une tâche
+  const getDocumentsTache = (tacheId) => documents.filter(d => d.tache_id === tacheId);
+  
+  // Upload de document
+  const uploadDocument = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedTache) return;
+    
+    // Limite de taille (10 Mo)
+    if (file.size > 10 * 1024 * 1024) {
+      alert('Le fichier est trop volumineux (max 10 Mo)');
+      return;
+    }
+    
+    setUploading(true);
+    try {
+      // Générer un nom unique
+      const ext = file.name.split('.').pop();
+      const fileName = `${org.id}/${mission.id}/${selectedTache.id}/${Date.now()}_${file.name}`;
+      
+      // Upload vers Supabase Storage
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(fileName, file);
+      
+      if (uploadError) throw uploadError;
+      
+      // Obtenir l'URL publique
+      const { data: urlData } = supabase.storage
+        .from('documents')
+        .getPublicUrl(fileName);
+      
+      // Enregistrer dans la base
+      const {error: dbError} = await supabase.from('documents_tache').insert([{
+        organisation_id: org.id,
+        tache_id: selectedTache.id,
+        auteur_id: collab?.id,
+        nom_fichier: file.name,
+        type_fichier: file.type || 'application/octet-stream',
+        taille: file.size,
+        url: urlData.publicUrl,
+        storage_path: fileName
+      }]);
+      
+      if (dbError) throw dbError;
+      
+      loadTaches();
+    } catch(err) {
+      console.error('Upload error:', err);
+      alert('Erreur upload: ' + err.message);
+    }
+    setUploading(false);
+    e.target.value = ''; // Reset input
+  };
+  
+  // Supprimer un document
+  const deleteDocument = async (doc) => {
+    if (!confirm(`Supprimer "${doc.nom_fichier}" ?`)) return;
+    
+    try {
+      // Supprimer du storage
+      if (doc.storage_path) {
+        await supabase.storage.from('documents').remove([doc.storage_path]);
+      }
+      // Supprimer de la base
+      await supabase.from('documents_tache').delete().eq('id', doc.id);
+      loadTaches();
+    } catch(err) {
+      alert('Erreur: ' + err.message);
+    }
+  };
+  
+  // Formater la taille du fichier
+  const formatFileSize = (bytes) => {
+    if (bytes < 1024) return bytes + ' o';
+    if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' Ko';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' Mo';
+  };
+  
+  // Icône selon le type de fichier
+  const getFileIcon = (type) => {
+    if (type?.startsWith('image/')) return '🖼️';
+    if (type?.includes('pdf')) return '📕';
+    if (type?.includes('word') || type?.includes('document')) return '📘';
+    if (type?.includes('excel') || type?.includes('spreadsheet')) return '📗';
+    if (type?.includes('powerpoint') || type?.includes('presentation')) return '📙';
+    if (type?.includes('zip') || type?.includes('rar') || type?.includes('archive')) return '📦';
+    return '📄';
+  };
   
   // Ouvrir les détails d'une tâche (avec commentaires)
   const openTacheDetails = (tache) => {
@@ -4114,6 +4210,7 @@ const TachesKanban = ({ mission, onClose }) => {
     const priorite = TACHE_PRIORITES[tache.priorite];
     const isOverdue = tache.date_echeance && new Date(tache.date_echeance) < new Date() && tache.statut !== 'done';
     const nbCommentaires = getCommentairesTache(tache.id).length;
+    const nbDocuments = getDocumentsTache(tache.id).length;
     
     return (
       <div
@@ -4152,6 +4249,10 @@ const TachesKanban = ({ mission, onClose }) => {
           
           {nbCommentaires > 0 && (
             <span className="text-xs text-blue-500">💬 {nbCommentaires}</span>
+          )}
+          
+          {nbDocuments > 0 && (
+            <span className="text-xs text-green-500">📎 {nbDocuments}</span>
           )}
         </div>
         
@@ -4489,6 +4590,86 @@ const TachesKanban = ({ mission, onClose }) => {
                       Envoyer
                     </Button>
                   </div>
+                </div>
+              </div>
+              
+              {/* Section Documents */}
+              <div className="border-t pt-4">
+                <h4 className="font-semibold mb-3 flex items-center gap-2">
+                  📎 Pièces jointes
+                  <Badge color="slate">{getDocumentsTache(selectedTache.id).length}</Badge>
+                </h4>
+                
+                {/* Liste des documents */}
+                <div className="space-y-2 mb-4">
+                  {getDocumentsTache(selectedTache.id).length === 0 ? (
+                    <p className="text-sm text-slate-400 text-center py-4">Aucune pièce jointe</p>
+                  ) : (
+                    getDocumentsTache(selectedTache.id).map(doc => (
+                      <div key={doc.id} className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors">
+                        <span className="text-2xl">{getFileIcon(doc.type_fichier)}</span>
+                        <div className="flex-1 min-w-0">
+                          <a 
+                            href={doc.url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="font-medium text-sm text-blue-600 hover:underline truncate block"
+                          >
+                            {doc.nom_fichier}
+                          </a>
+                          <div className="text-xs text-slate-400">
+                            {formatFileSize(doc.taille)} • {doc.auteur ? `${doc.auteur.prenom} ${doc.auteur.nom}` : 'Utilisateur'} • {new Date(doc.created_at).toLocaleDateString('fr-FR')}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <a 
+                            href={doc.url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="p-2 text-slate-400 hover:text-blue-500 transition-colors"
+                            title="Télécharger"
+                          >
+                            ⬇️
+                          </a>
+                          {doc.auteur_id === collab?.id && (
+                            <button 
+                              onClick={() => deleteDocument(doc)} 
+                              className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+                              title="Supprimer"
+                            >
+                              🗑️
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+                
+                {/* Ajouter un document */}
+                <div className="flex items-center gap-3">
+                  <label className={cn(
+                    "flex-1 flex items-center justify-center gap-2 p-4 border-2 border-dashed rounded-xl cursor-pointer transition-colors",
+                    uploading ? "border-blue-300 bg-blue-50" : "border-slate-200 hover:border-blue-400 hover:bg-blue-50"
+                  )}>
+                    <input 
+                      type="file" 
+                      onChange={uploadDocument} 
+                      className="hidden" 
+                      disabled={uploading}
+                    />
+                    {uploading ? (
+                      <>
+                        <span className="animate-spin">⏳</span>
+                        <span className="text-sm text-blue-600">Upload en cours...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>📤</span>
+                        <span className="text-sm text-slate-500">Cliquez pour ajouter un fichier (max 10 Mo)</span>
+                      </>
+                    )}
+                  </label>
                 </div>
               </div>
             </div>
