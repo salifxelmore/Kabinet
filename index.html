@@ -234,9 +234,14 @@ const exportToExcel = (data, columns, filename) => {
 
 const getWeekStart = (date = new Date()) => {
   const d = new Date(date);
+  // Ajuster pour le fuseau horaire local
+  d.setHours(12, 0, 0, 0);
   const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  return new Date(d.setDate(diff)).toISOString().split('T')[0];
+  // getDay(): 0=Dimanche, 1=Lundi, ..., 6=Samedi
+  // On veut que la semaine commence le Lundi
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().split('T')[0];
 };
 
 const addDays = (date, n) => {
