@@ -2015,8 +2015,25 @@ const DashboardPage = () => {
       supabase.from('affectations').select('projet_id, projets(nom, code)').eq('collaborateur_id', collab?.id)
     ]);
     
-    const mesHeuresTotal = mesTemps.data?.reduce((s, t) => s + (t.heures || 0), 0) || 0;
-    const mesHeuresFact = mesTemps.data?.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0) || 0;
+    // Calculer les dates de période pour les stats personnelles
+    let periodeStart, periodeEnd;
+    if (filterMode === 'month') {
+      const moisIdx = dateRange.month !== undefined ? dateRange.month : new Date().getMonth();
+      periodeStart = new Date(selectedYear, moisIdx, 1).toISOString().split('T')[0];
+      periodeEnd = new Date(selectedYear, moisIdx + 1, 0).toISOString().split('T')[0];
+    } else if (filterMode === 'range' && dateRange.start && dateRange.end) {
+      periodeStart = dateRange.start;
+      periodeEnd = dateRange.end;
+    } else {
+      periodeStart = `${selectedYear}-01-01`;
+      periodeEnd = `${selectedYear}-12-31`;
+    }
+    
+    // Filtrer les temps selon la période
+    const mesTempsFiltered = (mesTemps.data || []).filter(t => t.date && t.date >= periodeStart && t.date <= periodeEnd);
+    
+    const mesHeuresTotal = mesTempsFiltered.reduce((s, t) => s + (t.heures || 0), 0);
+    const mesHeuresFact = mesTempsFiltered.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0);
     const mesHeuresNonFact = mesHeuresTotal - mesHeuresFact;
     
     // Heures par mois (Jan à Déc) pour l'année sélectionnée
@@ -2038,8 +2055,8 @@ const DashboardPage = () => {
       });
     }
     
-    // Missions uniques
-    const missionIds = [...new Set(mesTemps.data?.map(t => t.projet_id).filter(Boolean) || [])];
+    // Missions uniques (sur la période)
+    const missionIds = [...new Set(mesTempsFiltered.map(t => t.projet_id).filter(Boolean))];
     
     // Solde congés
     const congesApprouves = (mesConges.data || []).filter(c => c.statut === 'approved' && c.type_conge === 'conge_paye');
@@ -2183,19 +2200,80 @@ const DashboardPage = () => {
       <div>
         <PageHeader title="Mon espace" subtitle={`Bienvenue, ${collab?.prenom || user.prenom} !`} />
         
-        {/* Filtre année */}
-        <div className="flex items-center gap-4 mb-6 p-4 bg-white rounded-xl shadow-sm">
-          <span className="text-sm text-slate-600 font-medium">📅 Année :</span>
-          <select 
-            value={selectedYear} 
-            onChange={e => setSelectedYear(parseInt(e.target.value))}
-            className="input py-1.5 text-sm"
-          >
-            {[2024, 2025, 2026, 2027].map(y => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
-          <span className="text-xs text-slate-500">Statistiques de l'année {selectedYear}</span>
+        {/* Filtres période */}
+        <div className="flex flex-wrap items-center gap-4 mb-6 p-4 bg-white rounded-xl shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-600 font-medium">📅 Période :</span>
+            <select 
+              value={filterMode} 
+              onChange={e => setFilterMode(e.target.value)}
+              className="input py-1.5 text-sm"
+            >
+              <option value="year">Année complète</option>
+              <option value="month">Mois</option>
+              <option value="range">Plage de dates</option>
+            </select>
+          </div>
+          
+          {filterMode === 'year' && (
+            <select 
+              value={selectedYear} 
+              onChange={e => setSelectedYear(parseInt(e.target.value))}
+              className="input py-1.5 text-sm"
+            >
+              {[2024, 2025, 2026, 2027].map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          )}
+          
+          {filterMode === 'month' && (
+            <div className="flex items-center gap-2">
+              <select 
+                value={selectedYear} 
+                onChange={e => setSelectedYear(parseInt(e.target.value))}
+                className="input py-1.5 text-sm"
+              >
+                {[2024, 2025, 2026, 2027].map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+              <select 
+                value={dateRange.month || new Date().getMonth()} 
+                onChange={e => setDateRange(d => ({...d, month: parseInt(e.target.value)}))}
+                className="input py-1.5 text-sm"
+              >
+                {['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'].map((m, i) => (
+                  <option key={i} value={i}>{m}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          
+          {filterMode === 'range' && (
+            <div className="flex items-center gap-2">
+              <input 
+                type="date" 
+                value={dateRange.start}
+                onChange={e => setDateRange(d => ({...d, start: e.target.value}))}
+                className="input py-1.5 text-sm"
+              />
+              <span className="text-slate-400">→</span>
+              <input 
+                type="date"
+                value={dateRange.end}
+                onChange={e => setDateRange(d => ({...d, end: e.target.value}))}
+                className="input py-1.5 text-sm"
+              />
+            </div>
+          )}
+          
+          <div className="text-xs text-slate-500">
+            {filterMode === 'year' ? `Année ${selectedYear}` : 
+             filterMode === 'month' ? `${['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'][dateRange.month || new Date().getMonth()]} ${selectedYear}` :
+             dateRange.start && dateRange.end ? `Du ${new Date(dateRange.start).toLocaleDateString('fr-FR')} au ${new Date(dateRange.end).toLocaleDateString('fr-FR')}` : 
+             'Sélectionnez une plage'}
+          </div>
         </div>
         
         {/* Stats personnelles */}
@@ -4250,8 +4328,22 @@ const TimesheetPage = () => {
   const missionsFact = filteredMissions.filter(m => m.facturable !== false);
   const missionsNonFact = filteredMissions.filter(m => m.facturable === false);
 
-  const totalWeek = entries.reduce((s, e) => s + (e.heures || 0), 0);
+  // Calculer les heures de congés de la semaine
+  const congesHeures = days.filter(d => !d.isWeekend && getCongeForDate(d.date)).length * 8;
+  
+  const totalWeek = entries.reduce((s, e) => s + (e.heures || 0), 0) + congesHeures;
   const totalFact = entries.filter(e => e.facturable).reduce((s, e) => s + (e.heures || 0), 0);
+  const totalNonFact = entries.filter(e => !e.facturable).reduce((s, e) => s + (e.heures || 0), 0) + congesHeures;
+  
+  // Calculer les heures par jour pour vérifier la limite de 8h
+  const getHeuresParJour = (date) => {
+    const heuresEntries = entries.filter(e => e.date === date).reduce((s, e) => s + (e.heures || 0), 0);
+    const heuresConge = getCongeForDate(date) ? 8 : 0;
+    return heuresEntries + heuresConge;
+  };
+  
+  // Vérifier si un jour dépasse 8h
+  const joursEnExces = days.filter(d => !d.isWeekend && getHeuresParJour(d.date) > 8);
 
   const renderMissionRow = (m) => {
     const total = entries.filter(e => e.projet_id === m.id).reduce((s, e) => s + (e.heures || 0), 0);
@@ -4264,18 +4356,20 @@ const TimesheetPage = () => {
         {days.map(d => {
           const disabled = isDateDisabled(d.date);
           const entry = getEntry(m.id, d.date);
+          const heuresJour = getHeuresParJour(d.date);
+          const depassement = heuresJour > 8;
           return (
-            <td key={d.date} className={cn('px-1 py-2 text-center', disabled === 'weekend' && 'cell-weekend', disabled === 'holiday' && 'cell-holiday', disabled === 'conge' && 'bg-pink-50')}>
+            <td key={d.date} className={cn('px-1 py-2 text-center', disabled === 'weekend' && 'cell-weekend', disabled === 'holiday' && 'cell-holiday', depassement && !disabled && 'bg-red-50')}>
               {disabled ? (
                 <div className="w-14 h-10 flex items-center justify-center text-xs text-slate-400">
-                  {disabled === 'holiday' ? '🎌' : disabled === 'conge' ? '🏖️' : '-'}
+                  {disabled === 'holiday' ? '🎌' : '-'}
                 </div>
               ) : (
                 <div className="relative group">
                   <input type="number" min="0" max="24" step="0.5"
                     defaultValue={entry?.heures || ''}
                     onBlur={e => updateEntry(m.id, d.date, e.target.value)}
-                    className="w-14 px-2 py-1.5 bg-slate-50 border rounded-lg text-center text-sm focus:bg-white" />
+                    className={cn("w-14 px-2 py-1.5 border rounded-lg text-center text-sm focus:bg-white", depassement ? "bg-red-100 border-red-300" : "bg-slate-50")} />
                   <button onClick={() => openComment(m.id, d.date)}
                     className={cn('absolute -top-1 -right-1 w-4 h-4 rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity',
                       entry?.commentaire ? 'bg-blue-500 text-white' : 'bg-slate-200 text-slate-500')}>
@@ -4571,16 +4665,42 @@ const TimesheetPage = () => {
           </div>
         </Card>
 
+        {/* Alerte dépassement 8h */}
+        {joursEnExces.length > 0 && (
+          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl animate-fade-up">
+            <div className="flex items-start gap-3">
+              <div className="text-2xl">⚠️</div>
+              <div>
+                <div className="font-bold text-red-700">Attention : Dépassement des 8 heures journalières</div>
+                <div className="text-sm text-red-600 mt-1">
+                  Vous avez saisi plus de 8 heures sur {joursEnExces.length} jour(s) :
+                </div>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {joursEnExces.map(d => (
+                    <span key={d.date} className="px-2 py-1 bg-red-100 text-red-700 rounded text-sm font-medium">
+                      {d.label} {d.date.split('-')[2]} : {getHeuresParJour(d.date)}h
+                    </span>
+                  ))}
+                </div>
+                <div className="text-xs text-red-500 mt-2">
+                  Veuillez corriger vos saisies. Le maximum autorisé est de 8 heures par jour ouvré.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Totaux */}
         <Card className="mt-4">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center flex-wrap gap-4">
             <div>
               <span className="text-slate-500">Total semaine:</span>
-              <span className="text-2xl font-bold ml-2">{totalWeek}h</span>
+              <span className={cn("text-2xl font-bold ml-2", joursEnExces.length > 0 && "text-red-600")}>{totalWeek}h</span>
+              {congesHeures > 0 && <span className="text-xs text-amber-600 ml-2">(dont {congesHeures}h congés)</span>}
             </div>
-            <div className="flex gap-6">
+            <div className="flex gap-6 flex-wrap">
               <div><span className="text-slate-500">Facturable:</span><span className="font-bold text-green-600 ml-2">{totalFact}h</span></div>
-              <div><span className="text-slate-500">Non-fact:</span><span className="font-bold text-slate-400 ml-2">{totalWeek - totalFact}h</span></div>
+              <div><span className="text-slate-500">Non-fact:</span><span className="font-bold text-slate-400 ml-2">{totalNonFact}h</span></div>
               <div><span className="text-slate-500">Taux:</span><span className="font-bold text-blue-600 ml-2">{totalWeek > 0 ? Math.round((totalFact / totalWeek) * 100) : 0}%</span></div>
             </div>
           </div>
