@@ -570,7 +570,39 @@ const ChartComponent = ({type, data, options = {}, height = 300}) => {
   return <div style={{height}}><canvas ref={canvasRef}></canvas></div>;
 };
 // ========== LANDING PAGE ==========
-const LandingPage = ({onLogin, onRegister}) => (
+const LandingPage = ({onLogin, onRegister}) => {
+  const [landingLogos, setLandingLogos] = useState([]);
+  
+  useEffect(() => {
+    // Charger les logos depuis la base de données
+    const loadLandingLogos = async () => {
+      const {data} = await supabase.from('landing_logos').select('*').eq('actif', true).order('position');
+      setLandingLogos(data || []);
+    };
+    loadLandingLogos();
+  }, []);
+  
+  // Générer un logo SVG par défaut basé sur le nom
+  const generateDefaultLogo = (nom) => {
+    const colors = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#0EA5E9', '#EC4899', '#14B8A6'];
+    const color = colors[nom.length % colors.length];
+    const initials = nom.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+    return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36"><rect width="36" height="36" rx="8" fill="${color}" opacity="0.2"/><rect x="3" y="3" width="30" height="30" rx="6" fill="${color}"/><text x="18" y="24" text-anchor="middle" fill="white" font-size="12" font-weight="bold" font-family="Arial">${initials}</text></svg>`)}`;
+  };
+  
+  // Logos par défaut si aucun n'est configuré
+  const defaultLogos = [
+    {id: 1, nom: 'EXCO', description: 'AUDIT & CONSEIL'},
+    {id: 2, nom: 'FIDECA', description: 'EXPERTISE COMPTABLE'},
+    {id: 3, nom: 'CAEX', description: 'CABINET EXPERT'},
+    {id: 4, nom: 'SENCONSULT', description: 'CONSULTING'},
+    {id: 5, nom: 'AFRIGEC', description: 'GESTION & CONSEIL'},
+    {id: 6, nom: 'FINACORP', description: 'FINANCE ADVISORY'}
+  ];
+  
+  const logosToDisplay = landingLogos.length > 0 ? landingLogos : defaultLogos;
+  
+  return (
   <div className="min-h-screen bg-white">
     {/* Header fixe */}
     <header className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur border-b border-slate-100">
@@ -698,88 +730,19 @@ const LandingPage = ({onLogin, onRegister}) => (
       <div className="max-w-6xl mx-auto">
         <p className="text-center text-slate-400 text-sm mb-8">Conçu pour les cabinets de conseil africains</p>
         <div className="flex flex-wrap justify-center items-center gap-8 md:gap-14">
-          {/* EXCO - Logo avec hexagone */}
-          <div className="flex items-center gap-2 opacity-70 hover:opacity-100 transition-opacity">
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-              <polygon points="18,2 32,10 32,26 18,34 4,26 4,10" fill="#3B82F6" opacity="0.2"/>
-              <polygon points="18,6 28,12 28,24 18,30 8,24 8,12" fill="#3B82F6"/>
-              <text x="18" y="23" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">E</text>
-            </svg>
-            <div>
-              <div className="text-lg font-bold text-slate-700 tracking-tight">EXCO</div>
-              <div className="text-[10px] text-slate-400 -mt-1">AUDIT & CONSEIL</div>
+          {logosToDisplay.map(logo => (
+            <div key={logo.id} className="flex items-center gap-2 opacity-70 hover:opacity-100 transition-opacity">
+              <img 
+                src={logo.logo_url || generateDefaultLogo(logo.nom)} 
+                alt={logo.nom} 
+                className="w-9 h-9 rounded-lg object-contain"
+              />
+              <div>
+                <div className="text-lg font-bold text-slate-700 tracking-tight">{logo.nom}</div>
+                <div className="text-[10px] text-slate-400 -mt-1 uppercase">{logo.description}</div>
+              </div>
             </div>
-          </div>
-
-          {/* FIDECA - Logo avec cercles */}
-          <div className="flex items-center gap-2 opacity-70 hover:opacity-100 transition-opacity">
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-              <circle cx="12" cy="18" r="10" fill="#10B981" opacity="0.3"/>
-              <circle cx="24" cy="18" r="10" fill="#10B981" opacity="0.3"/>
-              <circle cx="18" cy="18" r="6" fill="#10B981"/>
-            </svg>
-            <div>
-              <div className="text-lg font-bold text-slate-700 tracking-tight">FIDECA</div>
-              <div className="text-[10px] text-slate-400 -mt-1">EXPERTISE COMPTABLE</div>
-            </div>
-          </div>
-
-          {/* CAEX - Logo avec carré et triangle */}
-          <div className="flex items-center gap-2 opacity-70 hover:opacity-100 transition-opacity">
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-              <rect x="4" y="4" width="28" height="28" rx="4" fill="#8B5CF6" opacity="0.2"/>
-              <polygon points="18,8 30,28 6,28" fill="#8B5CF6"/>
-              <circle cx="18" cy="20" r="4" fill="white"/>
-            </svg>
-            <div>
-              <div className="text-lg font-bold text-slate-700 tracking-tight">CAEX</div>
-              <div className="text-[10px] text-slate-400 -mt-1">CABINET EXPERT</div>
-            </div>
-          </div>
-
-          {/* SENCONSULT - Logo avec barres */}
-          <div className="flex items-center gap-2 opacity-70 hover:opacity-100 transition-opacity">
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-              <rect x="4" y="20" width="6" height="12" rx="1" fill="#F59E0B"/>
-              <rect x="12" y="14" width="6" height="18" rx="1" fill="#F59E0B" opacity="0.7"/>
-              <rect x="20" y="8" width="6" height="24" rx="1" fill="#F59E0B" opacity="0.5"/>
-              <rect x="28" y="4" width="6" height="28" rx="1" fill="#F59E0B" opacity="0.3"/>
-            </svg>
-            <div>
-              <div className="text-lg font-bold text-slate-700 tracking-tight">SENCONSULT</div>
-              <div className="text-[10px] text-slate-400 -mt-1">CONSULTING</div>
-            </div>
-          </div>
-
-          {/* AFRIGEC - Logo Afrique stylisé */}
-          <div className="flex items-center gap-2 opacity-70 hover:opacity-100 transition-opacity">
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-              <circle cx="18" cy="18" r="16" fill="#EF4444" opacity="0.1"/>
-              <circle cx="18" cy="18" r="12" fill="#EF4444" opacity="0.2"/>
-              <path d="M18 4 L22 14 L32 14 L24 20 L28 32 L18 24 L8 32 L12 20 L4 14 L14 14 Z" fill="#EF4444" opacity="0.8"/>
-            </svg>
-            <div>
-              <div className="text-lg font-bold text-slate-700 tracking-tight">AFRIGEC</div>
-              <div className="text-[10px] text-slate-400 -mt-1">GESTION & CONSEIL</div>
-            </div>
-          </div>
-
-          {/* FINACORP - Logo finance */}
-          <div className="flex items-center gap-2 opacity-70 hover:opacity-100 transition-opacity">
-            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-              <rect x="2" y="26" width="32" height="4" rx="2" fill="#0EA5E9"/>
-              <rect x="6" y="6" width="4" height="20" rx="2" fill="#0EA5E9" opacity="0.4"/>
-              <rect x="16" y="10" width="4" height="16" rx="2" fill="#0EA5E9" opacity="0.6"/>
-              <rect x="26" y="2" width="4" height="24" rx="2" fill="#0EA5E9" opacity="0.8"/>
-              <circle cx="8" cy="6" r="3" fill="#0EA5E9"/>
-              <circle cx="18" cy="10" r="3" fill="#0EA5E9"/>
-              <circle cx="28" cy="2" r="3" fill="#0EA5E9"/>
-            </svg>
-            <div>
-              <div className="text-lg font-bold text-slate-700 tracking-tight">FINACORP</div>
-              <div className="text-[10px] text-slate-400 -mt-1">FINANCE ADVISORY</div>
-            </div>
-          </div>
+          ))}
         </div>
       </div>
     </section>
@@ -1270,7 +1233,8 @@ const LandingPage = ({onLogin, onRegister}) => (
       </div>
     </footer>
   </div>
-);
+  );
+};
 
 // ========== AUTH PAGES ==========
 const LoginPage = ({onLogin, onRegister, onBack}) => {
@@ -9327,6 +9291,285 @@ const MonProfilPage = () => {
   );
 };
 
+// ========== LANDING LOGOS MANAGER ==========
+const LandingLogosManager = ({org}) => {
+  const [logos, setLogos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(false);
+  const [editItem, setEditItem] = useState(null);
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => { loadLogos(); }, []);
+
+  const loadLogos = async () => {
+    const {data} = await supabase.from('landing_logos').select('*').order('position');
+    setLogos(data || []);
+    setLoading(false);
+  };
+
+  const openNew = () => {
+    setEditItem(null);
+    setForm({
+      nom: '',
+      description: '',
+      logo_url: '',
+      position: logos.length + 1,
+      actif: true
+    });
+    setModal(true);
+  };
+
+  const openEdit = (item) => {
+    setEditItem(item);
+    setForm({...item});
+    setModal(true);
+  };
+
+  const uploadLogo = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    if (file.size > 2 * 1024 * 1024) {
+      alert('Le fichier est trop volumineux (max 2 Mo)');
+      return;
+    }
+    
+    setUploading(true);
+    try {
+      const ext = file.name.split('.').pop();
+      const fileName = `landing-logos/${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${ext}`;
+      
+      const {error: uploadError} = await supabase.storage
+        .from('documents')
+        .upload(fileName, file);
+      
+      if (uploadError) throw uploadError;
+      
+      const {data: urlData} = supabase.storage
+        .from('documents')
+        .getPublicUrl(fileName);
+      
+      setForm(p => ({...p, logo_url: urlData.publicUrl}));
+    } catch(err) {
+      alert('Erreur upload: ' + err.message);
+    }
+    setUploading(false);
+  };
+
+  const save = async () => {
+    if (!form.nom) return alert('Nom requis');
+    setSaving(true);
+    try {
+      const data = {
+        nom: form.nom,
+        description: form.description || '',
+        logo_url: form.logo_url || '',
+        position: parseInt(form.position) || 1,
+        actif: form.actif !== false
+      };
+
+      if (editItem?.id) {
+        const {error} = await supabase.from('landing_logos').update(data).eq('id', editItem.id);
+        if (error) throw error;
+      } else {
+        const {error} = await supabase.from('landing_logos').insert([data]);
+        if (error) throw error;
+      }
+      setModal(false);
+      loadLogos();
+    } catch(e) {
+      alert('Erreur: ' + e.message);
+    }
+    setSaving(false);
+  };
+
+  const deleteLogo = async (item) => {
+    if (!confirm(`Supprimer "${item.nom}" ?`)) return;
+    await supabase.from('landing_logos').delete().eq('id', item.id);
+    loadLogos();
+  };
+
+  const toggleActif = async (item) => {
+    await supabase.from('landing_logos').update({actif: !item.actif}).eq('id', item.id);
+    loadLogos();
+  };
+
+  // Générer un logo SVG par défaut basé sur le nom
+  const generateDefaultLogo = (nom) => {
+    const colors = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#0EA5E9', '#EC4899', '#14B8A6'];
+    const color = colors[nom.length % colors.length];
+    const initials = nom.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+    return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40"><rect width="40" height="40" rx="8" fill="${color}" opacity="0.2"/><rect x="4" y="4" width="32" height="32" rx="6" fill="${color}"/><text x="20" y="26" text-anchor="middle" fill="white" font-size="14" font-weight="bold" font-family="Arial">${initials}</text></svg>`)}`;
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card title="Logos des clients (Landing Page)" 
+        action={<Button onClick={openNew} icon="➕">Ajouter un client</Button>}>
+        
+        <div className="mb-6 p-4 bg-blue-50 rounded-xl">
+          <div className="flex items-start gap-3">
+            <span className="text-xl">💡</span>
+            <div className="text-sm text-blue-700">
+              <p className="font-medium mb-1">Ces logos s'afficheront sur la landing page dans la section "Conçu pour les cabinets de conseil africains".</p>
+              <p>Vous pouvez uploader le logo de vos vrais clients ou utiliser le logo généré automatiquement.</p>
+            </div>
+          </div>
+        </div>
+
+        {loading ? <Loader /> : (
+          <>
+            {logos.length === 0 ? (
+              <EmptyState 
+                icon="🏢" 
+                title="Aucun logo configuré" 
+                description="Ajoutez les logos de vos clients pour les afficher sur la landing page."
+                action={<Button onClick={openNew} icon="➕">Ajouter un client</Button>}
+              />
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {logos.map(logo => (
+                  <div 
+                    key={logo.id} 
+                    className={cn(
+                      "p-4 rounded-xl border-2 transition-all",
+                      logo.actif ? "border-slate-200 bg-white" : "border-dashed border-slate-300 bg-slate-50 opacity-60"
+                    )}
+                  >
+                    <div className="flex items-center gap-3 mb-3">
+                      <img 
+                        src={logo.logo_url || generateDefaultLogo(logo.nom)} 
+                        alt={logo.nom} 
+                        className="w-10 h-10 rounded-lg object-contain"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-sm truncate">{logo.nom}</div>
+                        <div className="text-xs text-slate-400 truncate">{logo.description || '-'}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <Badge color={logo.actif ? 'green' : 'slate'}>
+                        {logo.actif ? 'Actif' : 'Masqué'}
+                      </Badge>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="xs" onClick={() => toggleActif(logo)} title={logo.actif ? 'Masquer' : 'Afficher'}>
+                          {logo.actif ? '👁️' : '👁️‍🗨️'}
+                        </Button>
+                        <Button variant="ghost" size="xs" onClick={() => openEdit(logo)}>✏️</Button>
+                        <Button variant="ghost" size="xs" onClick={() => deleteLogo(logo)}>🗑️</Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </Card>
+
+      {/* Prévisualisation */}
+      {logos.filter(l => l.actif).length > 0 && (
+        <Card title="Prévisualisation">
+          <div className="p-6 bg-slate-50 rounded-xl">
+            <p className="text-center text-slate-400 text-sm mb-6">Conçu pour les cabinets de conseil africains</p>
+            <div className="flex flex-wrap justify-center items-center gap-8">
+              {logos.filter(l => l.actif).map(logo => (
+                <div key={logo.id} className="flex items-center gap-2 opacity-70 hover:opacity-100 transition-opacity">
+                  <img 
+                    src={logo.logo_url || generateDefaultLogo(logo.nom)} 
+                    alt={logo.nom} 
+                    className="w-9 h-9 rounded-lg object-contain"
+                  />
+                  <div>
+                    <div className="text-lg font-bold text-slate-700 tracking-tight">{logo.nom}</div>
+                    <div className="text-[10px] text-slate-400 -mt-1 uppercase">{logo.description}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Modal */}
+      <Modal isOpen={modal} onClose={() => setModal(false)} title={editItem ? 'Modifier le client' : 'Ajouter un client'}>
+        <div className="space-y-4">
+          <Input 
+            label="Nom du cabinet" 
+            value={form.nom} 
+            onChange={v => setForm(p => ({...p, nom: v}))} 
+            placeholder="Ex: FIDECA" 
+            required 
+          />
+          <Input 
+            label="Description / Spécialité" 
+            value={form.description} 
+            onChange={v => setForm(p => ({...p, description: v}))} 
+            placeholder="Ex: Expertise Comptable" 
+          />
+          
+          {/* Upload logo */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Logo (optionnel)</label>
+            <div className="flex items-center gap-4">
+              <img 
+                src={form.logo_url || (form.nom ? generateDefaultLogo(form.nom) : 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" rx="8" fill="%23e2e8f0"/></svg>')} 
+                alt="Logo" 
+                className="w-16 h-16 rounded-xl object-contain border border-slate-200 bg-white"
+              />
+              <div className="flex-1">
+                <input 
+                  type="file" 
+                  accept="image/*"
+                  onChange={uploadLogo}
+                  disabled={uploading}
+                  className="text-sm file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-600 file:cursor-pointer"
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  {uploading ? '⏳ Upload en cours...' : 'PNG, JPG (max 2MB) - Laissez vide pour un logo auto-généré'}
+                </p>
+                {form.logo_url && (
+                  <button 
+                    onClick={() => setForm(p => ({...p, logo_url: ''}))} 
+                    className="text-xs text-red-500 hover:underline mt-1"
+                  >
+                    Supprimer le logo uploadé
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Input 
+              label="Position" 
+              type="number" 
+              value={form.position} 
+              onChange={v => setForm(p => ({...p, position: v}))} 
+              min={1}
+            />
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Statut</label>
+              <Checkbox 
+                label="Afficher sur la landing page" 
+                checked={form.actif !== false} 
+                onChange={v => setForm(p => ({...p, actif: v}))} 
+              />
+            </div>
+          </div>
+          
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button>
+            <Button onClick={save} loading={saving} className="flex-1">{editItem ? 'Enregistrer' : 'Ajouter'}</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+};
+
 // ========== PARAMETRES PAGE ==========
 const ParametresPage = () => {
   const {org, abo, reload} = useApp();
@@ -9472,6 +9715,7 @@ const ParametresPage = () => {
         {key: 'abo', label: '💳 Abonnement'}, 
         {key: 'config', label: '⚙️ Configuration'}, 
         {key: 'validateurs', label: '✅ Validateurs'},
+        {key: 'landing', label: '🌐 Landing Page'},
         {key: 'backup', label: '💾 Sauvegarde'}
       ]} active={tab} onChange={setTab} />
 
@@ -9765,6 +10009,10 @@ const ParametresPage = () => {
               </div>
             </Card>
           </div>
+        )}
+
+        {tab === 'landing' && (
+          <LandingLogosManager org={org} />
         )}
 
         {tab === 'backup' && (
