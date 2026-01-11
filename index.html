@@ -1835,11 +1835,6 @@ const DashboardPage = () => {
       const currentYear = now.getFullYear();
       const caParMois = [];
       
-      // Debug: voir les dates des factures (temporaire)
-      if (allFactures.length > 0) {
-        console.log('Première facture - date_emission:', allFactures[0].date_emission, 'created_at:', allFactures[0].created_at);
-      }
-      
       for (let i = 0; i < 12; i++) {
         const date = new Date(currentYear, i, 1);
         const mois = date.toLocaleDateString('fr-FR', {month: 'short'});
@@ -2165,29 +2160,76 @@ const DashboardPage = () => {
       <div className="grid lg:grid-cols-3 gap-6 mb-6">
         {/* Évolution CA */}
         <Card title={`📈 Évolution du CA ${new Date().getFullYear()}`} className="lg:col-span-2">
-          <div className="h-64">
-            <div className="flex items-end justify-between h-52 gap-1 px-2">
-              {chartData.caParMois?.map((m, i) => {
-                const maxCA = Math.max(...chartData.caParMois.map(x => x.montant), 1);
-                const height = (m.montant / maxCA) * 100;
-                return (
-                  <div key={i} className="flex-1 flex flex-col items-center group">
-                    <div className="text-xs text-slate-500 mb-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {fmtMoney(m.montant)}
+          <div className="h-72">
+            {(() => {
+              const maxCA = Math.max(...(chartData.caParMois?.map(x => x.montant) || []), 1);
+              const hasData = chartData.caParMois?.some(m => m.montant > 0);
+              
+              // Formater en millions
+              const fmtMillions = (v) => {
+                if (v >= 1000000) return (v / 1000000).toFixed(1).replace('.0', '') + ' M';
+                if (v >= 1000) return (v / 1000).toFixed(0) + ' K';
+                return v.toString();
+              };
+              
+              return (
+                <div className="h-full flex flex-col">
+                  {/* Axe Y avec graduations */}
+                  <div className="flex-1 flex">
+                    <div className="w-16 flex flex-col justify-between text-xs text-slate-400 pr-2 py-2">
+                      <span>{fmtMillions(maxCA)}</span>
+                      <span>{fmtMillions(maxCA * 0.75)}</span>
+                      <span>{fmtMillions(maxCA * 0.5)}</span>
+                      <span>{fmtMillions(maxCA * 0.25)}</span>
+                      <span>0</span>
                     </div>
-                    <div 
-                      className={`w-full rounded-t-lg transition-all cursor-pointer ${
-                        m.isFuture 
-                          ? 'bg-slate-200' 
-                          : 'bg-gradient-to-t from-blue-600 to-blue-400 hover:from-blue-700 hover:to-blue-500'
-                      }`}
-                      style={{height: `${Math.max(height, 3)}%`}}
-                    ></div>
-                    <div className={`text-xs mt-2 ${m.isFuture ? 'text-slate-300' : 'text-slate-500'}`}>{m.mois}</div>
+                    {/* Barres */}
+                    <div className="flex-1 flex items-end gap-2 border-l border-b border-slate-200 pl-2 pb-2">
+                      {chartData.caParMois?.map((m, i) => {
+                        const height = maxCA > 0 ? (m.montant / maxCA) * 100 : 0;
+                        const barHeight = m.montant > 0 ? Math.max(height, 8) : 0;
+                        return (
+                          <div key={i} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+                            {/* Tooltip au survol */}
+                            {m.montant > 0 && (
+                              <div className="absolute bottom-full mb-2 bg-slate-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">
+                                {fmtMillions(m.montant)} FCFA
+                              </div>
+                            )}
+                            {/* Barre */}
+                            <div 
+                              className={`w-full max-w-8 rounded-t transition-all cursor-pointer ${
+                                m.isFuture 
+                                  ? 'bg-slate-200' 
+                                  : m.montant > 0 
+                                    ? 'bg-gradient-to-t from-blue-600 to-blue-400 hover:from-blue-700 hover:to-blue-500 shadow-sm'
+                                    : 'bg-slate-100'
+                              }`}
+                              style={{height: `${barHeight}%`, minHeight: m.montant > 0 ? '20px' : '2px'}}
+                            >
+                              {/* Montant sur la barre si assez grande */}
+                              {m.montant > 0 && barHeight > 25 && (
+                                <div className="text-white text-xs font-medium text-center pt-1 truncate px-1">
+                                  {fmtMillions(m.montant)}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                );
-              })}
-            </div>
+                  {/* Axe X - Mois */}
+                  <div className="flex ml-16 pl-2">
+                    {chartData.caParMois?.map((m, i) => (
+                      <div key={i} className={`flex-1 text-center text-xs py-2 ${m.isFuture ? 'text-slate-300' : 'text-slate-500'}`}>
+                        {m.mois}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </Card>
         
@@ -5911,27 +5953,52 @@ const RapportsPage = () => {
         <div className="grid lg:grid-cols-2 gap-6 mb-6">
           {/* Évolution CA */}
           <Card title={`📈 Évolution du CA ${selectedYear}`}>
-            <div className="h-52">
-              <div className="flex items-end justify-between h-44 gap-1">
-                {data.caParMois?.map((m, i) => {
-                  const maxCA = Math.max(...data.caParMois.map(x => x.montant), 1);
-                  const height = (m.montant / maxCA) * 100;
-                  return (
-                    <div key={i} className="flex-1 flex flex-col items-center group">
-                      <div className="text-xs text-slate-500 mb-1 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                        {fmtMoney(m.montant)}
+            <div className="h-56">
+              {(() => {
+                const maxCA = Math.max(...(data.caParMois?.map(x => x.montant) || []), 1);
+                const fmtM = (v) => {
+                  if (v >= 1000000) return (v / 1000000).toFixed(1).replace('.0', '') + 'M';
+                  if (v >= 1000) return (v / 1000).toFixed(0) + 'K';
+                  return v.toString();
+                };
+                return (
+                  <div className="h-full flex flex-col">
+                    <div className="flex-1 flex">
+                      <div className="w-12 flex flex-col justify-between text-xs text-slate-400 pr-1">
+                        <span>{fmtM(maxCA)}</span>
+                        <span>{fmtM(maxCA/2)}</span>
+                        <span>0</span>
                       </div>
-                      <div 
-                        className={`w-full rounded-t-lg transition-all cursor-pointer ${
-                          m.isFuture ? 'bg-slate-200' : 'bg-gradient-to-t from-green-600 to-green-400 hover:from-green-700 hover:to-green-500'
-                        }`}
-                        style={{height: `${Math.max(height, 4)}%`}}
-                      ></div>
-                      <div className={`text-xs mt-1 ${m.isFuture ? 'text-slate-300' : 'text-slate-500'}`}>{m.mois}</div>
+                      <div className="flex-1 flex items-end gap-1 border-l border-b border-slate-200 pl-1 pb-1">
+                        {data.caParMois?.map((m, i) => {
+                          const height = maxCA > 0 ? (m.montant / maxCA) * 100 : 0;
+                          const barH = m.montant > 0 ? Math.max(height, 10) : 0;
+                          return (
+                            <div key={i} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+                              {m.montant > 0 && (
+                                <div className="absolute bottom-full mb-1 bg-slate-800 text-white text-xs px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 z-10 whitespace-nowrap">
+                                  {fmtM(m.montant)} FCFA
+                                </div>
+                              )}
+                              <div 
+                                className={`w-full max-w-6 rounded-t transition-all ${
+                                  m.isFuture ? 'bg-slate-200' : m.montant > 0 ? 'bg-gradient-to-t from-green-600 to-green-400' : 'bg-slate-100'
+                                }`}
+                                style={{height: `${barH}%`, minHeight: m.montant > 0 ? '16px' : '2px'}}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
+                    <div className="flex ml-12 pl-1">
+                      {data.caParMois?.map((m, i) => (
+                        <div key={i} className={`flex-1 text-center text-xs pt-1 ${m.isFuture ? 'text-slate-300' : 'text-slate-500'}`}>{m.mois}</div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </Card>
           
@@ -6184,20 +6251,52 @@ const RapportsPage = () => {
 
         <div className="grid lg:grid-cols-2 gap-6 mb-6">
           <Card title={`📈 CA Mensuel ${selectedYear}`}>
-            <div className="h-52">
-              <div className="flex items-end justify-between h-44 gap-1">
-                {data.caParMois?.map((m, i) => {
-                  const maxCA = Math.max(...data.caParMois.map(x => x.montant), 1);
-                  const height = (m.montant / maxCA) * 100;
-                  return (
-                    <div key={i} className="flex-1 flex flex-col items-center group">
-                      <div className="text-xs text-slate-500 mb-1 opacity-0 group-hover:opacity-100 whitespace-nowrap">{fmtMoney(m.montant)}</div>
-                      <div className={`w-full rounded-t-lg ${m.isFuture ? 'bg-slate-200' : 'bg-gradient-to-t from-green-600 to-green-400'}`} style={{height: `${Math.max(height, 4)}%`}}></div>
-                      <div className="text-xs mt-1 text-slate-500">{m.mois}</div>
+            <div className="h-56">
+              {(() => {
+                const maxCA = Math.max(...(data.caParMois?.map(x => x.montant) || []), 1);
+                const fmtM = (v) => {
+                  if (v >= 1000000) return (v / 1000000).toFixed(1).replace('.0', '') + 'M';
+                  if (v >= 1000) return (v / 1000).toFixed(0) + 'K';
+                  return v.toString();
+                };
+                return (
+                  <div className="h-full flex flex-col">
+                    <div className="flex-1 flex">
+                      <div className="w-12 flex flex-col justify-between text-xs text-slate-400 pr-1">
+                        <span>{fmtM(maxCA)}</span>
+                        <span>{fmtM(maxCA/2)}</span>
+                        <span>0</span>
+                      </div>
+                      <div className="flex-1 flex items-end gap-1 border-l border-b border-slate-200 pl-1 pb-1">
+                        {data.caParMois?.map((m, i) => {
+                          const height = maxCA > 0 ? (m.montant / maxCA) * 100 : 0;
+                          const barH = m.montant > 0 ? Math.max(height, 10) : 0;
+                          return (
+                            <div key={i} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+                              {m.montant > 0 && (
+                                <div className="absolute bottom-full mb-1 bg-slate-800 text-white text-xs px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 z-10 whitespace-nowrap">
+                                  {fmtM(m.montant)} FCFA
+                                </div>
+                              )}
+                              <div 
+                                className={`w-full max-w-6 rounded-t transition-all ${
+                                  m.isFuture ? 'bg-slate-200' : m.montant > 0 ? 'bg-gradient-to-t from-green-600 to-green-400' : 'bg-slate-100'
+                                }`}
+                                style={{height: `${barH}%`, minHeight: m.montant > 0 ? '16px' : '2px'}}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
+                    <div className="flex ml-12 pl-1">
+                      {data.caParMois?.map((m, i) => (
+                        <div key={i} className={`flex-1 text-center text-xs pt-1 ${m.isFuture ? 'text-slate-300' : 'text-slate-500'}`}>{m.mois}</div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </Card>
 
