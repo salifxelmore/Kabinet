@@ -4935,39 +4935,25 @@ const CongesPage = () => {
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    // D'abord charger les congés et collaborateurs séparément
-    const [congesRes, validRes, collabsRes, utilRes] = await Promise.all([
+    // Charger les congés et collaborateurs
+    const [congesRes, validRes, collabsRes] = await Promise.all([
       supabase.from('conges').select('*').eq('organisation_id', org.id).order('date_debut', {ascending: false}),
       supabase.from('validateurs_departement').select('*').eq('organisation_id', org.id).eq('type_validation', 'conges'),
-      supabase.from('collaborateurs').select('id,nom,prenom,email,departement_id,actif').eq('organisation_id', org.id).eq('actif', true),
-      supabase.from('utilisateurs').select('id,email,auth_id').eq('organisation_id', org.id)
+      supabase.from('collaborateurs').select('id,nom,prenom,email,departement_id,actif,user_id').eq('organisation_id', org.id).eq('actif', true)
     ]);
     
     if (congesRes.error) console.error('Conges error:', congesRes.error);
     
-    // Mapper les utilisateurs par email pour récupérer leur auth_id
-    const utilMap = {};
-    (utilRes.data || []).forEach(u => {
-      utilMap[u.email] = u;
-    });
-    
-    // Enrichir les collaborateurs avec leur utilisateur_id (auth_id)
-    const collabsEnrichis = (collabsRes.data || []).map(c => ({
-      ...c,
-      utilisateur_id: utilMap[c.email]?.auth_id || null
-    }));
-    setCollaborateurs(collabsEnrichis);
+    // Les collaborateurs ont maintenant directement leur user_id (auth_id de Supabase)
+    setCollaborateurs(collabsRes.data || []);
     
     // Enrichir les congés avec les infos collaborateur
-    const collabsMap = {};
-    (collabsRes.data || []).forEach(c => {
-      collabsMap[c.email] = c;
-    });
-    
-    // Associer chaque congé au collaborateur via utilisateur_id -> email
     const congesEnrichis = (congesRes.data || []).map(c => {
-      // Trouver le collaborateur correspondant
-      const collab = (collabsRes.data || []).find(col => col.id === c.utilisateur_id || col.email === c.utilisateur_email);
+      // Trouver le collaborateur correspondant par user_id ou par email
+      const collab = (collabsRes.data || []).find(col => 
+        (col.user_id && col.user_id === c.utilisateur_id) || 
+        (col.email && col.email === c.utilisateur_email)
+      );
       return {
         ...c,
         collaborateurs: collab || null
@@ -5204,9 +5190,9 @@ const CongesPage = () => {
   
   // Fonction pour calculer le solde d'un collaborateur
   const getCollabSolde = (collabData) => {
-    // Chercher les congés de ce collaborateur par utilisateur_id OU par email
+    // Chercher les congés de ce collaborateur par user_id OU par email
     const matchCollab = (c) => {
-      if (collabData.utilisateur_id && c.utilisateur_id === collabData.utilisateur_id) return true;
+      if (collabData.user_id && c.utilisateur_id === collabData.user_id) return true;
       if (collabData.email && c.utilisateur_email === collabData.email) return true;
       return false;
     };
@@ -5255,15 +5241,15 @@ const CongesPage = () => {
     
     setSaving(true);
     try {
-      // Chercher s'il existe déjà un report pour cette année et ce collaborateur (par email ou utilisateur_id)
+      // Chercher s'il existe déjà un report pour cette année et ce collaborateur (par user_id ou email)
       let existingQuery = supabase.from('conges')
         .select('id')
         .eq('type_conge', 'report_anterieur')
         .eq('annee_reference', anneeEnCours);
       
-      // Chercher par utilisateur_id si disponible, sinon par email
-      if (selectedCollab.utilisateur_id) {
-        existingQuery = existingQuery.eq('utilisateur_id', selectedCollab.utilisateur_id);
+      // Chercher par user_id si disponible, sinon par email
+      if (selectedCollab.user_id) {
+        existingQuery = existingQuery.eq('utilisateur_id', selectedCollab.user_id);
       } else {
         existingQuery = existingQuery.eq('utilisateur_email', selectedCollab.email);
       }
@@ -5275,14 +5261,15 @@ const CongesPage = () => {
         const {error} = await supabase.from('conges').update({
           nb_jours: solde,
           motif: `Modifié par admin le ${fmtDate(today())}`,
-          utilisateur_email: selectedCollab.email // S'assurer que l'email est stocké
+          utilisateur_email: selectedCollab.email,
+          utilisateur_id: selectedCollab.user_id || null
         }).eq('id', existing.id);
         if (error) throw error;
       } else {
-        // Créer - utiliser utilisateur_id si disponible, sinon juste l'email
+        // Créer - utiliser user_id si disponible, sinon juste l'email
         const {error} = await supabase.from('conges').insert([{
           organisation_id: org.id,
-          utilisateur_id: selectedCollab.utilisateur_id || null,
+          utilisateur_id: selectedCollab.user_id || null,
           utilisateur_email: selectedCollab.email,
           type_conge: 'report_anterieur',
           date_debut: `${anneeEnCours}-01-01`,
@@ -5452,7 +5439,7 @@ const CongesPage = () => {
                 </div>
               </div>
               
-              {!selectedCollab.utilisateur_id && (
+              {!selectedCollab.user_id && (
                 <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-sm">
                   <strong>ℹ️ Info :</strong> Ce collaborateur n'a pas encore de compte utilisateur. 
                   Le solde sera lié à son email et sera automatiquement associé à son compte lorsqu'il se connectera.
@@ -6769,7 +6756,7 @@ const EquipePage = () => {
   
   // Créer un compte utilisateur pour le collaborateur
   const createUserAccount = async (email, prenom, nom, orgId) => {
-    const DEFAULT_PASSWORD = 'Missura2024!';
+    const DEFAULT_PASSWORD = 'Missura2026!';
     
     try {
       // 1. Créer le compte auth dans Supabase
@@ -6783,42 +6770,17 @@ const EquipePage = () => {
       });
       
       if (authError) {
-        // Si l'utilisateur existe déjà, on continue
+        // Si l'utilisateur existe déjà, on récupère son ID
         if (authError.message?.includes('already registered')) {
           console.log('Utilisateur auth déjà existant:', email);
-          return {existing: true};
+          return {existing: true, password: DEFAULT_PASSWORD};
         }
         throw authError;
       }
       
-      // 2. Créer l'entrée dans la table utilisateurs
+      // 2. Retourner l'auth_id pour le stocker dans le collaborateur
       if (authData?.user) {
-        const {error: userError} = await supabase.from('utilisateurs').insert([{
-          auth_id: authData.user.id,
-          email: email,
-          prenom: prenom,
-          nom: nom,
-          role: 'Membre', // Rôle par défaut pour les collaborateurs
-          organisation_id: orgId
-        }]);
-        
-        if (userError) {
-          console.error('Erreur création utilisateur:', userError);
-          // Si erreur de contrainte, essayer avec 'Admin'
-          if (userError.message?.includes('role_check')) {
-            const {error: retryError} = await supabase.from('utilisateurs').insert([{
-              auth_id: authData.user.id,
-              email: email,
-              prenom: prenom,
-              nom: nom,
-              role: 'Admin',
-              organisation_id: orgId
-            }]);
-            if (retryError && !retryError.message?.includes('duplicate')) {
-              console.error('Erreur retry création utilisateur:', retryError);
-            }
-          }
-        }
+        return {success: true, password: DEFAULT_PASSWORD, authId: authData.user.id};
       }
       
       return {success: true, password: DEFAULT_PASSWORD};
@@ -6855,6 +6817,7 @@ const EquipePage = () => {
         result = await supabase.from('collaborateurs').update(data).eq('id', editItem.id);
       } else {
         // Création - d'abord créer le compte utilisateur
+        let authId = null;
         if (form.email) {
           const accountResult = await createUserAccount(form.email, form.prenom, form.nom, org.id);
           
@@ -6862,16 +6825,23 @@ const EquipePage = () => {
             throw new Error('Erreur création compte: ' + accountResult.error);
           }
           
+          // Récupérer l'authId si disponible
+          authId = accountResult.authId || null;
+          
           if (accountResult.success) {
             alert(`✅ Compte créé pour ${form.prenom} ${form.nom}\n\n📧 Email: ${form.email}\n🔑 Mot de passe: ${accountResult.password}\n\nLe collaborateur peut maintenant se connecter !`);
           } else if (accountResult.existing) {
-            // Le compte existe déjà, on continue
-            console.log('Compte existant, liaison avec collaborateur');
+            // Le compte existe déjà, on affiche quand même le mot de passe par défaut
+            alert(`ℹ️ Un compte existe déjà pour ${form.email}\n\n🔑 Mot de passe par défaut: ${accountResult.password}\n\n(Si le mot de passe a été changé, utilisez "Mot de passe oublié")`);
           }
         }
         
-        // Créer le collaborateur
-        result = await supabase.from('collaborateurs').insert([{...data, organisation_id: org.id}]);
+        // Créer le collaborateur avec l'auth_id (user_id)
+        result = await supabase.from('collaborateurs').insert([{
+          ...data, 
+          organisation_id: org.id,
+          user_id: authId // Lien direct avec Supabase Auth
+        }]);
       }
       
       if (result.error) throw result.error;
