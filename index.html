@@ -3521,6 +3521,7 @@ const MissionsPage = () => {
   const [saving, setSaving] = useState(false);
   const [acomptes, setAcomptes] = useState([]);
   const [factures, setFactures] = useState([]);
+  const [tachesMission, setTachesMission] = useState(null); // Mission sélectionnée pour voir les tâches
 
   useEffect(() => { loadData(); }, []);
 
@@ -3752,6 +3753,7 @@ const MissionsPage = () => {
             )}
           ]} data={filtered} actions={r => (
             <div className="flex gap-1">
+              <Button variant="ghost" size="xs" onClick={() => setTachesMission(r)} title="Tâches">📋</Button>
               <Button variant="ghost" size="xs" onClick={() => openAcomptes(r)} title="Acomptes">💰</Button>
               <Button variant="ghost" size="xs" onClick={() => openEdit(r)} title="Modifier">✏️</Button>
               {r.statut === 'completed' && (
@@ -3847,6 +3849,419 @@ const MissionsPage = () => {
           </div>
         )}
       </Modal>
+      
+      {/* Kanban des tâches */}
+      {tachesMission && (
+        <TachesKanban mission={tachesMission} onClose={() => setTachesMission(null)} />
+      )}
+    </div>
+  );
+};
+
+// ========== TACHES - CONSTANTES ==========
+const TACHE_STATUTS = {
+  todo: { label: 'À faire', color: 'slate', icon: '📋' },
+  in_progress: { label: 'En cours', color: 'blue', icon: '🔄' },
+  review: { label: 'En révision', color: 'purple', icon: '👀' },
+  done: { label: 'Terminé', color: 'green', icon: '✅' }
+};
+
+const TACHE_PRIORITES = {
+  low: { label: 'Basse', color: 'slate', icon: '🔽' },
+  medium: { label: 'Moyenne', color: 'amber', icon: '➡️' },
+  high: { label: 'Haute', color: 'orange', icon: '🔼' },
+  urgent: { label: 'Urgente', color: 'red', icon: '🔥' }
+};
+
+// ========== TACHES KANBAN COMPONENT ==========
+const TachesKanban = ({ mission, onClose }) => {
+  const {org, collab, user} = useApp();
+  const [taches, setTaches] = useState([]);
+  const [collaborateurs, setCollaborateurs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(null);
+  const [editItem, setEditItem] = useState(null);
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [draggedTask, setDraggedTask] = useState(null);
+  const [viewMode, setViewMode] = useState('kanban'); // 'kanban' ou 'liste'
+
+  useEffect(() => { loadTaches(); }, [mission.id]);
+
+  const loadTaches = async () => {
+    const [t, c] = await Promise.all([
+      supabase.from('taches_projet').select('*,assignee:assignee_id(id,nom,prenom)').eq('projet_id', mission.id).order('position'),
+      supabase.from('collaborateurs').select('id,nom,prenom').eq('organisation_id', org.id).eq('actif', true)
+    ]);
+    setTaches(t.data || []);
+    setCollaborateurs(c.data || []);
+    setLoading(false);
+  };
+
+  const openNew = (statut = 'todo') => {
+    setEditItem(null);
+    setForm({
+      titre: '',
+      description: '',
+      statut: statut,
+      priorite: 'medium',
+      assignee_id: '',
+      date_echeance: '',
+      estimation_heures: ''
+    });
+    setModal('tache');
+  };
+
+  const openEdit = (t) => {
+    setEditItem(t);
+    setForm({
+      ...t,
+      date_echeance: t.date_echeance?.split('T')[0] || ''
+    });
+    setModal('tache');
+  };
+
+  const save = async () => {
+    if (!form.titre) return alert('Titre requis');
+    setSaving(true);
+    try {
+      const data = {
+        titre: form.titre,
+        description: form.description || '',
+        statut: form.statut,
+        priorite: form.priorite,
+        assignee_id: form.assignee_id || null,
+        date_echeance: form.date_echeance || null,
+        estimation_heures: parseFloat(form.estimation_heures) || null
+      };
+
+      if (editItem?.id) {
+        const {error} = await supabase.from('taches_projet').update(data).eq('id', editItem.id);
+        if (error) throw error;
+      } else {
+        // Position = dernier de la colonne
+        const tachesColonne = taches.filter(t => t.statut === form.statut);
+        const maxPos = Math.max(0, ...tachesColonne.map(t => t.position || 0));
+        
+        const {error} = await supabase.from('taches_projet').insert([{
+          ...data,
+          projet_id: mission.id,
+          organisation_id: org.id,
+          createur_id: collab?.id || null,
+          position: maxPos + 1
+        }]);
+        if (error) throw error;
+      }
+      setModal(null);
+      loadTaches();
+    } catch(e) {
+      alert('Erreur: ' + e.message);
+    }
+    setSaving(false);
+  };
+
+  const deleteTache = async (t) => {
+    if (!confirm(`Supprimer la tâche "${t.titre}" ?`)) return;
+    await supabase.from('taches_projet').delete().eq('id', t.id);
+    loadTaches();
+  };
+
+  // Drag & Drop
+  const handleDragStart = (e, tache) => {
+    setDraggedTask(tache);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = async (e, newStatut) => {
+    e.preventDefault();
+    if (!draggedTask || draggedTask.statut === newStatut) {
+      setDraggedTask(null);
+      return;
+    }
+
+    // Mettre à jour le statut
+    const {error} = await supabase.from('taches_projet')
+      .update({ statut: newStatut })
+      .eq('id', draggedTask.id);
+
+    if (!error) {
+      setTaches(prev => prev.map(t => 
+        t.id === draggedTask.id ? {...t, statut: newStatut} : t
+      ));
+    }
+    setDraggedTask(null);
+  };
+
+  // Stats
+  const stats = {
+    total: taches.length,
+    todo: taches.filter(t => t.statut === 'todo').length,
+    in_progress: taches.filter(t => t.statut === 'in_progress').length,
+    review: taches.filter(t => t.statut === 'review').length,
+    done: taches.filter(t => t.statut === 'done').length,
+    progress: taches.length > 0 ? Math.round((taches.filter(t => t.statut === 'done').length / taches.length) * 100) : 0
+  };
+
+  // Composant carte tâche
+  const TacheCard = ({ tache }) => {
+    const priorite = TACHE_PRIORITES[tache.priorite];
+    const isOverdue = tache.date_echeance && new Date(tache.date_echeance) < new Date() && tache.statut !== 'done';
+    
+    return (
+      <div
+        draggable
+        onDragStart={(e) => handleDragStart(e, tache)}
+        className={cn(
+          "bg-white rounded-lg border p-3 cursor-grab active:cursor-grabbing shadow-sm hover:shadow-md transition-all",
+          isOverdue && "border-red-300 bg-red-50",
+          draggedTask?.id === tache.id && "opacity-50"
+        )}
+      >
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <h4 className="font-medium text-sm flex-1 line-clamp-2">{tache.titre}</h4>
+          <button onClick={() => openEdit(tache)} className="text-slate-400 hover:text-slate-600 text-xs">✏️</button>
+        </div>
+        
+        {tache.description && (
+          <p className="text-xs text-slate-500 mb-2 line-clamp-2">{tache.description}</p>
+        )}
+        
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={cn("text-xs px-1.5 py-0.5 rounded", `bg-${priorite.color}-100 text-${priorite.color}-700`)}>
+            {priorite.icon} {priorite.label}
+          </span>
+          
+          {tache.date_echeance && (
+            <span className={cn("text-xs", isOverdue ? "text-red-600 font-medium" : "text-slate-500")}>
+              📅 {fmtDate(tache.date_echeance)}
+            </span>
+          )}
+          
+          {tache.estimation_heures && (
+            <span className="text-xs text-slate-500">⏱️ {tache.estimation_heures}h</span>
+          )}
+        </div>
+        
+        {tache.assignee && (
+          <div className="mt-2 pt-2 border-t flex items-center gap-2">
+            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
+              {tache.assignee.prenom?.[0]}{tache.assignee.nom?.[0]}
+            </div>
+            <span className="text-xs text-slate-600">{tache.assignee.prenom} {tache.assignee.nom}</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Colonne Kanban
+  const KanbanColumn = ({ statut, config }) => {
+    const columnTaches = taches.filter(t => t.statut === statut);
+    
+    return (
+      <div
+        onDragOver={handleDragOver}
+        onDrop={(e) => handleDrop(e, statut)}
+        className={cn(
+          "flex-1 min-w-[280px] bg-slate-50 rounded-xl p-3 transition-colors",
+          draggedTask && draggedTask.statut !== statut && "bg-blue-50 border-2 border-dashed border-blue-300"
+        )}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <span>{config.icon}</span>
+            <h3 className="font-semibold text-sm">{config.label}</h3>
+            <Badge color={config.color} size="sm">{columnTaches.length}</Badge>
+          </div>
+          <button
+            onClick={() => openNew(statut)}
+            className="w-6 h-6 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-blue-500 hover:border-blue-300 flex items-center justify-center text-sm transition-colors"
+          >
+            +
+          </button>
+        </div>
+        
+        <div className="space-y-2 min-h-[200px]">
+          {columnTaches.map(tache => (
+            <TacheCard key={tache.id} tache={tache} />
+          ))}
+          {columnTaches.length === 0 && (
+            <div className="text-center text-slate-400 text-sm py-8">
+              Aucune tâche
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  if (loading) return <Loader />;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl w-full max-w-7xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="p-4 border-b flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl font-bold">{mission.nom}</h2>
+              <Badge color={MISSION_STATUS[mission.statut]?.color}>{MISSION_STATUS[mission.statut]?.label}</Badge>
+            </div>
+            <p className="text-sm text-slate-500">{mission.code} • {mission.clients?.nom || 'Sans client'}</p>
+          </div>
+          
+          <div className="flex items-center gap-3">
+            {/* Stats */}
+            <div className="flex items-center gap-4 mr-4">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-blue-600">{stats.total}</div>
+                <div className="text-xs text-slate-500">Tâches</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-green-600">{stats.progress}%</div>
+                <div className="text-xs text-slate-500">Terminé</div>
+              </div>
+            </div>
+            
+            {/* Toggle vue */}
+            <div className="flex bg-slate-100 rounded-lg p-1">
+              <button
+                onClick={() => setViewMode('kanban')}
+                className={cn("px-3 py-1 rounded text-sm transition-colors", viewMode === 'kanban' ? "bg-white shadow text-blue-600" : "text-slate-500")}
+              >
+                📊 Kanban
+              </button>
+              <button
+                onClick={() => setViewMode('liste')}
+                className={cn("px-3 py-1 rounded text-sm transition-colors", viewMode === 'liste' ? "bg-white shadow text-blue-600" : "text-slate-500")}
+              >
+                📋 Liste
+              </button>
+            </div>
+            
+            <Button onClick={() => openNew()} icon="➕">Nouvelle tâche</Button>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl">✕</button>
+          </div>
+        </div>
+        
+        {/* Progress bar */}
+        <div className="px-4 py-2 bg-slate-50 border-b">
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-slate-500">Avancement:</span>
+            <div className="flex-1">
+              <ProgressBar value={stats.done} max={stats.total || 1} color="green" showLabel={false} />
+            </div>
+            <span className="text-sm font-medium">{stats.done}/{stats.total} terminées</span>
+          </div>
+        </div>
+        
+        {/* Content */}
+        <div className="flex-1 overflow-auto p-4">
+          {viewMode === 'kanban' ? (
+            <div className="flex gap-4 min-h-full">
+              {Object.entries(TACHE_STATUTS).map(([key, config]) => (
+                <KanbanColumn key={key} statut={key} config={config} />
+              ))}
+            </div>
+          ) : (
+            <Table
+              columns={[
+                {header: 'Tâche', render: r => (
+                  <div>
+                    <div className="font-medium">{r.titre}</div>
+                    {r.description && <div className="text-xs text-slate-400 truncate max-w-xs">{r.description}</div>}
+                  </div>
+                )},
+                {header: 'Statut', render: r => <Badge color={TACHE_STATUTS[r.statut]?.color}>{TACHE_STATUTS[r.statut]?.icon} {TACHE_STATUTS[r.statut]?.label}</Badge>},
+                {header: 'Priorité', render: r => <Badge color={TACHE_PRIORITES[r.priorite]?.color}>{TACHE_PRIORITES[r.priorite]?.icon} {TACHE_PRIORITES[r.priorite]?.label}</Badge>},
+                {header: 'Assigné', render: r => r.assignee ? `${r.assignee.prenom} ${r.assignee.nom}` : '-'},
+                {header: 'Échéance', render: r => r.date_echeance ? fmtDate(r.date_echeance) : '-'},
+                {header: 'Estimation', render: r => r.estimation_heures ? `${r.estimation_heures}h` : '-'}
+              ]}
+              data={taches}
+              actions={r => (
+                <div className="flex gap-1">
+                  <Button variant="ghost" size="xs" onClick={() => openEdit(r)}>✏️</Button>
+                  <Button variant="ghost" size="xs" onClick={() => deleteTache(r)}>🗑️</Button>
+                </div>
+              )}
+            />
+          )}
+        </div>
+        
+        {/* Modal Tâche */}
+        <Modal isOpen={modal === 'tache'} onClose={() => setModal(null)} title={editItem ? 'Modifier la tâche' : 'Nouvelle tâche'}>
+          <div className="space-y-4">
+            <Input
+              label="Titre"
+              value={form.titre}
+              onChange={v => setForm(p => ({...p, titre: v}))}
+              placeholder="Ex: Préparer le rapport financier"
+              required
+            />
+            
+            <TextArea
+              label="Description"
+              value={form.description}
+              onChange={v => setForm(p => ({...p, description: v}))}
+              placeholder="Détails de la tâche..."
+              rows={3}
+            />
+            
+            <div className="grid grid-cols-2 gap-4">
+              <Select
+                label="Statut"
+                value={form.statut}
+                onChange={v => setForm(p => ({...p, statut: v}))}
+                options={Object.entries(TACHE_STATUTS).map(([k, v]) => ({value: k, label: `${v.icon} ${v.label}`}))}
+              />
+              <Select
+                label="Priorité"
+                value={form.priorite}
+                onChange={v => setForm(p => ({...p, priorite: v}))}
+                options={Object.entries(TACHE_PRIORITES).map(([k, v]) => ({value: k, label: `${v.icon} ${v.label}`}))}
+              />
+            </div>
+            
+            <Select
+              label="Assigné à"
+              value={form.assignee_id}
+              onChange={v => setForm(p => ({...p, assignee_id: v}))}
+              options={collaborateurs.map(c => ({value: c.id, label: `${c.prenom} ${c.nom}`}))}
+              placeholder="Sélectionner un collaborateur"
+            />
+            
+            <div className="grid grid-cols-2 gap-4">
+              <Input
+                label="Date d'échéance"
+                type="date"
+                value={form.date_echeance}
+                onChange={v => setForm(p => ({...p, date_echeance: v}))}
+              />
+              <Input
+                label="Estimation (heures)"
+                type="number"
+                value={form.estimation_heures}
+                onChange={v => setForm(p => ({...p, estimation_heures: v}))}
+                placeholder="Ex: 4"
+              />
+            </div>
+            
+            <div className="flex gap-3 pt-4">
+              <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
+              {editItem && (
+                <Button variant="danger" onClick={() => { deleteTache(editItem); setModal(null); }}>Supprimer</Button>
+              )}
+              <Button onClick={save} loading={saving} className="flex-1">{editItem ? 'Enregistrer' : 'Créer'}</Button>
+            </div>
+          </div>
+        </Modal>
+      </div>
     </div>
   );
 };
