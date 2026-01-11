@@ -3624,6 +3624,19 @@ const MissionsPage = () => {
     loadData();
   };
 
+  // Bloquer/Débloquer la saisie sur une mission clôturée
+  const toggleSaisieBloquee = async (m) => {
+    const newValue = !m.saisie_bloquee;
+    const action = newValue ? 'bloquer' : 'débloquer';
+    
+    if (!confirm(`${newValue ? '🔒 Bloquer' : '🔓 Débloquer'} la saisie sur "${m.nom}" ?\n\n${newValue ? 'Les collaborateurs ne pourront plus saisir de temps sur cette mission.' : 'Les collaborateurs pourront à nouveau saisir du temps sur cette mission.'}`)) {
+      return;
+    }
+    
+    await supabase.from('projets').update({ saisie_bloquee: newValue }).eq('id', m.id);
+    loadData();
+  };
+
   const addAcompte = async () => {
     const missionAcomptes = acomptes.filter(a => a.projet_id === editItem.id);
     const totalAcomptes = missionAcomptes.reduce((s, a) => s + (a.montant || 0), 0);
@@ -3731,11 +3744,26 @@ const MissionsPage = () => {
               if (!d) return '-';
               return <Badge color={d.color}>{d.label}</Badge>;
             }},
-            {header: 'Statut', render: r => <Badge color={MISSION_STATUS[r.statut]?.color}>{MISSION_STATUS[r.statut]?.label}</Badge>}
+            {header: 'Statut', render: r => (
+              <div className="flex items-center gap-1">
+                <Badge color={MISSION_STATUS[r.statut]?.color}>{MISSION_STATUS[r.statut]?.label}</Badge>
+                {r.saisie_bloquee && <span title="Saisie bloquée" className="text-red-500">🔒</span>}
+              </div>
+            )}
           ]} data={filtered} actions={r => (
             <div className="flex gap-1">
               <Button variant="ghost" size="xs" onClick={() => openAcomptes(r)} title="Acomptes">💰</Button>
               <Button variant="ghost" size="xs" onClick={() => openEdit(r)} title="Modifier">✏️</Button>
+              {r.statut === 'completed' && (
+                <Button 
+                  variant="ghost" 
+                  size="xs" 
+                  onClick={() => toggleSaisieBloquee(r)} 
+                  title={r.saisie_bloquee ? "Débloquer la saisie" : "Bloquer la saisie"}
+                >
+                  {r.saisie_bloquee ? '🔓' : '🔒'}
+                </Button>
+              )}
               <Button variant="ghost" size="xs" onClick={() => deleteMission(r)} title="Supprimer">🗑️</Button>
             </div>
           )} />
@@ -4239,8 +4267,8 @@ const TimesheetPage = () => {
     setLoading(true);
     const end = addDays(weekStart, 6);
     const [t, m, cat, h, cg, cl] = await Promise.all([
-      supabase.from('saisies_temps').select('*,projets(nom,code,client_id,facturable)').eq('organisation_id', org.id).eq('utilisateur_id', user.id).gte('date', weekStart).lte('date', end),
-      supabase.from('projets').select('*,clients(id,nom)').eq('organisation_id', org.id).in('statut', ['active', 'draft']),
+      supabase.from('saisies_temps').select('*,projets(nom,code,client_id,facturable,saisie_bloquee)').eq('organisation_id', org.id).eq('utilisateur_id', user.id).gte('date', weekStart).lte('date', end),
+      supabase.from('projets').select('*,clients(id,nom)').eq('organisation_id', org.id).in('statut', ['active', 'draft', 'completed']),
       supabase.from('categories_taches').select('*').eq('organisation_id', org.id),
       supabase.from('jours_feries').select('date,nom').eq('organisation_id', org.id),
       supabase.from('conges').select('*').eq('utilisateur_id', user.id).eq('statut', 'approved'),
@@ -4248,8 +4276,13 @@ const TimesheetPage = () => {
     ]);
     setEntries(t.data || []);
     
-    // Filtrer missions selon permissions
-    let filteredMissions = m.data || [];
+    // Filtrer missions selon permissions et statut de blocage
+    let filteredMissions = (m.data || []).filter(mission => {
+      // Exclure les missions clôturées avec saisie bloquée
+      if (mission.statut === 'completed' && mission.saisie_bloquee) return false;
+      return true;
+    });
+    
     if (!isManager && userDeptId) {
       // Junior/Senior: uniquement missions de leur département ou sans département
       filteredMissions = filteredMissions.filter(mission => 
@@ -4263,7 +4296,7 @@ const TimesheetPage = () => {
     setConges(cg.data || []);
     setClients(cl.data || []);
     
-    // Calculer les jours non saisis YTD (depuis le 1er janvier jusqu'à aujourd'hui)
+    // Calculer les heures manquantes YTD (depuis le 1er janvier jusqu'à hier)
     const ytdStart = new Date(new Date().getFullYear(), 0, 1); // 1er janvier
     const ytdEnd = new Date(); // Aujourd'hui
     ytdEnd.setDate(ytdEnd.getDate() - 1); // Hier (on ne compte pas aujourd'hui)
@@ -4275,16 +4308,18 @@ const TimesheetPage = () => {
       .gte('date', ytdStart.toISOString().split('T')[0])
       .lte('date', ytdEnd.toISOString().split('T')[0]);
     
-    // Créer un set des dates avec saisies
-    const datesAvecSaisies = new Set();
+    // Calculer les heures par jour
+    const heuresParJourYtd = {};
     (allYtdEntries || []).forEach(e => {
-      if (e.heures > 0) datesAvecSaisies.add(e.date);
+      if (!heuresParJourYtd[e.date]) heuresParJourYtd[e.date] = 0;
+      heuresParJourYtd[e.date] += parseFloat(e.heures) || 0;
     });
     
     // Parcourir tous les jours ouvrés depuis le début de l'année
-    const joursNonSaisis = [];
+    const joursInccomplets = []; // Jours avec moins de 8h
     const holidaysList = (h.data || []).map(x => x.date);
     const congesList = cg.data || [];
+    let totalHeuresManquantes = 0;
     
     let currentDate = new Date(ytdStart);
     while (currentDate <= ytdEnd) {
@@ -4297,9 +4332,16 @@ const TimesheetPage = () => {
       const isConge = congesList.some(c => dateStr >= c.date_debut && dateStr <= c.date_fin);
       
       if (!isWeekendDay && !isHoliday && !isConge) {
-        // C'est un jour ouvré - vérifier s'il y a une saisie
-        if (!datesAvecSaisies.has(dateStr)) {
-          joursNonSaisis.push(dateStr);
+        // C'est un jour ouvré - vérifier si 8h sont saisies
+        const heuresSaisies = heuresParJourYtd[dateStr] || 0;
+        if (heuresSaisies < 8) {
+          const heuresManquantes = 8 - heuresSaisies;
+          joursInccomplets.push({
+            date: dateStr,
+            heuresSaisies,
+            heuresManquantes
+          });
+          totalHeuresManquantes += heuresManquantes;
         }
       }
       
@@ -4307,9 +4349,9 @@ const TimesheetPage = () => {
     }
     
     setYtdStats({
-      joursNonSaisis,
-      totalJoursNonSaisis: joursNonSaisis.length,
-      heuresManquantes: joursNonSaisis.length * 8
+      joursInccomplets,
+      totalJoursInccomplets: joursInccomplets.length,
+      totalHeuresManquantes: Math.round(totalHeuresManquantes * 10) / 10
     });
     
     setLoading(false);
@@ -4399,10 +4441,14 @@ const TimesheetPage = () => {
 
   const renderMissionRow = (m) => {
     const total = entries.filter(e => e.projet_id === m.id).reduce((s, e) => s + (e.heures || 0), 0);
+    const isCompleted = m.statut === 'completed';
     return (
-      <tr key={m.id} className="border-b border-slate-50">
+      <tr key={m.id} className={cn("border-b border-slate-50", isCompleted && "bg-green-50")}>
         <td className="px-4 py-2">
-          <div className="font-medium text-sm">{m.nom}</div>
+          <div className="flex items-center gap-2">
+            <div className="font-medium text-sm">{m.nom}</div>
+            {isCompleted && <span className="text-[10px] px-1.5 py-0.5 bg-green-200 text-green-700 rounded">Clôturée</span>}
+          </div>
           <div className="text-xs text-slate-400">{m.code} • {m.clients?.nom || 'Interne'}</div>
         </td>
         {days.map(d => {
@@ -4537,37 +4583,53 @@ const TimesheetPage = () => {
         </div>}
       />
 
-      {/* Alerte YTD - Jours non saisis */}
-      {ytdStats.totalJoursNonSaisis > 0 && (
+      {/* Alerte YTD - Heures manquantes */}
+      {ytdStats.totalJoursInccomplets > 0 && (
         <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
           <div className="flex items-start gap-3">
             <div className="text-2xl">⚠️</div>
             <div className="flex-1">
               <div className="font-bold text-amber-800">
-                Attention : {ytdStats.totalJoursNonSaisis} jour(s) non saisi(s) depuis le début de l'année
+                Attention : {ytdStats.totalJoursInccomplets} jour(s) incomplet(s) depuis le début de l'année
               </div>
               <div className="text-sm text-amber-700 mt-1">
-                Heures manquantes estimées : <span className="font-bold">{ytdStats.heuresManquantes}h</span>
+                Total heures manquantes : <span className="font-bold">{ytdStats.totalHeuresManquantes}h</span>
+                <span className="text-amber-600 ml-2">(objectif : 8h/jour ouvré)</span>
               </div>
               <details className="mt-2">
                 <summary className="text-sm text-amber-600 cursor-pointer hover:text-amber-800">
-                  Voir les {ytdStats.totalJoursNonSaisis} jour(s) concerné(s)
+                  Voir les {ytdStats.totalJoursInccomplets} jour(s) concerné(s)
                 </summary>
-                <div className="mt-2 flex flex-wrap gap-1 max-h-32 overflow-y-auto">
-                  {ytdStats.joursNonSaisis?.slice(0, 50).map(d => (
-                    <span key={d} className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs">
-                      {new Date(d).toLocaleDateString('fr-FR', {weekday: 'short', day: '2-digit', month: 'short'})}
-                    </span>
-                  ))}
-                  {ytdStats.totalJoursNonSaisis > 50 && (
-                    <span className="px-2 py-0.5 bg-amber-200 text-amber-800 rounded text-xs font-medium">
-                      +{ytdStats.totalJoursNonSaisis - 50} autres...
-                    </span>
+                <div className="mt-2 max-h-40 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-amber-700">
+                        <th className="pb-1">Date</th>
+                        <th className="pb-1 text-right">Saisi</th>
+                        <th className="pb-1 text-right">Manquant</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ytdStats.joursInccomplets?.slice(0, 30).map(j => (
+                        <tr key={j.date} className="border-t border-amber-100">
+                          <td className="py-1">
+                            {new Date(j.date).toLocaleDateString('fr-FR', {weekday: 'short', day: '2-digit', month: 'short'})}
+                          </td>
+                          <td className="py-1 text-right">{j.heuresSaisies}h</td>
+                          <td className="py-1 text-right font-medium text-red-600">-{j.heuresManquantes}h</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {ytdStats.totalJoursInccomplets > 30 && (
+                    <div className="mt-2 text-center text-amber-600">
+                      +{ytdStats.totalJoursInccomplets - 30} autres jours...
+                    </div>
                   )}
                 </div>
               </details>
               <div className="text-xs text-amber-600 mt-2">
-                💡 Pensez à régulariser vos saisies de temps pour une facturation correcte.
+                💡 Pensez à régulariser vos saisies pour atteindre 8h par jour ouvré.
               </div>
             </div>
           </div>
