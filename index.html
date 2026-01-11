@@ -5096,7 +5096,14 @@ const CongesPage = () => {
     loadData();
   };
 
-  const mesConges = conges.filter(c => c.utilisateur_id === user.id && c.type_conge !== 'report_anterieur');
+  // Fonction pour vérifier si un congé appartient à l'utilisateur connecté
+  const isMyConge = (c) => {
+    if (c.utilisateur_id === user.id) return true;
+    if (collab?.email && c.utilisateur_email === collab.email) return true;
+    return false;
+  };
+
+  const mesConges = conges.filter(c => isMyConge(c) && c.type_conge !== 'report_anterieur');
   // Congés à valider: seulement si l'utilisateur est validateur
   // Et uniquement pour les collaborateurs de son département (si validateur département) ou tous (si admin)
   const congesAValider = isValidateur ? conges.filter(c => {
@@ -5111,16 +5118,16 @@ const CongesPage = () => {
   const anneeEnCours = new Date().getFullYear();
   const maintenant = new Date();
   
-  // Récupérer le report de l'année en cours
+  // Récupérer le report de l'année en cours (par user.id ou par email)
   const reportAnneeEnCours = conges.find(c => 
     c.type_conge === 'report_anterieur' && 
-    c.utilisateur_id === user.id &&
+    isMyConge(c) &&
     c.annee_reference === anneeEnCours
   );
   // Ou l'import initial (sans année de référence)
   const importInitial = conges.find(c => 
     c.type_conge === 'report_anterieur' && 
-    c.utilisateur_id === user.id &&
+    isMyConge(c) &&
     !c.annee_reference
   );
   const joursReportAnterieurs = reportAnneeEnCours?.nb_jours || importInitial?.nb_jours || 0;
