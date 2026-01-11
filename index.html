@@ -3988,28 +3988,49 @@ const TachesKanban = ({ mission, onClose }) => {
   // Documents
   const [documents, setDocuments] = useState([]);
   const [uploading, setUploading] = useState(false);
+  
+  // Assignations multiples
+  const [assignations, setAssignations] = useState([]);
 
   useEffect(() => { loadTaches(); }, [mission.id]);
 
   const loadTaches = async () => {
-    const [t, c, com, docs] = await Promise.all([
-      supabase.from('taches_projet').select('*,assignee:assignee_id(id,nom,prenom)').eq('projet_id', mission.id).order('position'),
+    const [t, c, com, docs, assign] = await Promise.all([
+      supabase.from('taches_projet').select('*').eq('projet_id', mission.id).order('position'),
       supabase.from('collaborateurs').select('id,nom,prenom').eq('organisation_id', org.id).eq('actif', true),
       supabase.from('commentaires_tache').select('*,auteur:auteur_id(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: true}),
-      supabase.from('documents_tache').select('*,auteur:auteur_id(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: false})
+      supabase.from('documents_tache').select('*,auteur:auteur_id(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
+      supabase.from('taches_assignees').select('*,collaborateur:collaborateur_id(id,nom,prenom)').eq('organisation_id', org.id)
     ]);
     setTaches(t.data || []);
     setCollaborateurs(c.data || []);
     setCommentaires(com.data || []);
     setDocuments(docs.data || []);
+    setAssignations(assign.data || []);
     setLoading(false);
   };
+  
+  // Obtenir les collaborateurs assignés à une tâche
+  const getAssigneesTache = (tacheId) => assignations
+    .filter(a => a.tache_id === tacheId)
+    .map(a => a.collaborateur)
+    .filter(Boolean);
   
   // Obtenir les commentaires d'une tâche
   const getCommentairesTache = (tacheId) => commentaires.filter(c => c.tache_id === tacheId);
   
   // Obtenir les documents d'une tâche
   const getDocumentsTache = (tacheId) => documents.filter(d => d.tache_id === tacheId);
+  
+  // Toggle assignation d'un collaborateur
+  const toggleAssignee = (collabId) => {
+    const current = form.assignees || [];
+    if (current.includes(collabId)) {
+      setForm(p => ({...p, assignees: current.filter(id => id !== collabId)}));
+    } else {
+      setForm(p => ({...p, assignees: [...current, collabId]}));
+    }
+  };
   
   // Upload de document
   const uploadDocument = async (e) => {
@@ -4139,7 +4160,7 @@ const TachesKanban = ({ mission, onClose }) => {
       description: '',
       statut: statut,
       priorite: 'medium',
-      assignee_id: '',
+      assignees: [], // Liste des IDs de collaborateurs assignés
       date_echeance: '',
       estimation_heures: ''
     });
@@ -4148,8 +4169,11 @@ const TachesKanban = ({ mission, onClose }) => {
 
   const openEdit = (t) => {
     setEditItem(t);
+    // Récupérer les IDs des collaborateurs assignés
+    const assigneeIds = getAssigneesTache(t.id).map(c => c.id);
     setForm({
       ...t,
+      assignees: assigneeIds,
       date_echeance: t.date_echeance?.split('T')[0] || ''
     });
     setModal('tache');
@@ -4164,10 +4188,11 @@ const TachesKanban = ({ mission, onClose }) => {
         description: form.description || '',
         statut: form.statut,
         priorite: form.priorite,
-        assignee_id: form.assignee_id || null,
         date_echeance: form.date_echeance || null,
         estimation_heures: parseFloat(form.estimation_heures) || null
       };
+
+      let tacheId = editItem?.id;
 
       if (editItem?.id) {
         const {error} = await supabase.from('taches_projet').update(data).eq('id', editItem.id);
@@ -4177,15 +4202,34 @@ const TachesKanban = ({ mission, onClose }) => {
         const tachesColonne = taches.filter(t => t.statut === form.statut);
         const maxPos = Math.max(0, ...tachesColonne.map(t => t.position || 0));
         
-        const {error} = await supabase.from('taches_projet').insert([{
+        const {data: newTache, error} = await supabase.from('taches_projet').insert([{
           ...data,
           projet_id: mission.id,
           organisation_id: org.id,
           createur_id: collab?.id || null,
           position: maxPos + 1
-        }]);
+        }]).select().single();
         if (error) throw error;
+        tacheId = newTache.id;
       }
+      
+      // Gérer les assignations multiples
+      if (tacheId) {
+        // Supprimer les anciennes assignations
+        await supabase.from('taches_assignees').delete().eq('tache_id', tacheId);
+        
+        // Ajouter les nouvelles assignations
+        if (form.assignees && form.assignees.length > 0) {
+          const assignationsToInsert = form.assignees.map(collabId => ({
+            organisation_id: org.id,
+            tache_id: tacheId,
+            collaborateur_id: collabId
+          }));
+          const {error: assignError} = await supabase.from('taches_assignees').insert(assignationsToInsert);
+          if (assignError) console.error('Erreur assignations:', assignError);
+        }
+      }
+      
       setModal(null);
       loadTaches();
     } catch(e) {
@@ -4196,6 +4240,8 @@ const TachesKanban = ({ mission, onClose }) => {
 
   const deleteTache = async (t) => {
     if (!confirm(`Supprimer la tâche "${t.titre}" ?`)) return;
+    // Supprimer aussi les assignations
+    await supabase.from('taches_assignees').delete().eq('tache_id', t.id);
     await supabase.from('taches_projet').delete().eq('id', t.id);
     loadTaches();
   };
@@ -4247,6 +4293,7 @@ const TachesKanban = ({ mission, onClose }) => {
     const isOverdue = tache.date_echeance && new Date(tache.date_echeance) < new Date() && tache.statut !== 'done';
     const nbCommentaires = getCommentairesTache(tache.id).length;
     const nbDocuments = getDocumentsTache(tache.id).length;
+    const assignees = getAssigneesTache(tache.id);
     
     return (
       <div
@@ -4292,12 +4339,31 @@ const TachesKanban = ({ mission, onClose }) => {
           )}
         </div>
         
-        {tache.assignee && (
-          <div className="mt-2 pt-2 border-t flex items-center gap-2">
-            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
-              {tache.assignee.prenom?.[0]}{tache.assignee.nom?.[0]}
+        {assignees.length > 0 && (
+          <div className="mt-2 pt-2 border-t flex items-center gap-1">
+            <div className="flex -space-x-2">
+              {assignees.slice(0, 4).map((person, idx) => (
+                <div 
+                  key={person.id} 
+                  className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold border-2 border-white"
+                  title={`${person.prenom} ${person.nom}`}
+                  style={{zIndex: 4 - idx}}
+                >
+                  {person.prenom?.[0]}{person.nom?.[0]}
+                </div>
+              ))}
+              {assignees.length > 4 && (
+                <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 text-xs font-bold border-2 border-white">
+                  +{assignees.length - 4}
+                </div>
+              )}
             </div>
-            <span className="text-xs text-slate-600">{tache.assignee.prenom} {tache.assignee.nom}</span>
+            <span className="text-xs text-slate-500 ml-1">
+              {assignees.length === 1 
+                ? `${assignees[0].prenom} ${assignees[0].nom}`
+                : `${assignees.length} personnes`
+              }
+            </span>
           </div>
         )}
       </div>
@@ -4473,13 +4539,40 @@ const TachesKanban = ({ mission, onClose }) => {
               />
             </div>
             
-            <Select
-              label="Assigné à"
-              value={form.assignee_id}
-              onChange={v => setForm(p => ({...p, assignee_id: v}))}
-              options={collaborateurs.map(c => ({value: c.id, label: `${c.prenom} ${c.nom}`}))}
-              placeholder="Sélectionner un collaborateur"
-            />
+            {/* Sélection multiple de collaborateurs */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Assignés ({(form.assignees || []).length} sélectionné{(form.assignees || []).length > 1 ? 's' : ''})
+              </label>
+              <div className="border border-slate-200 rounded-xl p-3 max-h-[200px] overflow-y-auto space-y-1">
+                {collaborateurs.map(c => {
+                  const isSelected = (form.assignees || []).includes(c.id);
+                  return (
+                    <div 
+                      key={c.id}
+                      onClick={() => toggleAssignee(c.id)}
+                      className={cn(
+                        "flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors",
+                        isSelected ? "bg-blue-50 border border-blue-200" : "hover:bg-slate-50"
+                      )}
+                    >
+                      <div className={cn(
+                        "w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold",
+                        isSelected 
+                          ? "bg-gradient-to-br from-blue-500 to-purple-500 text-white" 
+                          : "bg-slate-200 text-slate-600"
+                      )}>
+                        {c.prenom?.[0]}{c.nom?.[0]}
+                      </div>
+                      <span className={cn("flex-1 text-sm", isSelected && "font-medium")}>
+                        {c.prenom} {c.nom}
+                      </span>
+                      {isSelected && <span className="text-blue-500">✓</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
             
             <div className="grid grid-cols-2 gap-4">
               <Input
@@ -4529,14 +4622,28 @@ const TachesKanban = ({ mission, onClose }) => {
                 </Button>
               </div>
               
+              {/* Assignés */}
+              {(() => {
+                const assignees = getAssigneesTache(selectedTache.id);
+                return assignees.length > 0 && (
+                  <div className="p-4 bg-slate-50 rounded-xl">
+                    <div className="text-xs text-slate-500 mb-2">Assignés ({assignees.length})</div>
+                    <div className="flex flex-wrap gap-2">
+                      {assignees.map(person => (
+                        <div key={person.id} className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-full border">
+                          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
+                            {person.prenom?.[0]}{person.nom?.[0]}
+                          </div>
+                          <span className="text-sm">{person.prenom} {person.nom}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+              
               {/* Infos tâche */}
               <div className="grid grid-cols-2 gap-4 p-4 bg-slate-50 rounded-xl">
-                <div>
-                  <div className="text-xs text-slate-500">Assigné à</div>
-                  <div className="font-medium">
-                    {selectedTache.assignee ? `${selectedTache.assignee.prenom} ${selectedTache.assignee.nom}` : 'Non assigné'}
-                  </div>
-                </div>
                 <div>
                   <div className="text-xs text-slate-500">Échéance</div>
                   <div className="font-medium">
