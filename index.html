@@ -3526,16 +3526,40 @@ const MissionsPage = () => {
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    const [m, c, d, a, collabs, grades, f] = await Promise.all([
+    const [m, c, d, a, collabs, grades, f, t] = await Promise.all([
       supabase.from('projets').select('*,clients(nom),departements:departement_id(nom),responsable:responsable_id(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
       supabase.from('clients').select('id,nom').eq('organisation_id', org.id).eq('est_prospect', false),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
       supabase.from('acomptes').select('*').eq('organisation_id', org.id),
       supabase.from('collaborateurs').select('*,grades:grade_id(nom,niveau)').eq('organisation_id', org.id).eq('actif', true),
       supabase.from('grades').select('*').eq('organisation_id', org.id),
-      supabase.from('factures').select('id,projet_id,montant_ht,montant_total').eq('organisation_id', org.id)
+      supabase.from('factures').select('id,projet_id,montant_ht,montant_total').eq('organisation_id', org.id),
+      supabase.from('taches_projet').select('id,projet_id,statut').eq('organisation_id', org.id)
     ]);
-    setMissions(m.data || []);
+    
+    // Calculer les stats de tâches par mission
+    const tachesParMission = {};
+    (t.data || []).forEach(tache => {
+      if (!tachesParMission[tache.projet_id]) {
+        tachesParMission[tache.projet_id] = { total: 0, done: 0 };
+      }
+      tachesParMission[tache.projet_id].total++;
+      if (tache.statut === 'done') {
+        tachesParMission[tache.projet_id].done++;
+      }
+    });
+    
+    // Enrichir les missions avec les stats de tâches
+    const missionsAvecTaches = (m.data || []).map(mission => ({
+      ...mission,
+      taches_total: tachesParMission[mission.id]?.total || 0,
+      taches_done: tachesParMission[mission.id]?.done || 0,
+      taches_progress: tachesParMission[mission.id]?.total > 0 
+        ? Math.round((tachesParMission[mission.id].done / tachesParMission[mission.id].total) * 100)
+        : 0
+    }));
+    
+    setMissions(missionsAvecTaches);
     setClients(c.data || []);
     setDepts(d.data || []);
     setAcomptes(a.data || []);
@@ -3688,8 +3712,11 @@ const MissionsPage = () => {
     total: missions.length,
     actives: missions.filter(m => m.statut === 'active').length,
     budget: missions.reduce((s, m) => s + (m.budget_montant || 0), 0),
-    facture: missions.reduce((s, m) => s + getMissionTotalFacture(m), 0)
+    facture: missions.reduce((s, m) => s + getMissionTotalFacture(m), 0),
+    taches_total: missions.reduce((s, m) => s + (m.taches_total || 0), 0),
+    taches_done: missions.reduce((s, m) => s + (m.taches_done || 0), 0)
   };
+  const tachesProgress = stats.taches_total > 0 ? Math.round((stats.taches_done / stats.taches_total) * 100) : 0;
   
   const exportMissions = () => exportToExcel(filtered, [
     {header: 'Code', key: 'code'},
@@ -3701,6 +3728,9 @@ const MissionsPage = () => {
     {header: 'Budget (Heures)', key: 'budget_heures'},
     {header: 'Facturé', getValue: r => getMissionTotalFacture(r)},
     {header: 'Reste', getValue: r => getMissionResteFacturer(r)},
+    {header: 'Tâches Total', getValue: r => r.taches_total || 0},
+    {header: 'Tâches Terminées', getValue: r => r.taches_done || 0},
+    {header: 'Avancement (%)', getValue: r => r.taches_progress || 0},
     {header: 'Date début', key: 'date_debut'},
     {header: 'Date fin prévue', key: 'date_fin_prevue'},
     {header: 'Statut', getValue: r => MISSION_STATUS[r.statut]?.label || ''}
@@ -3708,7 +3738,7 @@ const MissionsPage = () => {
 
   return (
     <div>
-      <PageHeader title="Missions" subtitle={`${stats.actives} actives sur ${stats.total} • Budget: ${fmtMoney(stats.budget)}`}
+      <PageHeader title="Missions" subtitle={`${stats.actives} actives sur ${stats.total} • Budget: ${fmtMoney(stats.budget)} • Tâches: ${stats.taches_done}/${stats.taches_total} (${tachesProgress}%)`}
         action={<div className="flex gap-2">
           <Button variant="secondary" size="sm" onClick={exportMissions} icon="📥">Export</Button>
           <Button onClick={openNew} icon="➕">Nouvelle mission</Button>
@@ -3733,6 +3763,33 @@ const MissionsPage = () => {
               <span className="text-sm">{r.responsable.prenom} {r.responsable.nom}</span>
             ) : <span className="text-slate-400">-</span>},
             {header: 'Type', render: r => <Badge>{r.type_facturation === 'forfait' ? 'Forfait' : 'Régie'}</Badge>},
+            {header: 'Avancement', render: r => (
+              <div className="min-w-[100px]">
+                {r.taches_total > 0 ? (
+                  <>
+                    <div className="flex items-center justify-between text-xs mb-1">
+                      <span className={cn(
+                        "font-medium",
+                        r.taches_progress === 100 ? "text-green-600" : 
+                        r.taches_progress >= 50 ? "text-blue-600" : "text-slate-600"
+                      )}>
+                        {r.taches_progress}%
+                      </span>
+                      <span className="text-slate-400">{r.taches_done}/{r.taches_total}</span>
+                    </div>
+                    <ProgressBar 
+                      value={r.taches_done} 
+                      max={r.taches_total} 
+                      color={r.taches_progress === 100 ? 'green' : r.taches_progress >= 50 ? 'blue' : 'slate'} 
+                      size="sm" 
+                      showLabel={false} 
+                    />
+                  </>
+                ) : (
+                  <span className="text-xs text-slate-400">Aucune tâche</span>
+                )}
+              </div>
+            )},
             {header: 'Budget', render: r => (
               <div>
                 <div className="font-medium">{fmtMoney(r.budget_montant)}</div>
