@@ -1793,53 +1793,82 @@ const DashboardPage = () => {
   const [recentActivity, setRecentActivity] = useState([]);
   const [topMissions, setTopMissions] = useState([]);
   const [teamPerformance, setTeamPerformance] = useState([]);
+  
+  // Filtres période
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [dateRange, setDateRange] = useState({ start: '', end: '' });
+  const [filterMode, setFilterMode] = useState('year'); // 'year' ou 'range'
 
-  useEffect(() => { loadStats(); }, []);
+  useEffect(() => { loadStats(); }, [selectedYear, dateRange, filterMode]);
+  
+  // Calculer les dates de période
+  const getPeriodDates = () => {
+    if (filterMode === 'range' && dateRange.start && dateRange.end) {
+      return { start: dateRange.start, end: dateRange.end };
+    }
+    return { 
+      start: `${selectedYear}-01-01`, 
+      end: `${selectedYear}-12-31` 
+    };
+  };
 
   const loadStats = async () => {
+    const { start, end } = getPeriodDates();
+    
     // Stats globales (pour managers+)
     if (isManager || isAdmin) {
-      const [clients, projets, temps, factures, collabList, affectations] = await Promise.all([
+      const [clients, projets, temps, factures, collabList, affectations, utilisateurs] = await Promise.all([
         supabase.from('clients').select('id, created_at').eq('organisation_id', org.id),
         supabase.from('projets').select('id, nom, code, statut, budget_montant, montant_facture, budget_heures, clients(nom)').eq('organisation_id', org.id),
-        supabase.from('saisies_temps').select('heures, facturable, date, projet_id, utilisateur_id').eq('organisation_id', org.id),
+        supabase.from('saisies_temps').select('*').eq('organisation_id', org.id),
         supabase.from('factures').select('*').eq('organisation_id', org.id),
-        supabase.from('collaborateurs').select('id, nom, prenom, actif, grade_id, grades(nom)').eq('organisation_id', org.id),
-        supabase.from('affectations').select('*').eq('organisation_id', org.id)
+        supabase.from('collaborateurs').select('id, nom, prenom, email, actif, grade_id, departement_id, grades(nom)').eq('organisation_id', org.id),
+        supabase.from('affectations').select('*').eq('organisation_id', org.id),
+        supabase.from('utilisateurs').select('id, auth_id, email, nom, prenom').eq('organisation_id', org.id)
       ]);
+      
+      const allTemps = temps.data || [];
+      const allUsers = utilisateurs.data || [];
+      const allCollabs = collabList.data || [];
+      
+      // Filtrer les temps par période
+      const tempsPeriode = allTemps.filter(t => t.date >= start && t.date <= end);
 
       const projetsActifs = projets.data?.filter(p => p.statut === 'active') || [];
-      const heuresTotal = temps.data?.reduce((s, t) => s + (t.heures || 0), 0) || 0;
-      const heuresFact = temps.data?.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0) || 0;
+      const heuresTotal = tempsPeriode.reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+      const heuresFact = tempsPeriode.filter(t => t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
       
-      // Récupérer les factures
+      // Récupérer les factures (filtrer par période aussi)
       const allFactures = factures.data || [];
+      const facturesPeriode = allFactures.filter(f => {
+        const dateF = f.date_emission || f.created_at?.split('T')[0];
+        return dateF && dateF >= start && dateF <= end;
+      });
       
-      // CA Facturé = somme de tous les montants des factures
-      const caFacture = allFactures.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
+      // CA Facturé sur la période
+      const caFacture = facturesPeriode.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
       
       // CA Encaissé = somme de tous les montants_encaisse
       const caEncaisse = allFactures.reduce((s, f) => s + (parseFloat(f.montant_encaisse) || 0), 0);
       
-      // CA en attente = CA facturé - CA encaissé
-      const caEnAttente = caFacture - caEncaisse;
+      // CA en attente = Total facturé - Total encaissé
+      const caEnAttente = allFactures.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0) - caEncaisse;
       
       // Budget total des missions
       const budgetTotal = projets.data?.reduce((s, p) => s + (parseFloat(p.budget_montant) || 0), 0) || 0;
       
-      // Reste à facturer = Budget - CA Facturé
-      const resteFacturer = budgetTotal - caFacture;
+      // Reste à facturer = Budget - CA Facturé total
+      const resteFacturer = budgetTotal - allFactures.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
       
-      // CA par mois (Janvier à Décembre de l'année courante)
+      // CA par mois (Janvier à Décembre de l'année sélectionnée)
       const now = new Date();
-      const currentYear = now.getFullYear();
       const caParMois = [];
       
       for (let i = 0; i < 12; i++) {
-        const date = new Date(currentYear, i, 1);
+        const date = new Date(selectedYear, i, 1);
         const mois = date.toLocaleDateString('fr-FR', {month: 'short'});
         const monthStart = date.toISOString().split('T')[0];
-        const monthEnd = new Date(currentYear, i + 1, 0).toISOString().split('T')[0];
+        const monthEnd = new Date(selectedYear, i + 1, 0).toISOString().split('T')[0];
         
         // Utiliser date_emission ou created_at
         const facturesDuMois = allFactures.filter(f => {
@@ -1848,29 +1877,42 @@ const DashboardPage = () => {
         });
         const montant = facturesDuMois.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
         
-        caParMois.push({mois: mois.charAt(0).toUpperCase() + mois.slice(1), montant, isFuture: i > now.getMonth()});
+        caParMois.push({mois: mois.charAt(0).toUpperCase() + mois.slice(1), montant, isFuture: selectedYear === now.getFullYear() && i > now.getMonth()});
       }
       
       // Top missions par budget
       const missionsAvecCA = projets.data?.map(p => ({
         ...p,
-        ca: factures.data?.filter(f => f.projet_id === p.id).reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0) || 0,
-        heuresConsommees: temps.data?.filter(t => t.projet_id === p.id).reduce((s, t) => s + (t.heures || 0), 0) || 0
+        ca: allFactures.filter(f => f.projet_id === p.id).reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0) || 0,
+        heuresConsommees: tempsPeriode.filter(t => t.projet_id === p.id).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0) || 0
       })).sort((a, b) => (parseFloat(b.budget_montant) || 0) - (parseFloat(a.budget_montant) || 0)).slice(0, 5) || [];
       
-      // Performance équipe
-      const collabsActifs = collabList.data?.filter(c => c.actif) || [];
-      const teamPerf = collabsActifs.map(c => {
-        const heures = temps.data?.filter(t => t.utilisateur_id === c.id).reduce((s, t) => s + (t.heures || 0), 0) || 0;
-        const heuresFact = temps.data?.filter(t => t.utilisateur_id === c.id && t.facturable).reduce((s, t) => s + (t.heures || 0), 0) || 0;
+      // Performance équipe - basée sur les utilisateurs qui ont saisi du temps
+      const tempsByUser = {};
+      tempsPeriode.forEach(t => {
+        if (!tempsByUser[t.utilisateur_id]) {
+          tempsByUser[t.utilisateur_id] = { heures: 0, heuresFact: 0 };
+        }
+        tempsByUser[t.utilisateur_id].heures += parseFloat(t.heures) || 0;
+        if (t.facturable) {
+          tempsByUser[t.utilisateur_id].heuresFact += parseFloat(t.heures) || 0;
+        }
+      });
+      
+      const teamPerf = Object.entries(tempsByUser).map(([userId, data]) => {
+        // Trouver l'utilisateur
+        const userInfo = allUsers.find(u => u.id === userId);
+        // Essayer de trouver le collaborateur lié
+        const collabInfo = allCollabs.find(c => c.email === userInfo?.email || c.utilisateur_id === userId);
+        
         return {
-          nom: `${c.prenom} ${c.nom}`,
-          grade: c.grades?.nom || '-',
-          heures,
-          heuresFact,
-          taux: heures > 0 ? Math.round((heuresFact / heures) * 100) : 0
+          nom: collabInfo ? `${collabInfo.prenom} ${collabInfo.nom}` : (userInfo?.nom ? `${userInfo.prenom || ''} ${userInfo.nom}` : 'Utilisateur'),
+          grade: collabInfo?.grades?.nom || '-',
+          heures: data.heures,
+          heuresFact: data.heuresFact,
+          taux: data.heures > 0 ? Math.round((data.heuresFact / data.heures) * 100) : 0
         };
-      }).sort((a, b) => b.taux - a.taux).slice(0, 8);
+      }).sort((a, b) => b.heures - a.heures).slice(0, 8);
 
       setStats({
         clients: clients.data?.length || 0,
@@ -1879,9 +1921,9 @@ const DashboardPage = () => {
         heuresTotal, heuresFact,
         tauxCharge: heuresTotal > 0 ? Math.round((heuresFact / heuresTotal) * 100) : 0,
         caEncaisse, caEnAttente, budgetTotal, caFacture, resteFacturer,
-        collaborateurs: collabsActifs.length,
-        facturesEnAttente: factures.data?.filter(f => f.statut === 'sent' || f.statut === 'partial').length || 0,
-        facturesPaid: factures.data?.filter(f => f.statut === 'paid').length || 0
+        collaborateurs: allCollabs.filter(c => c.actif).length,
+        facturesEnAttente: allFactures.filter(f => f.statut === 'sent' || f.statut === 'partial').length || 0,
+        facturesPaid: allFactures.filter(f => f.statut === 'paid').length || 0
       });
       
       setChartData({caParMois});
@@ -2112,6 +2154,55 @@ const DashboardPage = () => {
     <div>
       <PageHeader title="Tableau de bord" subtitle={`Bienvenue, ${collab?.prenom || user.prenom} ! Voici l'état de votre cabinet.`} />
       
+      {/* Filtre période */}
+      <div className="flex flex-wrap items-center gap-4 mb-6 p-4 bg-white rounded-xl shadow-sm">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-slate-600 font-medium">📅 Période :</span>
+          <select 
+            value={filterMode} 
+            onChange={e => setFilterMode(e.target.value)}
+            className="input py-1.5 text-sm"
+          >
+            <option value="year">Année</option>
+            <option value="range">Plage de dates</option>
+          </select>
+        </div>
+        
+        {filterMode === 'year' ? (
+          <select 
+            value={selectedYear} 
+            onChange={e => setSelectedYear(parseInt(e.target.value))}
+            className="input py-1.5 text-sm"
+          >
+            {[2024, 2025, 2026, 2027].map(y => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+        ) : (
+          <div className="flex items-center gap-2">
+            <input 
+              type="date" 
+              value={dateRange.start}
+              onChange={e => setDateRange(d => ({...d, start: e.target.value}))}
+              className="input py-1.5 text-sm"
+            />
+            <span className="text-slate-400">→</span>
+            <input 
+              type="date"
+              value={dateRange.end}
+              onChange={e => setDateRange(d => ({...d, end: e.target.value}))}
+              className="input py-1.5 text-sm"
+            />
+          </div>
+        )}
+        
+        <div className="text-xs text-slate-500">
+          {filterMode === 'year' ? `Données de ${selectedYear}` : 
+           dateRange.start && dateRange.end ? `Du ${new Date(dateRange.start).toLocaleDateString('fr-FR')} au ${new Date(dateRange.end).toLocaleDateString('fr-FR')}` : 
+           'Sélectionnez une plage'}
+        </div>
+      </div>
+      
       {/* KPIs principaux */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div className="card p-4 bg-gradient-to-br from-blue-500 to-blue-600 text-white">
@@ -2159,7 +2250,7 @@ const DashboardPage = () => {
       {/* Graphiques */}
       <div className="grid lg:grid-cols-3 gap-6 mb-6">
         {/* Évolution CA */}
-        <Card title={`📈 Évolution du CA ${new Date().getFullYear()}`} className="lg:col-span-2">
+        <Card title={`📈 Évolution du CA ${selectedYear}`} className="lg:col-span-2">
           <div className="h-72">
             {(() => {
               const maxCA = Math.max(...(chartData.caParMois?.map(x => x.montant) || []), 1);
@@ -4457,38 +4548,192 @@ const FacturationPage = () => {
     const {jsPDF} = window.jspdf;
     const doc = new jsPDF();
     
-    doc.setFontSize(20);
-    doc.text('FACTURE', 105, 25, {align: 'center'});
+    // Couleurs
+    const blueColor = [0, 82, 147]; // Bleu Mazars/Forvis
+    const grayColor = [100, 100, 100];
     
-    doc.setFontSize(14);
-    doc.text(String(f.reference || ''), 105, 35, {align: 'center'});
+    // En-tête - Logo/Nom de l'organisation
+    doc.setFontSize(24);
+    doc.setTextColor(...blueColor);
+    doc.setFont('helvetica', 'bold');
+    doc.text(org.nom || 'MISSURA', 20, 25);
     
-    doc.setDrawColor(200);
-    doc.line(20, 45, 190, 45);
+    // Coordonnées de l'organisation (à droite)
+    doc.setFontSize(9);
+    doc.setTextColor(...grayColor);
+    doc.setFont('helvetica', 'normal');
+    const orgInfo = [
+      org.adresse || 'Adresse non renseignée',
+      org.ville || '',
+      org.pays || 'Sénégal',
+      '',
+      org.email || 'contact@missura.app',
+      org.telephone ? 'Tél: ' + org.telephone : ''
+    ].filter(x => x);
+    orgInfo.forEach((line, i) => {
+      doc.text(line, 190, 15 + (i * 5), {align: 'right'});
+    });
     
-    doc.setFontSize(10);
-    doc.text('Date: ' + fmtDate(f.date_emission), 20, 55);
-    doc.text('Echeance: ' + fmtDate(f.date_echeance), 20, 62);
-    doc.text('Client: ' + String(f.clients?.nom || '-'), 20, 69);
-    if (f.projets?.nom) doc.text('Mission: ' + String(f.projets?.code || '') + ' - ' + String(f.projets.nom), 20, 76);
-    
-    doc.line(20, 85, 190, 85);
-    
+    // Destinataire - Client (encadré à droite)
     doc.setFontSize(11);
-    const y1 = 100;
-    doc.text('Montant HT:', 110, y1);
-    doc.text(fmtSimple(f.montant_ht) + ' FCFA', 190, y1, {align: 'right'});
+    doc.setTextColor(0, 0, 0);
+    doc.setFont('helvetica', 'bold');
+    doc.text(String(f.clients?.nom || 'Client'), 120, 55);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    // On peut ajouter l'adresse du client si disponible
+    doc.text('Dakar', 120, 62);
+    doc.text('SENEGAL', 120, 69);
     
-    doc.text('TVA (' + String(f.taux_tva || 18) + '%):', 110, y1 + 10);
-    doc.text(fmtSimple(f.montant_tva) + ' FCFA', 190, y1 + 10, {align: 'right'});
+    // Date à gauche
+    doc.setFontSize(10);
+    doc.setTextColor(...grayColor);
+    doc.text('Le ' + fmtDate(f.date_emission), 20, 55);
     
-    doc.line(110, y1 + 15, 190, y1 + 15);
-    
+    // Titre FACTURE
     doc.setFontSize(14);
-    doc.text('TOTAL TTC:', 110, y1 + 25);
-    doc.text(fmtSimple(f.montant_total) + ' FCFA', 190, y1 + 25, {align: 'right'});
+    doc.setTextColor(0, 0, 0);
+    doc.setFont('helvetica', 'bold');
+    doc.text('FACTURE    ' + String(f.reference || ''), 105, 90, {align: 'center'});
+    
+    // Ligne de séparation
+    doc.setDrawColor(...blueColor);
+    doc.setLineWidth(0.5);
+    doc.line(20, 95, 190, 95);
+    
+    // Description de la facture
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(0, 0, 0);
+    
+    let description = f.description || '';
+    if (f.projets?.nom) {
+      description = description || ('Honoraires mission ' + (f.projets.nom || f.projets.code));
+    }
+    if (f.type_facture === 'acompte') {
+      description = 'Acompte - ' + description;
+    }
+    
+    // Texte de description multi-lignes
+    const splitDesc = doc.splitTextToSize(description || 'Prestations de services', 170);
+    doc.text(splitDesc, 20, 110);
+    
+    // Tableau des montants
+    const tableY = 130;
+    
+    // Lignes du tableau
+    doc.setFontSize(10);
+    
+    // Montant HT
+    doc.text('Montant honoraires HT :', 60, tableY);
+    doc.text(fmtSimple(f.montant_ht) + ' FCFA', 180, tableY, {align: 'right'});
+    
+    // TVA
+    doc.text('TVA au taux de ' + String(f.taux_tva || 18) + ' % :', 60, tableY + 10);
+    doc.text(fmtSimple(f.montant_tva) + ' FCFA', 180, tableY + 10, {align: 'right'});
+    
+    // Ligne de séparation avant total
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.3);
+    doc.line(140, tableY + 15, 180, tableY + 15);
+    
+    // Total TTC
+    doc.setFont('helvetica', 'bold');
+    doc.text('Montant Total TTC :', 60, tableY + 25);
+    doc.text(fmtSimple(f.montant_total) + ' FCFA', 180, tableY + 25, {align: 'right'});
+    
+    // Montant en lettres
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(9);
+    doc.setTextColor(...grayColor);
+    const montantEnLettres = nombreEnLettres(f.montant_total);
+    doc.text('Arrêté la présente facture à la somme de ' + montantEnLettres + '.', 20, tableY + 45);
+    
+    // Conditions de paiement
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(0, 0, 0);
+    const paiementY = tableY + 65;
+    doc.text('Nous vous remercions de bien vouloir régler cette facture à réception par chèque ou par virement au', 20, paiementY);
+    doc.text('profit de ' + (org.nom || 'MISSURA') + ' :', 20, paiementY + 5);
+    
+    // Coordonnées bancaires
+    doc.setFontSize(9);
+    const bankY = paiementY + 15;
+    doc.text('CBAO, 2, Place de l\'Indépendance.', 20, bankY);
+    doc.text('Code banque : SN012', 20, bankY + 5);
+    doc.text('Code guichet : 01201', 20, bankY + 10);
+    doc.text('N° de compte : 020136016944', 20, bankY + 15);
+    doc.text('Clé : 58', 20, bankY + 20);
+    
+    // Signature
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(...blueColor);
+    doc.text(org.nom || 'Missura', 20, bankY + 40);
+    
+    // Pied de page
+    doc.setFontSize(8);
+    doc.setTextColor(...grayColor);
+    doc.setFont('helvetica', 'normal');
+    doc.text(org.nom || 'Missura', 20, 280);
+    doc.text('Société anonyme au capital de 100 000 000 Fcfa - RC 2001.B.1604 - NINEA 2083913253', 20, 285);
     
     doc.save('Facture_' + String(f.reference) + '.pdf');
+  };
+  
+  // Fonction pour convertir un nombre en lettres (simplifié)
+  const nombreEnLettres = (n) => {
+    if (!n || n === 0) return 'zéro franc CFA';
+    
+    const unites = ['', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf', 'dix', 'onze', 'douze', 'treize', 'quatorze', 'quinze', 'seize', 'dix-sept', 'dix-huit', 'dix-neuf'];
+    const dizaines = ['', '', 'vingt', 'trente', 'quarante', 'cinquante', 'soixante', 'soixante', 'quatre-vingt', 'quatre-vingt'];
+    
+    const convertirMoinsDeMillle = (num) => {
+      if (num < 20) return unites[num];
+      if (num < 100) {
+        const d = Math.floor(num / 10);
+        const u = num % 10;
+        if (d === 7 || d === 9) return dizaines[d] + (u === 1 ? '-et-' : '-') + unites[10 + u];
+        return dizaines[d] + (u === 1 && d !== 8 ? '-et-' : (u > 0 ? '-' : '')) + unites[u];
+      }
+      const c = Math.floor(num / 100);
+      const r = num % 100;
+      return (c === 1 ? 'cent' : unites[c] + ' cent') + (r > 0 ? ' ' + convertirMoinsDeMillle(r) : (c > 1 && r === 0 ? 's' : ''));
+    };
+    
+    const num = Math.round(parseFloat(n));
+    if (num >= 1000000000) return fmtSimple(num) + ' francs CFA';
+    
+    let result = '';
+    const milliards = Math.floor(num / 1000000000);
+    const millions = Math.floor((num % 1000000000) / 1000000);
+    const milliers = Math.floor((num % 1000000) / 1000);
+    const reste = num % 1000;
+    
+    if (milliards > 0) result += convertirMoinsDeMillle(milliards) + ' milliard' + (milliards > 1 ? 's' : '') + ' ';
+    if (millions > 0) result += convertirMoinsDeMillle(millions) + ' million' + (millions > 1 ? 's' : '') + ' ';
+    if (milliers > 0) result += (milliers === 1 ? 'mille' : convertirMoinsDeMillle(milliers) + ' mille') + ' ';
+    if (reste > 0) result += convertirMoinsDeMillle(reste);
+    
+    return result.trim() + ' francs CFA';
+  };
+  
+  // Fonction pour envoyer par email
+  const sendByEmail = async (f) => {
+    const email = prompt('Entrez l\'adresse email du client:', f.clients?.email || '');
+    if (!email) return;
+    
+    // Génération du PDF en base64
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF();
+    // ... (même contenu que exportPDF)
+    // Pour l'instant, on simule l'envoi
+    
+    alert(`📧 Fonctionnalité en cours de développement.\n\nPour envoyer la facture ${f.reference} à ${email}, veuillez:\n1. Télécharger le PDF\n2. L'envoyer manuellement par email`);
+    
+    // Télécharger le PDF
+    exportPDF(f);
   };
 
   const stats = {
@@ -4555,8 +4800,9 @@ const FacturationPage = () => {
             {header: 'Statut', render: r => <Badge color={INVOICE_STATUS[r.statut]?.color}>{INVOICE_STATUS[r.statut]?.label}</Badge>}
           ]} data={filteredFactures} actions={r => (
             <div className="flex gap-1">
-              <Button variant="ghost" size="xs" onClick={() => exportPDF(r)} title="PDF">📄</Button>
-              {r.statut === 'draft' && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'sent')} title="Envoyer">📤</Button>}
+              <Button variant="ghost" size="xs" onClick={() => exportPDF(r)} title="Télécharger PDF">📄</Button>
+              <Button variant="ghost" size="xs" onClick={() => sendByEmail(r)} title="Envoyer par email">📧</Button>
+              {r.statut === 'draft' && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'sent')} title="Marquer envoyée">📤</Button>}
               {(r.statut === 'sent' || r.statut === 'partial') && <Button variant="ghost" size="xs" onClick={() => openEncaissement(r)} title="Encaisser">💰</Button>}
               {(r.statut === 'sent' || r.statut === 'partial') && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'paid')} title="Payé 100%">✅</Button>}
             </div>
