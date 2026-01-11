@@ -1384,11 +1384,24 @@ const MainApp = ({user, onLogout}) => {
   const [orgData, setOrgData] = useState(null);
   const [aboData, setAboData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState('dashboard');
+  // Récupérer la page sauvegardée ou 'dashboard' par défaut
+  const [page, setPageState] = useState(() => {
+    try {
+      return localStorage.getItem('missura_current_page') || 'dashboard';
+    } catch { return 'dashboard'; }
+  });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [viewMode, setViewMode] = useState('org'); // 'admin' ou 'org' - défaut: org
   const [userMenuOpen, setUserMenuOpen] = useState(false); // Menu utilisateur
   const isSuperAdmin = SUPER_ADMINS.includes(user?.email);
+  
+  // Wrapper pour setPage qui sauvegarde aussi dans localStorage
+  const setPage = (newPage) => {
+    setPageState(newPage);
+    try {
+      localStorage.setItem('missura_current_page', newPage);
+    } catch {}
+  };
 
   useEffect(() => { loadUser(); }, [user]);
 
@@ -2501,23 +2514,23 @@ const DashboardPage = () => {
           <div className="space-y-4">
             <div>
               <div className="flex justify-between text-sm mb-2">
-                <span className="text-slate-600">Budget total</span>
+                <span className="text-slate-600">Budget total (HT)</span>
                 <span className="font-medium">{fmtMoney(stats.budgetTotal)}</span>
               </div>
               <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
                 <div 
                   className="h-full bg-gradient-to-r from-blue-500 to-green-500 rounded-full transition-all"
-                  style={{width: `${stats.budgetTotal > 0 ? Math.min((stats.caFacture / stats.budgetTotal) * 100, 100) : 0}%`}}
+                  style={{width: `${stats.budgetTotal > 0 ? Math.min((stats.caFactureHT / stats.budgetTotal) * 100, 100) : 0}%`}}
                 ></div>
               </div>
               <div className="flex justify-between text-xs mt-1 text-slate-400">
-                <span>Facturé: {fmtMoney(stats.caFacture)}</span>
-                <span>{stats.budgetTotal > 0 ? Math.round((stats.caFacture / stats.budgetTotal) * 100) : 0}%</span>
+                <span>Facturé (HT): {fmtMoney(stats.caFactureHT)}</span>
+                <span>{stats.budgetTotal > 0 ? Math.round((stats.caFactureHT / stats.budgetTotal) * 100) : 0}%</span>
               </div>
             </div>
             <div className="pt-4 border-t">
               <div className="flex justify-between items-center">
-                <span className="text-slate-600">Reste à facturer</span>
+                <span className="text-slate-600">Reste à facturer (HT)</span>
                 <span className="text-xl font-bold text-amber-600">{fmtMoney(stats.resteFacturer)}</span>
               </div>
             </div>
@@ -6833,8 +6846,8 @@ const RapportsPage = () => {
                 <ProgressBar value={data.caEncaisse} max={data.caTotal || 1} color="green" />
               </div>
               <div>
-                <div className="flex justify-between text-sm mb-2"><span>Consommation budget</span><span className="font-medium">{data.budgetTotal > 0 ? Math.round((data.caTotal / data.budgetTotal) * 100) : 0}%</span></div>
-                <ProgressBar value={data.caTotal} max={data.budgetTotal || 1} color="blue" />
+                <div className="flex justify-between text-sm mb-2"><span>Consommation budget (HT)</span><span className="font-medium">{data.budgetTotal > 0 ? Math.round(((data.caTotalHT || 0) / data.budgetTotal) * 100) : 0}%</span></div>
+                <ProgressBar value={data.caTotalHT || 0} max={data.budgetTotal || 1} color="blue" />
               </div>
               <div>
                 <div className="flex justify-between text-sm mb-2"><span>Production vs Facturation</span><span className="font-medium">{data.production > 0 ? Math.round((data.caTotal / data.production) * 100) : 0}%</span></div>
