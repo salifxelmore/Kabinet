@@ -410,20 +410,20 @@ const Card = ({title, subtitle, children, action, className, collapsible, defaul
 const StatCard = ({title, value, subtitle, icon, color = 'blue', trend, onClick}) => {
   const colors = {blue: 'bg-blue-500', green: 'bg-emerald-500', purple: 'bg-purple-500', amber: 'bg-amber-500', red: 'bg-red-500', cyan: 'bg-cyan-500', slate: 'bg-slate-500'};
   return (
-    <div className={cn('card p-6 transition-all hover:shadow-lg', onClick && 'cursor-pointer')} onClick={onClick}>
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-slate-500 text-sm font-medium">{title}</p>
-          <p className="text-2xl font-bold text-slate-800 mt-1">{value}</p>
-          {subtitle && <p className="text-slate-400 text-sm mt-1">{subtitle}</p>}
+    <div className={cn('card p-3 sm:p-4 lg:p-6 transition-all hover:shadow-lg', onClick && 'cursor-pointer')} onClick={onClick}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-slate-500 text-xs sm:text-sm font-medium truncate">{title}</p>
+          <p className="text-lg sm:text-xl lg:text-2xl font-bold text-slate-800 mt-0.5 sm:mt-1 truncate">{value}</p>
+          {subtitle && <p className="text-slate-400 text-xs sm:text-sm mt-0.5 sm:mt-1 truncate">{subtitle}</p>}
           {trend !== undefined && (
-            <div className={cn('flex items-center gap-1 mt-2 text-sm font-medium', trend >= 0 ? 'text-emerald-500' : 'text-red-500')}>
+            <div className={cn('flex items-center gap-1 mt-1 sm:mt-2 text-xs sm:text-sm font-medium', trend >= 0 ? 'text-emerald-500' : 'text-red-500')}>
               <span>{trend >= 0 ? '↑' : '↓'}</span>
               <span>{Math.abs(trend)}%</span>
             </div>
           )}
         </div>
-        <div className={cn('w-12 h-12 rounded-xl flex items-center justify-center text-white text-xl', colors[color])}>{icon}</div>
+        <div className={cn('w-8 h-8 sm:w-10 sm:h-10 lg:w-12 lg:h-12 rounded-lg sm:rounded-xl flex-shrink-0 flex items-center justify-center text-white text-base sm:text-lg lg:text-xl', colors[color])}>{icon}</div>
       </div>
     </div>
   );
@@ -3280,10 +3280,10 @@ const CRMPage = () => {
 
         {tab === 'opportunites' && (
           <Card action={<Button size="sm" onClick={openNewOpp} icon="➕">Opportunité</Button>}>
-            <div className="grid grid-cols-3 gap-4 mb-6 p-4 bg-slate-50 rounded-xl">
-              <div className="text-center"><div className="text-2xl font-bold">{oppActives.length}</div><div className="text-sm text-slate-500">En cours</div></div>
-              <div className="text-center"><div className="text-2xl font-bold text-green-600">{fmtMoney(totalPipeline)}</div><div className="text-sm text-slate-500">Pipeline pondéré</div></div>
-              <div className="text-center"><div className="text-2xl font-bold">{opportunites.filter(o => o.stage === 'gagne').length}</div><div className="text-sm text-slate-500">Gagnées</div></div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6 p-3 sm:p-4 bg-slate-50 rounded-xl">
+              <div className="text-center"><div className="text-xl sm:text-2xl font-bold">{oppActives.length}</div><div className="text-xs sm:text-sm text-slate-500">En cours</div></div>
+              <div className="text-center"><div className="text-xl sm:text-2xl font-bold text-green-600">{fmtMoney(totalPipeline)}</div><div className="text-xs sm:text-sm text-slate-500">Pipeline pondéré</div></div>
+              <div className="text-center"><div className="text-xl sm:text-2xl font-bold">{opportunites.filter(o => o.stage === 'gagne').length}</div><div className="text-xs sm:text-sm text-slate-500">Gagnées</div></div>
             </div>
             <Table columns={[
               {header: 'Opportunité', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.code}</div></div>},
@@ -3457,7 +3457,7 @@ const CRMPage = () => {
             <Select label="Client / Prospect" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={allClientsAndProspects.map(c => ({value: c.id, label: c.nom}))} required />
           )}
           
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
             <Input label="Montant (FCFA)" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} />
             <Input label="Probabilité (%)" type="number" value={form.probabilite} onChange={v => setForm(p => ({...p, probabilite: v}))} min={0} max={100} />
             <Select label="Étape" value={form.stage} onChange={v => setForm(p => ({...p, stage: v}))} options={OPPORTUNITY_STAGES.map(s => ({value: s.id, label: s.nom}))} />
@@ -3816,11 +3816,11 @@ const MissionsPage = () => {
       <Modal isOpen={modal === 'acomptes'} onClose={() => setModal(null)} title={`Acomptes - ${editItem?.nom}`} size="md">
         {editItem && (
           <div>
-            <div className="p-4 bg-slate-50 rounded-xl mb-4">
-              <div className="grid grid-cols-3 gap-4 text-center">
-                <div><div className="text-sm text-slate-500">Budget</div><div className="text-xl font-bold">{fmtMoney(editItem.budget_montant)}</div></div>
-                <div><div className="text-sm text-slate-500">Facturé</div><div className="text-xl font-bold text-green-600">{fmtMoney(getMissionTotalFacture(editItem))}</div></div>
-                <div><div className="text-sm text-slate-500">Reste</div><div className="text-xl font-bold text-amber-600">{fmtMoney(getMissionResteFacturer(editItem))}</div></div>
+            <div className="p-3 sm:p-4 bg-slate-50 rounded-xl mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 text-center">
+                <div><div className="text-xs sm:text-sm text-slate-500">Budget</div><div className="text-lg sm:text-xl font-bold">{fmtMoney(editItem.budget_montant)}</div></div>
+                <div><div className="text-xs sm:text-sm text-slate-500">Facturé</div><div className="text-lg sm:text-xl font-bold text-green-600">{fmtMoney(getMissionTotalFacture(editItem))}</div></div>
+                <div><div className="text-xs sm:text-sm text-slate-500">Reste</div><div className="text-lg sm:text-xl font-bold text-amber-600">{fmtMoney(getMissionResteFacturer(editItem))}</div></div>
               </div>
               <ProgressBar value={getMissionTotalFacture(editItem)} max={editItem.budget_montant} color="green" className="mt-4" />
             </div>
@@ -5128,7 +5128,7 @@ const CongesPage = () => {
 
       {/* Carte récapitulative du solde */}
       {tab === 'mes' && (
-        <div className="grid grid-cols-5 gap-4 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 mb-6">
           <StatCard title="Report antérieur" value={joursReportAnterieurs + 'j'} icon="📥" color="slate" />
           <StatCard title="Jours acquis" value={(joursAcquis - joursReportAnterieurs) + 'j'} icon="📅" color="blue" subtitle={`(${moisAnciennete} mois × 2j)`} />
           <StatCard title="Jours pris" value={joursPris + 'j'} icon="🏖️" color="amber" />
@@ -5612,7 +5612,7 @@ const FacturationPage = () => {
       )}
       
       <TabContent tabKey={tab}>
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
         <div className="card-animate"><StatCard title="Total facturé" value={fmtMoney(stats.total)} icon="📄" color="blue" /></div>
         <div className="card-animate"><StatCard title="Encaissé" value={fmtMoney(stats.encaisse)} icon="✅" color="green" /></div>
         <div className="card-animate"><StatCard title="En attente" value={fmtMoney(stats.enAttente)} icon="⏳" color="amber" /></div>
@@ -5695,19 +5695,19 @@ const FacturationPage = () => {
             const isDepassement = (parseFloat(form.montant_ht) || 0) > budgetRestant;
             
             return (
-              <div className={cn('p-4 rounded-xl', isDepassement ? 'bg-red-50 border border-red-200' : 'bg-blue-50')}>
-                <div className="grid grid-cols-3 gap-4 text-center text-sm">
+              <div className={cn('p-3 sm:p-4 rounded-xl', isDepassement ? 'bg-red-50 border border-red-200' : 'bg-blue-50')}>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 text-center text-sm">
                   <div>
-                    <div className="text-slate-500">Budget mission</div>
-                    <div className="font-bold text-lg">{fmtMoney(mission.budget_montant)}</div>
+                    <div className="text-slate-500 text-xs sm:text-sm">Budget mission</div>
+                    <div className="font-bold text-base sm:text-lg">{fmtMoney(mission.budget_montant)}</div>
                   </div>
                   <div>
-                    <div className="text-slate-500">Déjà facturé</div>
-                    <div className="font-bold text-lg text-amber-600">{fmtMoney(dejaFacture)}</div>
+                    <div className="text-slate-500 text-xs sm:text-sm">Déjà facturé</div>
+                    <div className="font-bold text-base sm:text-lg text-amber-600">{fmtMoney(dejaFacture)}</div>
                   </div>
                   <div>
-                    <div className="text-slate-500">Reste à facturer</div>
-                    <div className={cn('font-bold text-lg', budgetRestant >= 0 ? 'text-green-600' : 'text-red-600')}>{fmtMoney(budgetRestant)}</div>
+                    <div className="text-slate-500 text-xs sm:text-sm">Reste à facturer</div>
+                    <div className={cn('font-bold text-base sm:text-lg', budgetRestant >= 0 ? 'text-green-600' : 'text-red-600')}>{fmtMoney(budgetRestant)}</div>
                   </div>
                 </div>
                 {isDepassement && (
@@ -5719,11 +5719,11 @@ const FacturationPage = () => {
             );
           })()}
           
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
             <Input label="Date émission" type="date" value={form.date_emission} onChange={v => setForm(p => ({...p, date_emission: v}))} />
             <Input label="Date échéance" type="date" value={form.date_echeance} onChange={v => setForm(p => ({...p, date_echeance: v}))} />
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
             <Input label="Montant HT (FCFA)" type="number" value={form.montant_ht} onChange={v => setForm(p => ({...p, montant_ht: v}))} />
             <Input label="TVA %" type="number" value={form.taux_tva} onChange={v => setForm(p => ({...p, taux_tva: v}))} />
             <div><label className="block text-sm font-medium mb-1.5">Total TTC</label><div className="px-4 py-2.5 bg-green-50 rounded-xl font-bold text-green-700">{fmtMoney((form.montant_ht || 0) * (1 + (form.taux_tva || 0) / 100))}</div></div>
@@ -5958,7 +5958,7 @@ const NotesFraisPage = () => {
       />
 
       {tab === 'mes' && (
-        <div className="grid grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
           <StatCard title="Total soumis" value={fmtMoney(stats.totalMes)} icon="📋" color="blue" />
           <StatCard title="En attente" value={fmtMoney(stats.enAttente)} icon="⏳" color="amber" />
           <StatCard title="Approuvé" value={fmtMoney(stats.approuve)} icon="✅" color="green" />
