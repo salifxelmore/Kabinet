@@ -4967,13 +4967,89 @@ const CongesPage = () => {
     const isVal = (validRes.data || []).some(v => v.collaborateur_id === collab?.id);
     setIsValidateur(isVal || isAdmin);
     
-    // Vérifier si un import a déjà été fait (chercher un congé de type 'report_anterieur')
-    const hasImport = (congesRes.data || []).some(c => c.type_conge === 'report_anterieur' && c.utilisateur_id === user.id);
+    // ====== GESTION DU REPORT AUTOMATIQUE PAR ANNÉE ======
+    const anneeEnCours = new Date().getFullYear();
+    const mesCongesData = (congesRes.data || []).filter(c => c.utilisateur_id === user.id);
+    
+    // Chercher le report de l'année en cours
+    const reportAnneeEnCours = mesCongesData.find(c => 
+      c.type_conge === 'report_anterieur' && 
+      c.annee_reference === anneeEnCours
+    );
+    
+    // Chercher un import manuel initial (sans année de référence ou avec annee_reference null)
+    const importInitial = mesCongesData.find(c => 
+      c.type_conge === 'report_anterieur' && 
+      !c.annee_reference
+    );
+    
+    // Si pas de report pour l'année en cours, vérifier s'il faut en créer un automatiquement
+    if (!reportAnneeEnCours && user.id) {
+      const anneePrecedente = anneeEnCours - 1;
+      
+      // Calculer le solde de l'année précédente
+      // 1. Report de l'année précédente (ou import initial)
+      const reportAnneePrecedente = mesCongesData.find(c => 
+        c.type_conge === 'report_anterieur' && 
+        c.annee_reference === anneePrecedente
+      );
+      const soldeReportPrec = reportAnneePrecedente?.nb_jours || importInitial?.nb_jours || 0;
+      
+      // 2. Jours acquis l'année précédente (24 jours max)
+      const joursAcquisPrec = 24;
+      
+      // 3. Jours pris l'année précédente (congés approuvés dont la date_debut est dans l'année précédente)
+      const congesPrisAnnePrec = mesCongesData.filter(c => 
+        c.statut === 'approved' && 
+        c.type_conge === 'conge_paye' &&
+        c.date_debut && 
+        new Date(c.date_debut).getFullYear() === anneePrecedente
+      );
+      const joursPrisPrec = congesPrisAnnePrec.reduce((s, c) => s + (c.nb_jours || 0), 0);
+      
+      // 4. Solde à reporter = Report précédent + Acquis - Pris
+      const soldeAReporter = soldeReportPrec + joursAcquisPrec - joursPrisPrec;
+      
+      // Créer le report automatique seulement si on a des données de l'année précédente
+      // et que le solde est différent de 0 ou qu'il y a eu des congés pris
+      const aDesCongesAnneePrecedente = congesPrisAnnePrec.length > 0 || reportAnneePrecedente || importInitial;
+      
+      if (aDesCongesAnneePrecedente && soldeAReporter !== 0) {
+        try {
+          await supabase.from('conges').insert([{
+            organisation_id: org.id,
+            utilisateur_id: user.id,
+            type_conge: 'report_anterieur',
+            date_debut: `${anneeEnCours}-01-01`,
+            date_fin: `${anneeEnCours}-01-01`,
+            nb_jours: Math.max(0, soldeAReporter), // Pas de report négatif
+            motif: `Report automatique de ${anneePrecedente}`,
+            statut: 'approved',
+            annee_reference: anneeEnCours
+          }]);
+          // Recharger les données après création du report
+          const {data: newConges} = await supabase.from('conges').select('*').eq('organisation_id', org.id).order('date_debut', {ascending: false});
+          const newCongesEnrichis = (newConges || []).map(c => {
+            const collab = (collabsRes.data || []).find(col => col.id === c.utilisateur_id || col.email === c.utilisateur_email);
+            return {...c, collaborateurs: collab || null};
+          });
+          setConges(newCongesEnrichis);
+        } catch(e) {
+          console.error('Erreur création report automatique:', e);
+        }
+      }
+    }
+    
+    // Vérifier si un import manuel a déjà été fait pour cette année
+    const hasImport = mesCongesData.some(c => 
+      c.type_conge === 'report_anterieur' && 
+      (c.annee_reference === anneeEnCours || !c.annee_reference)
+    );
     setImportDone(hasImport);
     
-    // Récupérer le solde antérieur s'il existe
-    const importConge = (congesRes.data || []).find(c => c.type_conge === 'report_anterieur' && c.utilisateur_id === user.id);
-    if (importConge) setSoldeAnterieur(importConge.nb_jours || 0);
+    // Récupérer le solde antérieur (priorité: report année en cours, sinon import initial)
+    const soldeAnt = reportAnneeEnCours?.nb_jours || importInitial?.nb_jours || 0;
+    setSoldeAnterieur(soldeAnt);
     
     setLoading(false);
   };
@@ -4984,32 +5060,52 @@ const CongesPage = () => {
   };
   
   const openImport = () => {
-    setForm({solde_anterieur: 0});
+    setForm({solde_anterieur: soldeAnterieur || 0});
     setModal('import');
   };
   
   const saveImport = async () => {
     const solde = parseFloat(form.solde_anterieur) || 0;
-    if (solde <= 0) return alert('Le solde doit être positif');
+    if (solde < 0) return alert('Le solde ne peut pas être négatif');
     
     setSaving(true);
     try {
-      // Créer un "congé" fictif de type report pour stocker le solde antérieur
-      // On utilise nb_jours négatif pour représenter un crédit
-      const {error} = await supabase.from('conges').insert([{
-        organisation_id: org.id,
-        utilisateur_id: user.id,
-        type_conge: 'report_anterieur',
-        date_debut: today(),
-        date_fin: today(),
-        nb_jours: solde, // Positif = crédit de jours
-        motif: 'Import solde antérieur',
-        statut: 'approved'
-      }]);
-      if (error) throw error;
+      const anneeEnCours = new Date().getFullYear();
+      
+      // Vérifier s'il existe déjà un report pour cette année
+      const {data: existing} = await supabase.from('conges')
+        .select('id')
+        .eq('utilisateur_id', user.id)
+        .eq('type_conge', 'report_anterieur')
+        .eq('annee_reference', anneeEnCours)
+        .single();
+      
+      if (existing) {
+        // Mettre à jour le report existant
+        const {error} = await supabase.from('conges').update({
+          nb_jours: solde,
+          motif: `Solde modifié manuellement le ${fmtDate(today())}`
+        }).eq('id', existing.id);
+        if (error) throw error;
+      } else {
+        // Créer un nouveau report pour l'année en cours
+        const {error} = await supabase.from('conges').insert([{
+          organisation_id: org.id,
+          utilisateur_id: user.id,
+          type_conge: 'report_anterieur',
+          date_debut: `${anneeEnCours}-01-01`,
+          date_fin: `${anneeEnCours}-01-01`,
+          nb_jours: solde,
+          motif: 'Import solde initial',
+          statut: 'approved',
+          annee_reference: anneeEnCours
+        }]);
+        if (error) throw error;
+      }
+      
       setModal(null);
       loadData();
-      alert('Solde antérieur importé avec succès !');
+      alert('Solde antérieur enregistré avec succès !');
     } catch(e) { alert('Erreur: ' + e.message); }
     setSaving(false);
   };
@@ -5073,22 +5169,48 @@ const CongesPage = () => {
     return validDepts.includes(c.collaborateurs?.departement_id);
   }) : [];
   
-  const congesApprouves = mesConges.filter(c => c.statut === 'approved' && c.type_conge === 'conge_paye');
-  
-  // Récupérer le solde antérieur importé
-  const importConge = conges.find(c => c.type_conge === 'report_anterieur' && c.utilisateur_id === user.id);
-  const joursReportAnterieurs = importConge?.nb_jours || 0;
-
-  // Calcul du solde de congés
-  // Acquisition: 2 jours par mois d'ancienneté (24 jours/an)
-  // On utilise la date d'entrée de l'utilisateur ou défaut au 1er janvier de l'année
-  const dateEntree = collab?.date_entree ? new Date(collab.date_entree) : new Date(new Date().getFullYear(), 0, 1);
+  // ====== CALCUL DU SOLDE DE CONGÉS - ANNÉE CIVILE ======
+  const anneeEnCours = new Date().getFullYear();
   const maintenant = new Date();
-  const moisAnciennete = Math.floor((maintenant - dateEntree) / (1000 * 60 * 60 * 24 * 30));
-  const joursAcquis = Math.min(moisAnciennete * 2, 24) + joursReportAnterieurs; // Acquis + report antérieur
+  
+  // Récupérer le report de l'année en cours
+  const reportAnneeEnCours = conges.find(c => 
+    c.type_conge === 'report_anterieur' && 
+    c.utilisateur_id === user.id &&
+    c.annee_reference === anneeEnCours
+  );
+  // Ou l'import initial (sans année de référence)
+  const importInitial = conges.find(c => 
+    c.type_conge === 'report_anterieur' && 
+    c.utilisateur_id === user.id &&
+    !c.annee_reference
+  );
+  const joursReportAnterieurs = reportAnneeEnCours?.nb_jours || importInitial?.nb_jours || 0;
+  
+  // Calcul des jours acquis depuis le 1er janvier de l'année en cours
+  // Règle: 2 jours par mois écoulé (le mois en cours compte si on est après le 15)
+  const moisEcoules = maintenant.getMonth() + (maintenant.getDate() >= 15 ? 1 : 0);
+  const joursAcquisAnnee = Math.min(moisEcoules * 2, 24);
+  
+  // Jours pris cette année (congés approuvés dont la date_debut est dans l'année en cours)
+  const congesApprouves = mesConges.filter(c => 
+    c.statut === 'approved' && 
+    c.type_conge === 'conge_paye' &&
+    c.date_debut &&
+    new Date(c.date_debut).getFullYear() === anneeEnCours
+  );
   const joursPris = congesApprouves.reduce((s, c) => s + (c.nb_jours || 0), 0);
-  const soldeConges = joursAcquis - joursPris; // Peut être négatif (anticipation autorisée)
-  const joursEnAttente = mesConges.filter(c => c.statut === 'pending' && c.type_conge === 'conge_paye').reduce((s, c) => s + (c.nb_jours || 0), 0);
+  
+  // Solde = Report antérieur + Acquis cette année - Pris cette année
+  const soldeConges = joursReportAnterieurs + joursAcquisAnnee - joursPris;
+  
+  // Jours en attente de validation
+  const joursEnAttente = mesConges.filter(c => 
+    c.statut === 'pending' && 
+    c.type_conge === 'conge_paye' &&
+    c.date_debut &&
+    new Date(c.date_debut).getFullYear() === anneeEnCours
+  ).reduce((s, c) => s + (c.nb_jours || 0), 0);
 
   // Tabs dynamiques selon permissions
   const tabs = [
@@ -5117,7 +5239,7 @@ const CongesPage = () => {
         </div>
       )}
       <PageHeader title="Congés & Absences" 
-        subtitle={`Solde: ${soldeConges} jours ${soldeConges < 0 ? '(anticipation)' : 'disponibles'}`}
+        subtitle={`Solde ${anneeEnCours}: ${soldeConges} jours ${soldeConges < 0 ? '(anticipation)' : 'disponibles'}`}
         tabs={tabs}
         activeTab={tab} onTabChange={setTab}
         action={<div className="flex gap-2">
@@ -5129,9 +5251,9 @@ const CongesPage = () => {
       {/* Carte récapitulative du solde */}
       {tab === 'mes' && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 mb-6">
-          <StatCard title="Report antérieur" value={joursReportAnterieurs + 'j'} icon="📥" color="slate" />
-          <StatCard title="Jours acquis" value={(joursAcquis - joursReportAnterieurs) + 'j'} icon="📅" color="blue" subtitle={`(${moisAnciennete} mois × 2j)`} />
-          <StatCard title="Jours pris" value={joursPris + 'j'} icon="🏖️" color="amber" />
+          <StatCard title={`Report ${anneeEnCours}`} value={joursReportAnterieurs + 'j'} icon="📥" color="slate" subtitle="Solde année préc." />
+          <StatCard title="Acquis en cours" value={joursAcquisAnnee + 'j'} icon="📅" color="blue" subtitle={`(${moisEcoules} mois × 2j)`} />
+          <StatCard title={`Pris en ${anneeEnCours}`} value={joursPris + 'j'} icon="🏖️" color="amber" />
           <StatCard title="En attente" value={joursEnAttente + 'j'} icon="⏳" color="purple" />
           <StatCard title="Solde disponible" value={soldeConges + 'j'} icon={soldeConges < 0 ? '⚠️' : '✅'} color={soldeConges < 0 ? 'red' : 'green'} />
         </div>
@@ -5184,22 +5306,31 @@ const CongesPage = () => {
       </Modal>
 
       {/* Modal Import solde antérieur */}
-      <Modal isOpen={modal === 'import'} onClose={() => setModal(null)} title="Importer solde antérieur" size="sm">
+      <Modal isOpen={modal === 'import'} onClose={() => setModal(null)} title={`Solde d'ouverture ${anneeEnCours}`} size="sm">
         <div className="space-y-4">
-          <div className="p-4 bg-amber-50 rounded-xl text-amber-700 text-sm">
-            <strong>⚠️ Important:</strong> Cette opération ne peut être effectuée qu'une seule fois. Entrez le solde de congés que vous aviez avant d'utiliser Missura.
+          <div className="p-4 bg-blue-50 rounded-xl text-blue-700 text-sm">
+            <strong>📋 Information:</strong> Entrez le solde de congés reporté de l'année précédente (jours non consommés en {anneeEnCours - 1}).
+            <div className="mt-2 text-xs text-blue-600">
+              À partir de l'année prochaine, ce report sera calculé automatiquement.
+            </div>
           </div>
           <Input 
-            label="Solde antérieur (jours)" 
+            label={`Solde d'ouverture ${anneeEnCours} (jours)`}
             type="number" 
             value={form.solde_anterieur} 
             onChange={v => setForm(p => ({...p, solde_anterieur: v}))} 
             placeholder="Ex: 12"
+            min={0}
             required 
           />
+          {joursReportAnterieurs > 0 && (
+            <div className="p-3 bg-slate-50 rounded-lg text-sm text-slate-600">
+              Valeur actuelle: <strong>{joursReportAnterieurs} jours</strong>
+            </div>
+          )}
           <div className="flex gap-3 pt-4">
             <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
-            <Button onClick={saveImport} loading={saving} className="flex-1">Importer</Button>
+            <Button onClick={saveImport} loading={saving} className="flex-1">Enregistrer</Button>
           </div>
         </div>
       </Modal>
