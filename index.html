@@ -5738,7 +5738,7 @@ const RapportsPage = () => {
     setLoading(true);
     const {start, end} = getPeriodDates();
     
-    const [temps, factures, collabs, missions, clients, conges, affectations, departements] = await Promise.all([
+    const [temps, factures, collabs, missions, clients, conges, affectations, departements, utilisateurs] = await Promise.all([
       supabase.from('saisies_temps').select('*').eq('organisation_id', org.id),
       supabase.from('factures').select('*').eq('organisation_id', org.id),
       supabase.from('collaborateurs').select('*,grades:grade_id(nom,taux_journalier),departements:departement_id(nom)').eq('organisation_id', org.id).eq('actif', true),
@@ -5746,11 +5746,23 @@ const RapportsPage = () => {
       supabase.from('clients').select('*').eq('organisation_id', org.id),
       supabase.from('conges').select('*').eq('organisation_id', org.id).eq('statut', 'approved'),
       supabase.from('affectations').select('*').eq('organisation_id', org.id),
-      supabase.from('departements').select('*').eq('organisation_id', org.id)
+      supabase.from('departements').select('*').eq('organisation_id', org.id),
+      supabase.from('utilisateurs').select('id,auth_id,email').eq('organisation_id', org.id)
     ]);
 
     const allFactures = factures.data || [];
     const allTemps = temps.data || [];
+    const allUsers = utilisateurs.data || [];
+    
+    // Créer un mapping auth_id -> collaborateur (via email)
+    const collabByAuthId = {};
+    (collabs.data || []).forEach(c => {
+      // Trouver l'utilisateur avec le même email
+      const user = allUsers.find(u => u.email === c.email);
+      if (user?.auth_id) {
+        collabByAuthId[user.auth_id] = c;
+      }
+    });
     
     // Filtrer par période - utiliser date_emission ou created_at
     const tPeriod = allTemps.filter(t => t.date >= start && t.date <= end);
@@ -5829,10 +5841,16 @@ const RapportsPage = () => {
       .sort((a, b) => b.heures - a.heures)
       .slice(0, 10);
 
-    // Performance par collaborateur
+    // Performance par collaborateur (utiliser le mapping auth_id -> collab)
     const collabPerf = (collabs.data || []).map(c => {
-      const heures = tPeriod.filter(t => t.utilisateur_id === c.id).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
-      const hFact = tPeriod.filter(t => t.utilisateur_id === c.id && t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+      // Trouver l'auth_id de ce collaborateur
+      const user = allUsers.find(u => u.email === c.email);
+      const authId = user?.auth_id;
+      
+      // Filtrer les temps par auth_id
+      const heures = authId ? tPeriod.filter(t => t.utilisateur_id === authId).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0) : 0;
+      const hFact = authId ? tPeriod.filter(t => t.utilisateur_id === authId && t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0) : 0;
+      
       return {
         id: c.id,
         nom: `${c.prenom} ${c.nom}`,
@@ -5845,12 +5863,22 @@ const RapportsPage = () => {
       };
     }).sort((a, b) => b.taux - a.taux);
 
-    // Performance par département
+    // Performance par département (utiliser le mapping aussi)
     const deptPerf = (departements.data || []).map(d => {
       const deptCollabs = collabs.data?.filter(c => c.departement_id === d.id) || [];
-      const deptCollabIds = deptCollabs.map(c => c.id);
-      const heures = tPeriod.filter(t => deptCollabIds.includes(t.utilisateur_id)).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
-      const hFact = tPeriod.filter(t => deptCollabIds.includes(t.utilisateur_id) && t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+      
+      // Pour chaque collab du département, trouver son auth_id
+      let heures = 0;
+      let hFact = 0;
+      deptCollabs.forEach(c => {
+        const user = allUsers.find(u => u.email === c.email);
+        const authId = user?.auth_id;
+        if (authId) {
+          heures += tPeriod.filter(t => t.utilisateur_id === authId).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+          hFact += tPeriod.filter(t => t.utilisateur_id === authId && t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+        }
+      });
+      
       return {
         id: d.id,
         nom: d.nom,
