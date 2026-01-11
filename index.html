@@ -4267,7 +4267,7 @@ const TimesheetPage = () => {
     setLoading(true);
     const end = addDays(weekStart, 6);
     const [t, m, cat, h, cg, cl] = await Promise.all([
-      supabase.from('saisies_temps').select('*,projets(nom,code,client_id,facturable,saisie_bloquee)').eq('organisation_id', org.id).eq('utilisateur_id', user.id).gte('date', weekStart).lte('date', end),
+      supabase.from('saisies_temps').select('*,projets(nom,code,client_id,facturable)').eq('organisation_id', org.id).eq('utilisateur_id', user.id).gte('date', weekStart).lte('date', end),
       supabase.from('projets').select('*,clients(id,nom)').eq('organisation_id', org.id).in('statut', ['active', 'draft', 'completed']),
       supabase.from('categories_taches').select('*').eq('organisation_id', org.id),
       supabase.from('jours_feries').select('date,nom').eq('organisation_id', org.id),
@@ -4278,8 +4278,8 @@ const TimesheetPage = () => {
     
     // Filtrer missions selon permissions et statut de blocage
     let filteredMissions = (m.data || []).filter(mission => {
-      // Exclure les missions clôturées avec saisie bloquée
-      if (mission.statut === 'completed' && mission.saisie_bloquee) return false;
+      // Exclure les missions clôturées avec saisie bloquée (si le champ existe)
+      if (mission.statut === 'completed' && mission.saisie_bloquee === true) return false;
       return true;
     });
     
