@@ -440,9 +440,9 @@ const Table = ({columns, data, loading, empty = 'Aucune donnée', onRowClick, ac
           {data.length === 0 ? (
             <tr><td colSpan={columns.length + (actions ? 1 : 0)} className="px-4 py-12 text-center text-slate-400">{empty}</td></tr>
           ) : (
-            data.map((row, i) => (
-              <tr key={row.id || i} onClick={() => onRowClick?.(row)} className={cn('border-b border-slate-50 table-row transition-colors', onRowClick && 'cursor-pointer')}>
-                {columns.map((col, j) => <td key={j} className={cn('px-4 py-3 text-sm text-slate-600', col.className)}>{col.render ? col.render(row) : row[col.key]}</td>)}
+            data.map((row, rowIndex) => (
+              <tr key={row.id || rowIndex} onClick={() => onRowClick?.(row)} className={cn('border-b border-slate-50 table-row transition-colors', onRowClick && 'cursor-pointer')}>
+                {columns.map((col, j) => <td key={j} className={cn('px-4 py-3 text-sm text-slate-600', col.className)}>{col.render ? col.render(row, rowIndex) : row[col.key]}</td>)}
                 {actions && <td className="px-4 py-3 text-right">{actions(row)}</td>}
               </tr>
             ))
@@ -6082,9 +6082,9 @@ const RapportsPage = () => {
       .sort((a, b) => b.ca - a.ca)
       .slice(0, 10);
 
-    // Top missions par heures
+    // Top missions par heures (uniquement temps facturables sur missions facturables)
     const missionsHeures = {};
-    tPeriod.forEach(t => {
+    tPeriod.filter(t => t.facturable).forEach(t => {
       if (t.projet_id) {
         missionsHeures[t.projet_id] = (missionsHeures[t.projet_id] || 0) + (parseFloat(t.heures) || 0);
       }
@@ -6092,8 +6092,22 @@ const RapportsPage = () => {
     const topMissions = Object.entries(missionsHeures)
       .map(([id, heures]) => {
         const mission = m.find(x => x.id === id);
-        return {id, heures, nom: mission?.nom || 'Inconnue', code: mission?.code, budget: parseFloat(mission?.budget_heures) || 0};
+        // Ne garder que les missions facturables (pas Formation, Déplacement, etc.)
+        if (!mission || mission.facturable === false) return null;
+        const budgetHeures = parseFloat(mission?.budget_heures) || 0;
+        const budgetMontant = parseFloat(mission?.budget_montant) || 0;
+        const consomme = budgetHeures > 0 ? Math.round((heures / budgetHeures) * 100) : 0;
+        return {
+          id, 
+          heures, 
+          nom: mission?.nom || 'Inconnue', 
+          code: mission?.code, 
+          budget: budgetHeures,
+          budgetMontant,
+          consomme
+        };
       })
+      .filter(x => x !== null) // Retirer les missions non facturables
       .sort((a, b) => b.heures - a.heures)
       .slice(0, 10);
 
@@ -6569,20 +6583,24 @@ const RapportsPage = () => {
           </Card>
         </div>
 
-        <Card title="🏆 Top 10 Missions (Heures consommées)">
+        <Card title="🏆 Top 10 Missions (Heures facturables)">
           {data.topMissions?.length > 0 ? (
             <Table columns={[
               {header: '#', render: (r, i) => <span className="font-bold text-slate-400">{i + 1}</span>},
               {header: 'Mission', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.code}</div></div>},
-              {header: 'Heures', render: r => <span className="font-bold text-blue-600">{r.heures}h</span>},
-              {header: 'Budget', render: r => r.budget > 0 ? <span className="text-slate-500">{r.budget}h</span> : '-'},
+              {header: 'Heures', render: r => <span className="font-bold text-blue-600">{Math.round(r.heures)}h</span>},
+              {header: 'Budget', render: r => r.budget > 0 ? <span className="text-slate-600">{r.budget}h</span> : <span className="text-slate-400">-</span>},
               {header: 'Consommé', render: r => r.budget > 0 ? (
-                <div className="w-24">
-                  <ProgressBar value={r.heures} max={r.budget} color={r.heures > r.budget ? 'red' : 'blue'} size="sm" />
+                <div className="flex items-center gap-2">
+                  <div className="w-20">
+                    <ProgressBar value={r.heures} max={r.budget} color={r.consomme > 100 ? 'red' : r.consomme > 80 ? 'amber' : 'blue'} size="sm" />
+                  </div>
+                  <span className={`text-xs font-medium ${r.consomme > 100 ? 'text-red-600' : r.consomme > 80 ? 'text-amber-600' : 'text-blue-600'}`}>{r.consomme}%</span>
                 </div>
-              ) : '-'}
+              ) : <span className="text-slate-400">-</span>}
             ]} data={data.topMissions} />
           ) : <EmptyState icon="📊" title="Pas de données" />}
+        </Card>
         </Card>
       </>)}
 
@@ -6665,9 +6683,9 @@ const RapportsPage = () => {
               <div className="flex justify-between items-center p-4 bg-blue-50 rounded-xl">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">📝</div>
-                  <span className="text-blue-700 font-medium">Non facturé</span>
+                  <span className="text-blue-700 font-medium">Reste à facturer</span>
                 </div>
-                <span className="font-bold text-blue-700 text-lg">{fmtMoney(Math.max(0, data.production - data.caTotal))}</span>
+                <span className="font-bold text-blue-700 text-lg">{fmtMoney(Math.max(0, data.budgetTotal - data.caTotal))}</span>
               </div>
             </div>
           </Card>
@@ -7576,8 +7594,18 @@ const App = () => {
     supabase.auth.getSession().then(({data: {session}}) => {
       setUser(session?.user || null);
       setLoading(false);
+      // Nettoyer le hash de l'URL si l'utilisateur est connecté
+      if (session?.user && window.location.hash) {
+        history.replaceState(null, '', window.location.pathname);
+      }
     });
-    const {data: {subscription}} = supabase.auth.onAuthStateChange((e, s) => setUser(s?.user || null));
+    const {data: {subscription}} = supabase.auth.onAuthStateChange((e, s) => {
+      setUser(s?.user || null);
+      // Nettoyer le hash quand on se connecte
+      if (s?.user && window.location.hash) {
+        history.replaceState(null, '', window.location.pathname);
+      }
+    });
     return () => subscription.unsubscribe();
   }, []);
 
