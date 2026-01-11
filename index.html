@@ -2019,33 +2019,23 @@ const DashboardPage = () => {
     const mesHeuresFact = mesTemps.data?.filter(t => t.facturable).reduce((s, t) => s + (t.heures || 0), 0) || 0;
     const mesHeuresNonFact = mesHeuresTotal - mesHeuresFact;
     
-    // Heures par semaine (8 dernières semaines)
-    const heuresParSemaine = [];
-    const todayDate = new Date();
-    for (let i = 7; i >= 0; i--) {
-      const weekStart = new Date(todayDate);
-      weekStart.setDate(todayDate.getDate() - todayDate.getDay() - (i * 7) + 1);
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekStart.getDate() + 6);
+    // Heures par mois (Jan à Déc) pour l'année sélectionnée
+    const heuresParMois = [];
+    for (let i = 0; i < 12; i++) {
+      const monthStart = new Date(selectedYear, i, 1).toISOString().split('T')[0];
+      const monthEnd = new Date(selectedYear, i + 1, 0).toISOString().split('T')[0];
+      const mois = new Date(selectedYear, i, 1).toLocaleDateString('fr-FR', {month: 'short'});
       
-      // Formater les dates pour comparaison
-      const startStr = weekStart.toISOString().split('T')[0];
-      const endStr = weekEnd.toISOString().split('T')[0];
+      const tempsduMois = (mesTemps.data || []).filter(t => t.date && t.date >= monthStart && t.date <= monthEnd);
+      const heuresFact = tempsduMois.filter(t => t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+      const heuresNonFact = tempsduMois.filter(t => !t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
       
-      const heures = (mesTemps.data || []).filter(t => {
-        return t.date && t.date >= startStr && t.date <= endStr;
-      }).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
-      
-      // Numéro de semaine ISO
-      const getWeekNumber = (d) => {
-        const date = new Date(d);
-        date.setHours(0, 0, 0, 0);
-        date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
-        const week1 = new Date(date.getFullYear(), 0, 4);
-        return 1 + Math.round(((date - week1) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
-      };
-      
-      heuresParSemaine.push({semaine: `S${getWeekNumber(weekStart)}`, heures});
+      heuresParMois.push({
+        mois: mois.charAt(0).toUpperCase() + mois.slice(1),
+        facturable: heuresFact,
+        nonFacturable: heuresNonFact,
+        total: heuresFact + heuresNonFact
+      });
     }
     
     // Missions uniques
@@ -2074,7 +2064,7 @@ const DashboardPage = () => {
       fraisEnAttente,
       fraisApprouves,
       nbFrais: (mesFrais.data || []).length,
-      heuresParSemaine,
+      heuresParMois,
       missionsActuelles: mesMissions.data?.slice(0, 5) || []
     });
     
@@ -2189,9 +2179,26 @@ const DashboardPage = () => {
 
   // Dashboard Collaborateur (Junior/Senior)
   if (isCollaborateur) {
+    const maxHeures = Math.max(...(myStats.heuresParMois?.map(m => m.total) || [1]));
+    
     return (
       <div>
         <PageHeader title="Mon espace" subtitle={`Bienvenue, ${collab?.prenom || user.prenom} !`} />
+        
+        {/* Filtre année */}
+        <div className="flex items-center gap-4 mb-6 p-4 bg-white rounded-xl shadow-sm">
+          <span className="text-sm text-slate-600 font-medium">📅 Année :</span>
+          <select 
+            value={selectedYear} 
+            onChange={e => setSelectedYear(parseInt(e.target.value))}
+            className="input py-1.5 text-sm"
+          >
+            {[2024, 2025, 2026, 2027].map(y => (
+              <option key={y} value={y}>{y}</option>
+            ))}
+          </select>
+          <span className="text-xs text-slate-500">Statistiques de l'année {selectedYear}</span>
+        </div>
         
         {/* Stats personnelles */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -2202,20 +2209,41 @@ const DashboardPage = () => {
         </div>
         
         <div className="grid lg:grid-cols-2 gap-6">
-          {/* Graphique heures par semaine */}
-          <Card title="📊 Mes heures (8 dernières semaines)">
-            <div className="h-48">
-              <div className="flex items-end justify-between h-40 gap-2">
-                {myStats.heuresParSemaine?.map((s, i) => (
-                  <div key={i} className="flex-1 flex flex-col items-center">
-                    <div 
-                      className="w-full bg-gradient-to-t from-blue-500 to-blue-400 rounded-t-lg transition-all hover:from-blue-600 hover:to-blue-500"
-                      style={{height: `${Math.max((s.heures / 50) * 100, 5)}%`}}
-                      title={`${s.heures}h`}
-                    ></div>
-                    <div className="text-xs text-slate-400 mt-2">{s.semaine}</div>
-                  </div>
-                ))}
+          {/* Graphique heures par mois */}
+          <Card title={`📊 Mes heures ${selectedYear} (Facturable vs Non-facturable)`}>
+            <div className="h-56">
+              <div className="flex items-end justify-between h-44 gap-1 px-2">
+                {myStats.heuresParMois?.map((m, i) => {
+                  const factPct = maxHeures > 0 ? (m.facturable / maxHeures) * 100 : 0;
+                  const nonFactPct = maxHeures > 0 ? (m.nonFacturable / maxHeures) * 100 : 0;
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center group">
+                      <div className="w-full flex flex-col justify-end" style={{height: '100%'}}>
+                        {/* Barre non facturable */}
+                        <div 
+                          className="w-full bg-slate-300 rounded-t transition-all"
+                          style={{height: `${Math.max(nonFactPct, m.nonFacturable > 0 ? 3 : 0)}%`}}
+                          title={`Non fact: ${fmt(m.nonFacturable)}h`}
+                        ></div>
+                        {/* Barre facturable */}
+                        <div 
+                          className="w-full bg-green-500 rounded-t transition-all"
+                          style={{height: `${Math.max(factPct, m.facturable > 0 ? 3 : 0)}%`}}
+                          title={`Facturable: ${fmt(m.facturable)}h`}
+                        ></div>
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-1">{m.mois?.slice(0,3)}</div>
+                      <div className="hidden group-hover:block absolute -mt-16 bg-slate-800 text-white text-xs px-2 py-1 rounded">
+                        {fmt(m.total)}h
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Légende */}
+              <div className="flex justify-center gap-6 mt-3 text-xs">
+                <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500 rounded"></div>Facturable</div>
+                <div className="flex items-center gap-1"><div className="w-3 h-3 bg-slate-300 rounded"></div>Non facturable</div>
               </div>
             </div>
           </Card>
@@ -3795,7 +3823,19 @@ const StaffingPage = () => {
       if (a.collaborateur_id !== collabId) return false;
       return a.date >= weekStart && a.date <= addDays(weekStart, 4);
     });
-    return weekAff.reduce((s, a) => s + (a.heures || 0), 0);
+    const heuresAffectees = weekAff.reduce((s, a) => s + (a.heures || 0), 0);
+    
+    // Ajouter les heures de congés (8h par jour de congé)
+    let heuresConges = 0;
+    for (let i = 0; i < 5; i++) { // Lun à Ven
+      const dateStr = addDays(weekStart, i);
+      const conge = congesApprouves.find(cg => 
+        cg.collaborateur_id === collabId && dateStr >= cg.date_debut && dateStr <= cg.date_fin
+      );
+      if (conge) heuresConges += 8;
+    }
+    
+    return heuresAffectees + heuresConges;
   };
   
   // Export staffing
@@ -3917,10 +3957,11 @@ const StaffingPage = () => {
                         return (
                           <td key={d.date} className="px-1 py-2 text-center">
                             {conge ? (
-                              // Afficher congé
-                              <div className="bg-amber-100 text-amber-700 rounded-lg p-2 text-xs">
-                                <div className="font-medium">🏖️</div>
-                                <div className="text-[10px]">{conge.type_conge === 'conge_paye' ? 'Congé' : conge.type_conge === 'maladie' ? 'Maladie' : 'Absence'}</div>
+                              // Afficher congé comme 8h non facturable
+                              <div className="bg-amber-100 text-amber-700 rounded-lg p-2 text-xs" title={`${conge.type_conge === 'conge_paye' ? 'Congé payé' : conge.type_conge === 'maladie' ? 'Arrêt maladie' : 'Absence'} - Non facturable`}>
+                                <div className="font-medium">🏖️ {conge.type_conge === 'conge_paye' ? 'Congé' : conge.type_conge === 'maladie' ? 'Maladie' : 'Abs.'}</div>
+                                <div className="text-amber-600 font-bold">8h</div>
+                                <div className="text-[9px] text-amber-500">Non fact.</div>
                               </div>
                             ) : aff ? (
                               <div 
