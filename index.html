@@ -1900,20 +1900,22 @@ const DashboardPage = () => {
         return dateF && dateF >= start && dateF <= end;
       });
       
-      // CA Facturé sur la période
-      const caFacture = facturesPeriode.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
+      // CA Facturé sur la période (en HT pour comparaison avec budget)
+      const caFactureHT = facturesPeriode.reduce((s, f) => s + (parseFloat(f.montant_ht) || 0), 0);
+      const caFactureTTC = facturesPeriode.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
       
-      // CA Encaissé = somme de tous les montants_encaisse
+      // CA Encaissé = somme de tous les montants_encaisse (TTC car c'est ce qui est payé)
       const caEncaisse = allFactures.reduce((s, f) => s + (parseFloat(f.montant_encaisse) || 0), 0);
       
-      // CA en attente = Total facturé - Total encaissé
+      // CA en attente = Total facturé TTC - Total encaissé
       const caEnAttente = allFactures.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0) - caEncaisse;
       
-      // Budget total des missions
+      // Budget total des missions (en HT)
       const budgetTotal = projets.data?.reduce((s, p) => s + (parseFloat(p.budget_montant) || 0), 0) || 0;
       
-      // Reste à facturer = Budget - CA Facturé total
-      const resteFacturer = budgetTotal - allFactures.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
+      // Reste à facturer = Budget HT - CA Facturé HT (comparaison HT vs HT)
+      const caFactureHTTotal = allFactures.reduce((s, f) => s + (parseFloat(f.montant_ht) || 0), 0);
+      const resteFacturer = budgetTotal - caFactureHTTotal;
       
       // CA par mois (Janvier à Décembre de l'année sélectionnée)
       const now = new Date();
@@ -1975,7 +1977,7 @@ const DashboardPage = () => {
         projetsTotal: projets.data?.length || 0,
         heuresTotal, heuresFact,
         tauxCharge: heuresTotal > 0 ? Math.round((heuresFact / heuresTotal) * 100) : 0,
-        caEncaisse, caEnAttente, budgetTotal, caFacture, resteFacturer,
+        caEncaisse, caEnAttente, budgetTotal, caFacture: caFactureTTC, caFactureHT: caFactureHTTotal, resteFacturer,
         collaborateurs: allCollabs.filter(c => c.actif).length,
         facturesEnAttente: allFactures.filter(f => f.statut === 'sent' || f.statut === 'partial').length || 0,
         facturesPaid: allFactures.filter(f => f.statut === 'paid').length || 0
@@ -3116,22 +3118,25 @@ const MissionsPage = () => {
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [acomptes, setAcomptes] = useState([]);
+  const [factures, setFactures] = useState([]);
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    const [m, c, d, a, collabs, grades] = await Promise.all([
+    const [m, c, d, a, collabs, grades, f] = await Promise.all([
       supabase.from('projets').select('*,clients(nom),departements:departement_id(nom),responsable:responsable_id(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
       supabase.from('clients').select('id,nom').eq('organisation_id', org.id).eq('est_prospect', false),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
       supabase.from('acomptes').select('*').eq('organisation_id', org.id),
       supabase.from('collaborateurs').select('*,grades:grade_id(nom,niveau)').eq('organisation_id', org.id).eq('actif', true),
-      supabase.from('grades').select('*').eq('organisation_id', org.id)
+      supabase.from('grades').select('*').eq('organisation_id', org.id),
+      supabase.from('factures').select('id,projet_id,montant_ht,montant_total').eq('organisation_id', org.id)
     ]);
     setMissions(m.data || []);
     setClients(c.data || []);
     setDepts(d.data || []);
     setAcomptes(a.data || []);
+    setFactures(f.data || []);
     // Filtrer les collaborateurs avec grade >= Manager (niveau >= 3)
     const allCollabs = collabs.data || [];
     const mgrs = allCollabs.filter(c => c.grades?.niveau >= 3);
@@ -3240,7 +3245,9 @@ const MissionsPage = () => {
   };
 
   const getMissionAcomptes = (missionId) => acomptes.filter(a => a.projet_id === missionId);
-  const getMissionTotalFacture = (m) => getMissionAcomptes(m.id).reduce((s, a) => s + (a.montant || 0), 0);
+  // Utiliser les factures réelles (HT) pour comparaison avec budget
+  const getMissionFacturesHT = (missionId) => factures.filter(f => f.projet_id === missionId).reduce((s, f) => s + (parseFloat(f.montant_ht) || 0), 0);
+  const getMissionTotalFacture = (m) => getMissionFacturesHT(m.id);
   const getMissionResteFacturer = (m) => (m.budget_montant || 0) - getMissionTotalFacture(m);
   const getMissionProgress = (m) => m.budget_montant > 0 ? Math.round((getMissionTotalFacture(m) / m.budget_montant) * 100) : 0;
 
@@ -4600,6 +4607,40 @@ const FacturationPage = () => {
     setSaving(false);
   };
 
+  // Supprimer une facture
+  const deleteFacture = async (f) => {
+    const confirmMsg = f.statut === 'paid' 
+      ? `⚠️ Cette facture ${f.reference} est marquée comme PAYÉE (${fmtMoney(f.montant_encaisse)} encaissés).\n\nÊtes-vous sûr de vouloir la supprimer ?`
+      : `Supprimer la facture ${f.reference} (${fmtMoney(f.montant_total)}) ?\n\nCette action est irréversible.`;
+    
+    if (!confirm(confirmMsg)) return;
+    
+    try {
+      await supabase.from('factures').delete().eq('id', f.id);
+      loadData();
+    } catch(e) {
+      alert('Erreur: ' + e.message);
+    }
+  };
+
+  // Modifier une facture
+  const openEditFacture = (f) => {
+    setEditItem(f);
+    setForm({
+      reference: f.reference || '',
+      type_facture: f.type_facture || 'standard',
+      client_id: f.client_id || '',
+      projet_id: f.projet_id || '',
+      montant_ht: f.montant_ht || 0,
+      taux_tva: f.taux_tva || 18,
+      date_emission: f.date_emission || today(),
+      date_echeance: f.date_echeance || '',
+      description: f.description || '',
+      statut: f.statut || 'draft'
+    });
+    setModal('facture');
+  };
+
   const exportPDF = (f) => {
     const {jsPDF} = window.jspdf;
     const doc = new jsPDF();
@@ -4862,6 +4903,8 @@ const FacturationPage = () => {
               {r.statut === 'draft' && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'sent')} title="Marquer envoyée">📤</Button>}
               {(r.statut === 'sent' || r.statut === 'partial') && <Button variant="ghost" size="xs" onClick={() => openEncaissement(r)} title="Encaisser">💰</Button>}
               {(r.statut === 'sent' || r.statut === 'partial') && <Button variant="ghost" size="xs" onClick={() => updateStatus(r, 'paid')} title="Payé 100%">✅</Button>}
+              <Button variant="ghost" size="xs" onClick={() => openEditFacture(r)} title="Modifier">✏️</Button>
+              <Button variant="ghost" size="xs" onClick={() => deleteFacture(r)} title="Supprimer">🗑️</Button>
             </div>
           )} />
         </Card>
@@ -4869,7 +4912,7 @@ const FacturationPage = () => {
       </TabContent>
 
       {/* Modal Nouvelle Facture */}
-      <Modal isOpen={modal === 'facture'} onClose={() => setModal(null)} title="Nouvelle facture" size="lg">
+      <Modal isOpen={modal === 'facture'} onClose={() => {setModal(null); setEditItem(null);}} title={editItem ? 'Modifier facture' : 'Nouvelle facture'} size="lg">
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <Input label="Référence" value={form.reference} onChange={v => setForm(p => ({...p, reference: v}))} />
@@ -6089,18 +6132,22 @@ const RapportsPage = () => {
     const heuresFact = tPeriod.filter(t => t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
     const heuresNonFact = heuresTotal - heuresFact;
     
-    // CA Total facturé (toutes les factures, pas filtré par période pour avoir le vrai total)
+    // CA Total facturé TTC (pour affichage) et HT (pour comparaison budget)
     const caTotal = allFactures.reduce((s, x) => s + (parseFloat(x.montant_total) || 0), 0);
+    const caTotalHT = allFactures.reduce((s, x) => s + (parseFloat(x.montant_ht) || 0), 0);
     
-    // CA Encaissé = somme de tous les montants_encaisse
+    // CA Encaissé = somme de tous les montants_encaisse (TTC)
     const caEncaisse = allFactures.reduce((s, x) => s + (parseFloat(x.montant_encaisse) || 0), 0);
     
-    // CA En attente = Total facturé - Total encaissé
+    // CA En attente = Total facturé TTC - Total encaissé
     const caEnAttente = caTotal - caEncaisse;
     
     const m = missions.data || [];
     const missionsActives = m.filter(x => x.statut === 'active').length;
     const budgetTotal = m.reduce((s, x) => s + (parseFloat(x.budget_montant) || 0), 0);
+    
+    // Reste à facturer = Budget HT - CA Facturé HT
+    const resteAFacturer = budgetTotal - caTotalHT;
     
     // Production valorisée
     const tauxMoyen = collabs.data?.length > 0 ? collabs.data.reduce((s, c) => s + (parseFloat(c.grades?.taux_journalier) || 0), 0) / collabs.data.length / 8 : 0;
@@ -6248,7 +6295,7 @@ const RapportsPage = () => {
     setData({
       heuresTotal, heuresFact, heuresNonFact,
       tauxCharge: heuresTotal > 0 ? Math.round((heuresFact / heuresTotal) * 100) : 0,
-      caTotal, caEncaisse, caEnAttente, budgetTotal, production,
+      caTotal, caTotalHT, caEncaisse, caEnAttente, budgetTotal, resteAFacturer, production,
       rentabilite: budgetTotal > 0 ? Math.round((caEncaisse / budgetTotal) * 100) : 0,
       missionsActives, totalMissions: m.length,
       nbCollabs: collabs.data?.length || 0,
@@ -6741,9 +6788,9 @@ const RapportsPage = () => {
               <div className="flex justify-between items-center p-4 bg-blue-50 rounded-xl">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">📝</div>
-                  <span className="text-blue-700 font-medium">Reste à facturer</span>
+                  <span className="text-blue-700 font-medium">Reste à facturer (HT)</span>
                 </div>
-                <span className="font-bold text-blue-700 text-lg">{fmtMoney(Math.max(0, data.budgetTotal - data.caTotal))}</span>
+                <span className="font-bold text-blue-700 text-lg">{fmtMoney(Math.max(0, data.resteAFacturer || 0))}</span>
               </div>
             </div>
           </Card>
