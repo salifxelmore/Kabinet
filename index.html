@@ -3802,7 +3802,7 @@ const MissionsPage = () => {
                       <span className={cn(
                         "font-medium",
                         r.taches_progress === 100 ? "text-green-600" : 
-                        r.taches_progress >= 50 ? "text-blue-600" : "text-slate-600"
+                        r.taches_progress >= 50 ? "text-blue-600" : "text-amber-600"
                       )}>
                         {r.taches_progress}%
                       </span>
@@ -3811,7 +3811,7 @@ const MissionsPage = () => {
                     <ProgressBar 
                       value={r.taches_done} 
                       max={r.taches_total} 
-                      color={r.taches_progress === 100 ? 'green' : r.taches_progress >= 50 ? 'blue' : 'slate'} 
+                      color={r.taches_progress === 100 ? 'green' : r.taches_progress >= 50 ? 'blue' : 'amber'} 
                       size="sm" 
                       showLabel={false} 
                     />
