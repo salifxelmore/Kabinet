@@ -5754,28 +5754,23 @@ const RapportsPage = () => {
     const allTemps = temps.data || [];
     const allUsers = utilisateurs.data || [];
     
-    // DEBUG: Voir les données
-    console.log('=== DEBUG RAPPORTS ===');
-    console.log('Temps total:', allTemps.length, 'saisies');
-    console.log('Utilisateurs:', allUsers.length);
-    console.log('Collaborateurs:', collabs.data?.length);
-    if (allTemps.length > 0) {
-      console.log('Premier temps - utilisateur_id:', allTemps[0].utilisateur_id);
-    }
-    if (allUsers.length > 0) {
-      console.log('Premier utilisateur:', allUsers[0]);
-    }
-    if (collabs.data?.length > 0) {
-      console.log('Premier collab:', collabs.data[0].email);
-    }
+    // Mapping: Les saisies de temps utilisent utilisateur_id = ID de la table utilisateurs
+    // Il faut lier utilisateurs -> collaborateurs via l'email
+    const userIdToCollabId = {};
+    allUsers.forEach(u => {
+      // Trouver le collaborateur avec le même email
+      const collab = (collabs.data || []).find(c => c.email === u.email);
+      if (collab) {
+        userIdToCollabId[u.id] = collab.id;
+      }
+    });
     
-    // Créer un mapping auth_id -> collaborateur (via email)
-    const collabByAuthId = {};
-    (collabs.data || []).forEach(c => {
-      // Trouver l'utilisateur avec le même email
-      const user = allUsers.find(u => u.email === c.email);
-      if (user?.auth_id) {
-        collabByAuthId[user.auth_id] = c;
+    // Créer aussi un mapping inverse : collab.id -> user.id pour filtrer les temps
+    const collabIdToUserId = {};
+    allUsers.forEach(u => {
+      const collab = (collabs.data || []).find(c => c.email === u.email);
+      if (collab) {
+        collabIdToUserId[collab.id] = u.id;
       }
     });
     
@@ -5856,41 +5851,53 @@ const RapportsPage = () => {
       .sort((a, b) => b.heures - a.heures)
       .slice(0, 10);
 
-    // Performance par collaborateur (utiliser le mapping auth_id -> collab)
-    const collabPerf = (collabs.data || []).map(c => {
-      // Trouver l'auth_id de ce collaborateur
-      const user = allUsers.find(u => u.email === c.email);
-      const authId = user?.auth_id;
-      
-      // Filtrer les temps par auth_id
-      const heures = authId ? tPeriod.filter(t => t.utilisateur_id === authId).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0) : 0;
-      const hFact = authId ? tPeriod.filter(t => t.utilisateur_id === authId && t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0) : 0;
+    // Performance par utilisateur qui a saisi du temps
+    // D'abord, grouper les temps par utilisateur_id
+    const tempsByUser = {};
+    tPeriod.forEach(t => {
+      if (!tempsByUser[t.utilisateur_id]) {
+        tempsByUser[t.utilisateur_id] = { heures: 0, heuresFact: 0 };
+      }
+      tempsByUser[t.utilisateur_id].heures += parseFloat(t.heures) || 0;
+      if (t.facturable) {
+        tempsByUser[t.utilisateur_id].heuresFact += parseFloat(t.heures) || 0;
+      }
+    });
+    
+    // Créer la liste de performance
+    const collabPerf = Object.entries(tempsByUser).map(([userId, data]) => {
+      // Trouver l'utilisateur
+      const user = allUsers.find(u => u.id === userId);
+      // Essayer de trouver le collaborateur lié (par email ou utilisateur_id)
+      const collab = (collabs.data || []).find(c => c.email === user?.email || c.utilisateur_id === userId);
       
       return {
-        id: c.id,
-        nom: `${c.prenom} ${c.nom}`,
-        grade: c.grades?.nom || '-',
-        dept: c.departements?.nom || '-',
-        heures,
-        heuresFact: hFact,
-        taux: heures > 0 ? Math.round((hFact / heures) * 100) : 0,
-        production: hFact * (parseFloat(c.grades?.taux_journalier) || 0) / 8
+        id: userId,
+        nom: collab ? `${collab.prenom} ${collab.nom}` : (user?.nom ? `${user.prenom || ''} ${user.nom}` : 'Utilisateur'),
+        grade: collab?.grades?.nom || '-',
+        dept: collab?.departements?.nom || '-',
+        heures: data.heures,
+        heuresFact: data.heuresFact,
+        taux: data.heures > 0 ? Math.round((data.heuresFact / data.heures) * 100) : 0,
+        production: data.heuresFact * (parseFloat(collab?.grades?.taux_journalier) || 0) / 8
       };
-    }).sort((a, b) => b.taux - a.taux);
+    }).sort((a, b) => b.heures - a.heures);
 
-    // Performance par département (utiliser le mapping aussi)
+    // Performance par département - basé sur les collaborateurs qui ont du temps
     const deptPerf = (departements.data || []).map(d => {
       const deptCollabs = collabs.data?.filter(c => c.departement_id === d.id) || [];
       
-      // Pour chaque collab du département, trouver son auth_id
+      // Chercher les temps des utilisateurs liés à ce département
       let heures = 0;
       let hFact = 0;
-      deptCollabs.forEach(c => {
-        const user = allUsers.find(u => u.email === c.email);
-        const authId = user?.auth_id;
-        if (authId) {
-          heures += tPeriod.filter(t => t.utilisateur_id === authId).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
-          hFact += tPeriod.filter(t => t.utilisateur_id === authId && t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+      
+      // Pour chaque utilisateur qui a saisi du temps
+      Object.entries(tempsByUser).forEach(([userId, data]) => {
+        const user = allUsers.find(u => u.id === userId);
+        const collab = deptCollabs.find(c => c.email === user?.email || c.utilisateur_id === userId);
+        if (collab) {
+          heures += data.heures;
+          hFact += data.heuresFact;
         }
       });
       
@@ -5902,7 +5909,7 @@ const RapportsPage = () => {
         heuresFact: hFact,
         taux: heures > 0 ? Math.round((hFact / heures) * 100) : 0
       };
-    }).sort((a, b) => b.taux - a.taux);
+    }).sort((a, b) => b.heures - a.heures);
 
     // Répartition missions par statut
     const missionsByStatus = {
