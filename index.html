@@ -1498,7 +1498,7 @@ const MainApp = ({user, onLogout}) => {
     frais: true, // Tout le monde
     profil: true, // Tout le monde peut voir son profil
     crm: isManager && !isCollaborateur, // Manager+ seulement
-    missions: isManager && !isCollaborateur, // Manager+ seulement
+    missions: true, // Tout le monde (juniors/seniors voient seulement leurs missions staffées)
     facturation: isManager && !isCollaborateur, // Manager+ (leurs missions) et Associé+ (toutes)
     soustraitance: isManager && !isCollaborateur, // Manager+ seulement
     interco: isManager && !isCollaborateur, // Manager+ seulement
@@ -3507,7 +3507,7 @@ const CRMPage = () => {
 };
 // ========== MISSIONS PAGE ==========
 const MissionsPage = () => {
-  const {org} = useApp();
+  const {org, collab, isManager, isAdmin, isCollaborateur} = useApp();
   const [missions, setMissions] = useState([]);
   const [clients, setClients] = useState([]);
   const [depts, setDepts] = useState([]);
@@ -3522,11 +3522,17 @@ const MissionsPage = () => {
   const [acomptes, setAcomptes] = useState([]);
   const [factures, setFactures] = useState([]);
   const [tachesMission, setTachesMission] = useState(null); // Mission sélectionnée pour voir les tâches
+  const [mesMissionsIds, setMesMissionsIds] = useState([]); // IDs des missions sur lesquelles je suis staffé
+  
+  // Permissions
+  const canCreate = isManager && !isCollaborateur; // Seuls les managers+ peuvent créer
+  const canEdit = isManager && !isCollaborateur; // Seuls les managers+ peuvent modifier
+  const isJuniorSenior = isCollaborateur; // Junior/Senior ne voit que ses missions
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    const [m, c, d, a, collabs, grades, f, t] = await Promise.all([
+    const [m, c, d, a, collabs, grades, f, t, affectations] = await Promise.all([
       supabase.from('projets').select('*,clients(nom),departements:departement_id(nom),responsable:responsable_id(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
       supabase.from('clients').select('id,nom').eq('organisation_id', org.id).eq('est_prospect', false),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
@@ -3534,8 +3540,13 @@ const MissionsPage = () => {
       supabase.from('collaborateurs').select('*,grades:grade_id(nom,niveau)').eq('organisation_id', org.id).eq('actif', true),
       supabase.from('grades').select('*').eq('organisation_id', org.id),
       supabase.from('factures').select('id,projet_id,montant_ht,montant_total').eq('organisation_id', org.id),
-      supabase.from('taches_projet').select('id,projet_id,statut').eq('organisation_id', org.id)
+      supabase.from('taches_projet').select('id,projet_id,statut').eq('organisation_id', org.id),
+      supabase.from('affectations').select('projet_id').eq('collaborateur_id', collab?.id)
     ]);
+    
+    // Récupérer les IDs des missions où je suis staffé
+    const missionsStaffees = [...new Set((affectations.data || []).map(a => a.projet_id))];
+    setMesMissionsIds(missionsStaffees);
     
     // Calculer les stats de tâches par mission
     const tachesParMission = {};
@@ -3702,19 +3713,24 @@ const MissionsPage = () => {
     return {status: 'ok', label: `${days}j restants`, color: 'green'};
   };
 
-  const filtered = missions.filter(m => {
+  // Pour les juniors/seniors, filtrer uniquement leurs missions staffées
+  const missionsVisibles = isJuniorSenior 
+    ? missions.filter(m => mesMissionsIds.includes(m.id))
+    : missions;
+
+  const filtered = missionsVisibles.filter(m => {
     if (search && !m.nom?.toLowerCase().includes(search.toLowerCase()) && !m.code?.toLowerCase().includes(search.toLowerCase())) return false;
     if (filterStatus && m.statut !== filterStatus) return false;
     return true;
   });
 
   const stats = {
-    total: missions.length,
-    actives: missions.filter(m => m.statut === 'active').length,
-    budget: missions.reduce((s, m) => s + (m.budget_montant || 0), 0),
-    facture: missions.reduce((s, m) => s + getMissionTotalFacture(m), 0),
-    taches_total: missions.reduce((s, m) => s + (m.taches_total || 0), 0),
-    taches_done: missions.reduce((s, m) => s + (m.taches_done || 0), 0)
+    total: missionsVisibles.length,
+    actives: missionsVisibles.filter(m => m.statut === 'active').length,
+    budget: missionsVisibles.reduce((s, m) => s + (m.budget_montant || 0), 0),
+    facture: missionsVisibles.reduce((s, m) => s + getMissionTotalFacture(m), 0),
+    taches_total: missionsVisibles.reduce((s, m) => s + (m.taches_total || 0), 0),
+    taches_done: missionsVisibles.reduce((s, m) => s + (m.taches_done || 0), 0)
   };
   const tachesProgress = stats.taches_total > 0 ? Math.round((stats.taches_done / stats.taches_total) * 100) : 0;
   
@@ -3738,11 +3754,19 @@ const MissionsPage = () => {
 
   return (
     <div>
-      <PageHeader title="Missions" subtitle={`${stats.actives} actives sur ${stats.total} • Budget: ${fmtMoney(stats.budget)} • Tâches: ${stats.taches_done}/${stats.taches_total} (${tachesProgress}%)`}
-        action={<div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={exportMissions} icon="📥">Export</Button>
-          <Button onClick={openNew} icon="➕">Nouvelle mission</Button>
-        </div>} />
+      <PageHeader 
+        title={isJuniorSenior ? "Mes Missions" : "Missions"} 
+        subtitle={isJuniorSenior 
+          ? `${stats.actives} actives sur ${stats.total} • Tâches: ${stats.taches_done}/${stats.taches_total} (${tachesProgress}%)`
+          : `${stats.actives} actives sur ${stats.total} • Budget: ${fmtMoney(stats.budget)} • Tâches: ${stats.taches_done}/${stats.taches_total} (${tachesProgress}%)`
+        }
+        action={canCreate ? (
+          <div className="flex gap-2">
+            <Button variant="secondary" size="sm" onClick={exportMissions} icon="📥">Export</Button>
+            <Button onClick={openNew} icon="➕">Nouvelle mission</Button>
+          </div>
+        ) : null} 
+      />
 
       {loading ? <Loader /> : (
         <Card>
@@ -3751,6 +3775,13 @@ const MissionsPage = () => {
             <Select value={filterStatus} onChange={setFilterStatus} options={Object.entries(MISSION_STATUS).map(([k, v]) => ({value: k, label: v.label}))} placeholder="Tous statuts" className="w-40" />
           </div>
 
+          {filtered.length === 0 && isJuniorSenior ? (
+            <div className="text-center py-12 text-slate-400">
+              <div className="text-4xl mb-4">📋</div>
+              <p>Vous n'êtes staffé sur aucune mission pour le moment.</p>
+              <p className="text-sm mt-2">Contactez votre manager pour être affecté à une mission.</p>
+            </div>
+          ) : (
           <Table columns={[
             {header: 'Mission', render: r => (
               <div>
@@ -3811,21 +3842,26 @@ const MissionsPage = () => {
           ]} data={filtered} actions={r => (
             <div className="flex gap-1">
               <Button variant="ghost" size="xs" onClick={() => setTachesMission(r)} title="Tâches">📋</Button>
-              <Button variant="ghost" size="xs" onClick={() => openAcomptes(r)} title="Acomptes">💰</Button>
-              <Button variant="ghost" size="xs" onClick={() => openEdit(r)} title="Modifier">✏️</Button>
-              {r.statut === 'completed' && (
-                <Button 
-                  variant="ghost" 
-                  size="xs" 
-                  onClick={() => toggleSaisieBloquee(r)} 
-                  title={r.saisie_bloquee ? "Débloquer la saisie" : "Bloquer la saisie"}
-                >
-                  {r.saisie_bloquee ? '🔓' : '🔒'}
-                </Button>
+              {canEdit && (
+                <>
+                  <Button variant="ghost" size="xs" onClick={() => openAcomptes(r)} title="Acomptes">💰</Button>
+                  <Button variant="ghost" size="xs" onClick={() => openEdit(r)} title="Modifier">✏️</Button>
+                  {r.statut === 'completed' && (
+                    <Button 
+                      variant="ghost" 
+                      size="xs" 
+                      onClick={() => toggleSaisieBloquee(r)} 
+                      title={r.saisie_bloquee ? "Débloquer la saisie" : "Bloquer la saisie"}
+                    >
+                      {r.saisie_bloquee ? '🔓' : '🔒'}
+                    </Button>
+                  )}
+                  <Button variant="ghost" size="xs" onClick={() => deleteMission(r)} title="Supprimer">🗑️</Button>
+                </>
               )}
-              <Button variant="ghost" size="xs" onClick={() => deleteMission(r)} title="Supprimer">🗑️</Button>
             </div>
           )} />
+          )}
         </Card>
       )}
 
