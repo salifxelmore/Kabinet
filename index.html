@@ -297,7 +297,7 @@ const Badge = ({children, color = 'gray', size = 'sm'}) => {
   return <span className={cn('rounded-full font-medium', colors[color], sizes[size])}>{children}</span>;
 };
 
-const Button = ({children, onClick, variant = 'primary', size = 'md', loading, disabled, icon, className, type = 'button'}) => {
+const Button = ({children, onClick, variant = 'primary', size = 'md', loading, disabled, icon, className, type = 'button', title}) => {
   const variants = {
     primary: 'gradient-primary text-white',
     secondary: 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50',
@@ -308,7 +308,7 @@ const Button = ({children, onClick, variant = 'primary', size = 'md', loading, d
   };
   const sizes = {xs: 'px-2 py-1 text-xs', sm: 'px-3 py-1.5 text-sm', md: 'px-4 py-2.5', lg: 'px-6 py-3 text-lg'};
   return (
-    <button type={type} onClick={onClick} disabled={disabled || loading}
+    <button type={type} onClick={onClick} disabled={disabled || loading} title={title}
       className={cn('btn rounded-xl font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed', variants[variant], sizes[size], className)}>
       {loading ? <div className="loader" style={{width: 16, height: 16}}></div> : icon}
       {children}
@@ -1853,7 +1853,7 @@ const SuperAdminApp = ({user, onLogout, onSwitchToOrg, hasOrg = true}) => {
 };
 // ========== DASHBOARD PAGE ==========
 const DashboardPage = () => {
-  const {org, user, collab, isManager, isAdmin, isCollaborateur, setPage} = useApp();
+  const {org, user, collab, isManager, isAdmin, isAssocie, isSuperAdmin, isCollaborateur, setPage} = useApp();
   const [stats, setStats] = useState({});
   const [myStats, setMyStats] = useState({});
   const [loading, setLoading] = useState(true);
@@ -1861,6 +1861,9 @@ const DashboardPage = () => {
   const [recentActivity, setRecentActivity] = useState([]);
   const [topMissions, setTopMissions] = useState([]);
   const [teamPerformance, setTeamPerformance] = useState([]);
+  const [allCollaborateurs, setAllCollaborateurs] = useState([]);
+  const [selectedCollabId, setSelectedCollabId] = useState(''); // Pour voir la perf d'un collab
+  const [collabStats, setCollabStats] = useState(null); // Stats du collab sélectionné
   
   // Filtres période
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -1898,6 +1901,9 @@ const DashboardPage = () => {
       const allTemps = temps.data || [];
       const allUsers = utilisateurs.data || [];
       const allCollabs = collabList.data || [];
+      
+      // Stocker les collaborateurs pour le sélecteur
+      setAllCollaborateurs(allCollabs.filter(c => c.actif));
       
       // Filtrer les temps par période
       const tempsPeriode = allTemps.filter(t => t.date >= start && t.date <= end);
@@ -2060,6 +2066,110 @@ const DashboardPage = () => {
     
     setLoading(false);
   };
+
+  // Charger les stats d'un collaborateur sélectionné
+  const loadCollabStats = async (collabId) => {
+    if (!collabId) {
+      setCollabStats(null);
+      return;
+    }
+    
+    const { start, end } = getPeriodDates();
+    const selectedCollab = allCollaborateurs.find(c => c.id === collabId);
+    if (!selectedCollab) return;
+    
+    // Trouver l'utilisateur correspondant
+    const {data: utilisateur} = await supabase.from('utilisateurs')
+      .select('id, auth_id')
+      .eq('email', selectedCollab.email)
+      .single();
+    
+    if (!utilisateur) {
+      setCollabStats({ error: 'Utilisateur non trouvé', collab: selectedCollab });
+      return;
+    }
+    
+    // Charger les temps du collaborateur
+    const [tempsRes, affectRes, fraisRes, congesRes] = await Promise.all([
+      supabase.from('saisies_temps').select('*, projets:projet_id(id, nom, code)').eq('utilisateur_id', utilisateur.id),
+      supabase.from('affectations').select('*, projets:projet_id(id, nom, code, statut)').eq('collaborateur_id', collabId),
+      supabase.from('notes_frais').select('*').eq('collaborateur_id', collabId),
+      supabase.from('conges').select('*').eq('collaborateur_id', collabId)
+    ]);
+    
+    const allTemps = tempsRes.data || [];
+    const tempsPeriode = allTemps.filter(t => t.date >= start && t.date <= end);
+    
+    const heuresTotal = tempsPeriode.reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+    const heuresFact = tempsPeriode.filter(t => t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+    const heuresNonFact = heuresTotal - heuresFact;
+    const tauxCharge = heuresTotal > 0 ? Math.round((heuresFact / heuresTotal) * 100) : 0;
+    
+    // Taux horaire du collab (depuis le grade)
+    // Utiliser la config de l'organisation pour savoir si c'est taux journalier/8 ou taux horaire direct
+    const {data: gradeData} = await supabase.from('grades').select('taux_journalier').eq('id', selectedCollab.grade_id).single();
+    const tauxJour = parseFloat(gradeData?.taux_journalier) || 0;
+    const tauxHoraire = (org.config_taux_type === 'horaire') ? tauxJour : (tauxJour / 8);
+    
+    // Production = heures facturables × taux horaire
+    const production = heuresFact * tauxHoraire;
+    
+    // Missions actives
+    const missionsActives = (affectRes.data || []).filter(a => a.projets?.statut === 'active');
+    
+    // Heures par mission
+    const heuresParMission = {};
+    tempsPeriode.forEach(t => {
+      if (t.projet_id) {
+        if (!heuresParMission[t.projet_id]) {
+          heuresParMission[t.projet_id] = { heures: 0, heuresFact: 0, nom: t.projets?.nom || 'N/A', code: t.projets?.code || '' };
+        }
+        heuresParMission[t.projet_id].heures += parseFloat(t.heures) || 0;
+        if (t.facturable) heuresParMission[t.projet_id].heuresFact += parseFloat(t.heures) || 0;
+      }
+    });
+    const topMissions = Object.values(heuresParMission).sort((a, b) => b.heures - a.heures).slice(0, 5);
+    
+    // Heures par mois
+    const heuresParMois = [];
+    for (let i = 0; i < 12; i++) {
+      const monthStart = new Date(selectedYear, i, 1).toISOString().split('T')[0];
+      const monthEnd = new Date(selectedYear, i + 1, 0).toISOString().split('T')[0];
+      const mois = new Date(selectedYear, i, 1).toLocaleDateString('fr-FR', {month: 'short'});
+      
+      const heuresMois = allTemps.filter(t => t.date >= monthStart && t.date <= monthEnd)
+        .reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+      const heuresFactMois = allTemps.filter(t => t.date >= monthStart && t.date <= monthEnd && t.facturable)
+        .reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+        
+      heuresParMois.push({ mois: mois.charAt(0).toUpperCase() + mois.slice(1), total: heuresMois, facturable: heuresFactMois });
+    }
+    
+    // Congés
+    const congesApprouves = (congesRes.data || []).filter(c => c.statut === 'approved');
+    const joursConges = congesApprouves.reduce((s, c) => s + (c.nb_jours || 0), 0);
+    
+    // Frais
+    const fraisTotal = (fraisRes.data || []).reduce((s, f) => s + (parseFloat(f.montant) || 0), 0);
+    
+    setCollabStats({
+      collab: selectedCollab,
+      heuresTotal, heuresFact, heuresNonFact, tauxCharge,
+      production, tauxHoraire, tauxJour,
+      nbMissions: missionsActives.length,
+      topMissions, heuresParMois,
+      joursConges, fraisTotal
+    });
+  };
+  
+  // Charger stats collab quand sélection change
+  useEffect(() => {
+    if (selectedCollabId) {
+      loadCollabStats(selectedCollabId);
+    } else {
+      setCollabStats(null);
+    }
+  }, [selectedCollabId, selectedYear]);
 
   if (loading) return <Loader text="Chargement du tableau de bord..." />;
 
@@ -2271,7 +2381,150 @@ const DashboardPage = () => {
            dateRange.start && dateRange.end ? `Du ${new Date(dateRange.start).toLocaleDateString('fr-FR')} au ${new Date(dateRange.end).toLocaleDateString('fr-FR')}` : 
            'Sélectionnez une plage'}
         </div>
+        
+        {/* Sélecteur collaborateur - visible pour Admin/Associé/SuperAdmin */}
+        {(isAdmin || isAssocie || isSuperAdmin) && (
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-sm text-slate-600 font-medium">👤 Voir performance :</span>
+            <select 
+              value={selectedCollabId} 
+              onChange={e => setSelectedCollabId(e.target.value)}
+              className="input py-1.5 text-sm min-w-48"
+            >
+              <option value="">-- Sélectionner un collaborateur --</option>
+              {allCollaborateurs.map(c => (
+                <option key={c.id} value={c.id}>{c.prenom} {c.nom} ({c.grades?.nom || 'N/A'})</option>
+              ))}
+            </select>
+            {selectedCollabId && (
+              <Button variant="ghost" size="xs" onClick={() => setSelectedCollabId('')} title="Fermer">✕</Button>
+            )}
+          </div>
+        )}
       </div>
+      
+      {/* Panneau Performance Collaborateur */}
+      {selectedCollabId && collabStats && (
+        <div className="mb-6 p-6 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl border border-indigo-200 animate-fade-up">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-4">
+              <div className="w-14 h-14 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg">
+                {collabStats.collab?.prenom?.[0]}{collabStats.collab?.nom?.[0]}
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-slate-800">{collabStats.collab?.prenom} {collabStats.collab?.nom}</h3>
+                <p className="text-sm text-slate-500">{collabStats.collab?.grades?.nom || 'N/A'} • Performance {selectedYear}</p>
+              </div>
+            </div>
+            <Button variant="ghost" onClick={() => setSelectedCollabId('')}>✕ Fermer</Button>
+          </div>
+          
+          {collabStats.error ? (
+            <div className="text-amber-600 p-4 bg-amber-50 rounded-xl">{collabStats.error}</div>
+          ) : (
+            <>
+              {/* KPIs Collaborateur */}
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+                <div className="bg-white p-4 rounded-xl shadow-sm">
+                  <div className="text-sm text-slate-500">Heures totales</div>
+                  <div className="text-2xl font-bold text-slate-800">{fmt(collabStats.heuresTotal)}h</div>
+                </div>
+                <div className="bg-white p-4 rounded-xl shadow-sm">
+                  <div className="text-sm text-slate-500">Heures facturables</div>
+                  <div className="text-2xl font-bold text-green-600">{fmt(collabStats.heuresFact)}h</div>
+                </div>
+                <div className="bg-white p-4 rounded-xl shadow-sm">
+                  <div className="text-sm text-slate-500">Taux chargeabilité</div>
+                  <div className={`text-2xl font-bold ${collabStats.tauxCharge >= 80 ? 'text-green-600' : collabStats.tauxCharge >= 60 ? 'text-amber-500' : 'text-red-500'}`}>
+                    {collabStats.tauxCharge}%
+                  </div>
+                </div>
+                <div className="bg-white p-4 rounded-xl shadow-sm">
+                  <div className="text-sm text-slate-500">Production</div>
+                  <div className="text-2xl font-bold text-blue-600">{fmtMoney(collabStats.production)}</div>
+                  <div className="text-xs text-slate-400">Taux: {fmtMoney(collabStats.tauxHoraire)}/h</div>
+                </div>
+                <div className="bg-white p-4 rounded-xl shadow-sm">
+                  <div className="text-sm text-slate-500">Missions actives</div>
+                  <div className="text-2xl font-bold text-purple-600">{collabStats.nbMissions}</div>
+                </div>
+              </div>
+              
+              {/* Graphiques */}
+              <div className="grid lg:grid-cols-2 gap-6">
+                {/* Heures par mois */}
+                <div className="bg-white p-4 rounded-xl shadow-sm">
+                  <h4 className="font-semibold text-slate-700 mb-4">📊 Heures par mois</h4>
+                  <div className="h-48 flex items-end justify-between gap-1">
+                    {collabStats.heuresParMois?.map((m, i) => {
+                      const maxH = Math.max(...(collabStats.heuresParMois?.map(x => x.total) || [1]));
+                      const hPct = maxH > 0 ? (m.total / maxH) * 100 : 0;
+                      const fPct = m.total > 0 ? (m.facturable / m.total) * 100 : 0;
+                      return (
+                        <div key={i} className="flex-1 flex flex-col items-center">
+                          <div className="w-full relative" style={{height: `${Math.max(hPct, 5)}%`, minHeight: '8px'}}>
+                            <div className="absolute bottom-0 w-full bg-slate-200 rounded-t" style={{height: '100%'}}></div>
+                            <div className="absolute bottom-0 w-full bg-green-500 rounded-t" style={{height: `${fPct}%`}}></div>
+                          </div>
+                          <div className="text-xs text-slate-500 mt-1">{m.mois?.slice(0,3)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="flex justify-center gap-4 mt-3 text-xs">
+                    <div className="flex items-center gap-1"><div className="w-3 h-3 bg-green-500 rounded"></div>Facturable</div>
+                    <div className="flex items-center gap-1"><div className="w-3 h-3 bg-slate-200 rounded"></div>Non fact.</div>
+                  </div>
+                </div>
+                
+                {/* Top missions */}
+                <div className="bg-white p-4 rounded-xl shadow-sm">
+                  <h4 className="font-semibold text-slate-700 mb-4">🏆 Top missions (heures)</h4>
+                  {collabStats.topMissions?.length > 0 ? (
+                    <div className="space-y-3">
+                      {collabStats.topMissions.map((m, i) => (
+                        <div key={i} className="flex items-center gap-3">
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${i < 3 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                            {i + 1}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium truncate">{m.nom}</div>
+                            <div className="text-xs text-slate-400">{m.code}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-bold text-blue-600">{fmt(m.heures)}h</div>
+                            <div className="text-xs text-green-600">{fmt(m.heuresFact)}h fact.</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center text-slate-400 py-8">Aucune saisie sur la période</div>
+                  )}
+                </div>
+              </div>
+              
+              {/* Infos complémentaires */}
+              <div className="grid grid-cols-2 gap-4 mt-4">
+                <div className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">🏖️</div>
+                  <div>
+                    <div className="text-sm text-slate-500">Congés pris</div>
+                    <div className="font-bold text-slate-800">{collabStats.joursConges} jours</div>
+                  </div>
+                </div>
+                <div className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-3">
+                  <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center">🧾</div>
+                  <div>
+                    <div className="text-sm text-slate-500">Notes de frais</div>
+                    <div className="font-bold text-slate-800">{fmtMoney(collabStats.fraisTotal)}</div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
       
       {/* KPIs principaux */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -6196,8 +6449,9 @@ const RapportsPage = () => {
     // Reste à facturer = Budget HT - CA Facturé HT
     const resteAFacturer = budgetTotal - caTotalHT;
     
-    // Production valorisée
-    const tauxMoyen = collabs.data?.length > 0 ? collabs.data.reduce((s, c) => s + (parseFloat(c.grades?.taux_journalier) || 0), 0) / collabs.data.length / 8 : 0;
+    // Production valorisée - utiliser la config de l'organisation pour le type de taux
+    const diviseur = (org.config_taux_type === 'horaire') ? 1 : 8;
+    const tauxMoyen = collabs.data?.length > 0 ? collabs.data.reduce((s, c) => s + (parseFloat(c.grades?.taux_journalier) || 0), 0) / collabs.data.length / diviseur : 0;
     const production = heuresFact * tauxMoyen;
 
     // CA par mois (Janvier à Décembre)
@@ -6291,7 +6545,7 @@ const RapportsPage = () => {
         heures: data.heures,
         heuresFact: data.heuresFact,
         taux: data.heures > 0 ? Math.round((data.heuresFact / data.heures) * 100) : 0,
-        production: data.heuresFact * (parseFloat(collab?.grades?.taux_journalier) || 0) / 8
+        production: data.heuresFact * (parseFloat(collab?.grades?.taux_journalier) || 0) / ((org.config_taux_type === 'horaire') ? 1 : 8)
       };
     }).sort((a, b) => b.heures - a.heures);
 
@@ -7435,6 +7689,56 @@ const ParametresPage = () => {
 
         {tab === 'config' && loading ? <Loader /> : tab === 'config' && (
           <div className="space-y-6">
+            {/* Configuration calcul production */}
+            <Card title="📊 Calcul de production" collapsible defaultOpen={true}>
+              <p className="text-sm text-slate-500 mb-4">
+                Configurez comment le système calcule la production des collaborateurs.
+              </p>
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="p-4 bg-slate-50 rounded-xl">
+                  <h4 className="font-semibold text-slate-700 mb-2">Type de taux</h4>
+                  <p className="text-xs text-slate-500 mb-3">
+                    Le taux utilisé pour calculer la production (Heures × Taux)
+                  </p>
+                  <Select 
+                    value={org.config_taux_type || 'journalier'} 
+                    onChange={async (v) => {
+                      await supabase.from('organisations').update({config_taux_type: v}).eq('id', org.id);
+                      reload();
+                    }}
+                    options={[
+                      {value: 'journalier', label: 'Taux journalier ÷ 8h'},
+                      {value: 'horaire', label: 'Taux horaire direct'}
+                    ]} 
+                  />
+                  <div className="mt-3 p-3 bg-white rounded-lg text-xs text-slate-600">
+                    {(org.config_taux_type || 'journalier') === 'journalier' ? (
+                      <>
+                        <b>Taux journalier ÷ 8h :</b><br/>
+                        Ex: Taux jour = 400 000 FCFA → Taux horaire = 50 000 FCFA/h<br/>
+                        Production = 37h × 50 000 = 1 850 000 FCFA
+                      </>
+                    ) : (
+                      <>
+                        <b>Taux horaire direct :</b><br/>
+                        Le taux configuré dans les grades est déjà le taux horaire.<br/>
+                        Production = Heures × Taux horaire
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="p-4 bg-blue-50 rounded-xl">
+                  <h4 className="font-semibold text-blue-700 mb-2">💡 Conseil</h4>
+                  <p className="text-sm text-blue-600">
+                    La plupart des cabinets utilisent le <b>taux journalier</b> dans leurs fiches de grade, 
+                    puis le système divise par 8h pour obtenir le taux horaire.<br/><br/>
+                    Si vous avez déjà configuré des <b>taux horaires</b> dans vos grades, 
+                    sélectionnez "Taux horaire direct".
+                  </p>
+                </div>
+              </div>
+            </Card>
+            
             {/* Départements */}
             <Card title="Départements" collapsible defaultOpen={false} action={<Button size="xs" onClick={() => openEdit('dept')}>➕</Button>}>
               <Table columns={[
