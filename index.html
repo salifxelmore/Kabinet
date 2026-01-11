@@ -5754,6 +5754,21 @@ const RapportsPage = () => {
     const allTemps = temps.data || [];
     const allUsers = utilisateurs.data || [];
     
+    // DEBUG: Voir les données
+    console.log('=== DEBUG RAPPORTS ===');
+    console.log('Temps total:', allTemps.length, 'saisies');
+    console.log('Utilisateurs:', allUsers.length);
+    console.log('Collaborateurs:', collabs.data?.length);
+    if (allTemps.length > 0) {
+      console.log('Premier temps - utilisateur_id:', allTemps[0].utilisateur_id);
+    }
+    if (allUsers.length > 0) {
+      console.log('Premier utilisateur:', allUsers[0]);
+    }
+    if (collabs.data?.length > 0) {
+      console.log('Premier collab:', collabs.data[0].email);
+    }
+    
     // Créer un mapping auth_id -> collaborateur (via email)
     const collabByAuthId = {};
     (collabs.data || []).forEach(c => {
