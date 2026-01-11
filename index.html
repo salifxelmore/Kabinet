@@ -3161,7 +3161,7 @@ const MissionsPage = () => {
     setEditItem(null);
     setForm({
       code: genCode('MIS'), nom: '', client_id: '', departement_id: '',
-      type_facturation: 'regie', statut: 'draft', budget_montant: 0,
+      type_facturation: 'regie', statut: 'draft', budget_montant: 0, budget_heures: 0,
       date_debut: today(), date_fin_prevue: '', description: '', facturable: true,
       responsable_id: ''
     });
@@ -3188,6 +3188,7 @@ const MissionsPage = () => {
         type_facturation: form.type_facturation,
         statut: form.statut,
         budget_montant: parseFloat(form.budget_montant) || 0,
+        budget_heures: parseFloat(form.budget_heures) || 0,
         date_debut: form.date_debut || null,
         date_fin_prevue: form.date_fin_prevue || null,
         description: form.description || '',
@@ -3293,7 +3294,8 @@ const MissionsPage = () => {
     {header: 'Client', getValue: r => r.clients?.nom || ''},
     {header: 'Département', getValue: r => r.departements?.nom || ''},
     {header: 'Type', getValue: r => r.type_facturation === 'forfait' ? 'Forfait' : 'Régie'},
-    {header: 'Budget', key: 'budget_montant'},
+    {header: 'Budget (FCFA)', key: 'budget_montant'},
+    {header: 'Budget (Heures)', key: 'budget_heures'},
     {header: 'Facturé', getValue: r => getMissionTotalFacture(r)},
     {header: 'Reste', getValue: r => getMissionResteFacturer(r)},
     {header: 'Date début', key: 'date_debut'},
@@ -3376,8 +3378,11 @@ const MissionsPage = () => {
             <Select label="Type facturation" value={form.type_facturation} onChange={v => setForm(p => ({...p, type_facturation: v}))} options={BILLING_TYPES} />
             <Select label="Statut" value={form.statut} onChange={v => setForm(p => ({...p, statut: v}))} options={Object.entries(MISSION_STATUS).map(([k, v]) => ({value: k, label: v.label}))} />
           </div>
-          <div className="grid grid-cols-3 gap-4">
-            <Input label="Budget (FCFA)" type="number" value={form.budget_montant} onChange={v => setForm(p => ({...p, budget_montant: v}))} />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Budget (FCFA)" type="number" value={form.budget_montant} onChange={v => setForm(p => ({...p, budget_montant: v}))} placeholder="Montant HT prévu" />
+            <Input label="Budget (Heures)" type="number" value={form.budget_heures} onChange={v => setForm(p => ({...p, budget_heures: v}))} placeholder="Nb heures prévues" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
             <Input label="Date début" type="date" value={form.date_debut} onChange={v => setForm(p => ({...p, date_debut: v}))} />
             <Input label="Date fin prévue" type="date" value={form.date_fin_prevue} onChange={v => setForm(p => ({...p, date_fin_prevue: v}))} />
           </div>
