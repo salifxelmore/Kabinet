@@ -2137,8 +2137,8 @@ const DashboardPage = () => {
         // Filtrer les collaborateurs par département
         allCollabs = allCollabs.filter(c => c.departement_id === effectiveDeptFilter);
         
-        // Filtrer les projets - SEULEMENT ceux du département (exclure ceux sans département)
-        allProjets = allProjets.filter(p => p.departement_id === effectiveDeptFilter);
+        // Filtrer les projets : département OU missions internes (sans client = globales)
+        allProjets = allProjets.filter(p => p.departement_id === effectiveDeptFilter || !p.client_id);
         
         // Obtenir les user_ids des collaborateurs du département
         const deptUserIds = allCollabs.map(c => c.user_id).filter(Boolean);
@@ -2148,8 +2148,8 @@ const DashboardPage = () => {
         // Filtrer les temps par utilisateur du département
         allTemps = allTemps.filter(t => deptUtilisateurIds.includes(t.utilisateur_id));
         
-        // Filtrer les factures par projet du département
-        const deptProjetIds = allProjets.map(p => p.id);
+        // Filtrer les factures par projet du département (exclure missions internes)
+        const deptProjetIds = allProjets.filter(p => p.client_id).map(p => p.id);
         allFactures = allFactures.filter(f => deptProjetIds.includes(f.projet_id));
       }
       
@@ -2781,14 +2781,6 @@ const DashboardPage = () => {
         )}
       </div>
       
-      {/* Indicateur de filtrage pour non-global */}
-      {!hasGlobalAccess && userDeptId && (
-        <div className="mb-4 p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2 text-sm">
-          <span className="text-blue-500">🔒</span>
-          <span className="text-blue-700">Département : <b>{departements.find(d => d.id === userDeptId)?.nom || '-'}</b></span>
-        </div>
-      )}
-      
       {/* Panneau Performance Collaborateur */}
       {selectedCollabId && collabStats && (
         <div className="mb-6 p-6 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-2xl border border-indigo-200 animate-fade-up">
@@ -3266,12 +3258,13 @@ const DashboardPage = () => {
 
 // ========== CRM PAGE ==========
 const CRMPage = () => {
-  const {org} = useApp();
+  const {org, collab, isAdmin, isSuperAdmin, userDeptId} = useApp();
   const [tab, setTab] = useState('clients');
   const [clients, setClients] = useState([]);
   const [prospects, setProspects] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [opportunites, setOpportunites] = useState([]);
+  const [departements, setDepartements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('');
@@ -3279,26 +3272,60 @@ const CRMPage = () => {
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [privileges, setPrivileges] = useState([]);
+  
+  // Vérifier si accès global (Managers+ peuvent voir tous les clients pour KYC)
+  const gradeNiveau = collab?.grades?.niveau || 0;
+  const isManager = gradeNiveau >= 3;
+  const isManagingPartner = gradeNiveau >= 6;
+  const hasGlobalAccess = isManagingPartner || isSuperAdmin || isAdmin || privileges.some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global');
+  // Pour les clients : Managers+ ont accès global (KYC), sinon filtré par département
+  const hasClientGlobalAccess = isManager || hasGlobalAccess;
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    const [c, co, op] = await Promise.all([
+    const [c, co, op, depts, privs] = await Promise.all([
       supabase.from('clients').select('*').eq('organisation_id', org.id).order('nom'),
       supabase.from('contacts').select('*,clients(nom)').eq('organisation_id', org.id).order('nom'),
-      supabase.from('opportunites').select('*,clients(nom)').eq('organisation_id', org.id).order('created_at', {ascending: false})
+      supabase.from('opportunites').select('*,clients(nom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
+      supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
+      supabase.from('privileges_speciaux').select('*').eq('organisation_id', org.id).eq('actif', true)
     ]);
-    const allClients = c.data || [];
+    
+    setDepartements(depts.data || []);
+    setPrivileges(privs.data || []);
+    
+    let allClients = c.data || [];
+    let allOpportunites = op.data || [];
+    
+    // Filtrer les clients par département si pas Manager+
+    // Note: Les Managers+ voient tous les clients pour raison KYC
+    const hasAccess = isManager || isManagingPartner || isSuperAdmin || isAdmin || (privs.data || []).some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global');
+    
+    if (!hasAccess && userDeptId) {
+      // Filtrer les clients par département
+      allClients = allClients.filter(x => x.departement_id === userDeptId);
+    }
+    
+    // Pipeline/Opportunités : TOUJOURS filtrées par département (même pour Managers)
+    if (!hasGlobalAccess && userDeptId) {
+      allOpportunites = allOpportunites.filter(x => {
+        const client = allClients.find(cl => cl.id === x.client_id);
+        return client?.departement_id === userDeptId;
+      });
+    }
+    
     // Séparer clients (est_prospect = false ou null) et prospects (est_prospect = true)
     setClients(allClients.filter(x => !x.est_prospect));
     setProspects(allClients.filter(x => x.est_prospect === true));
     setContacts(co.data || []);
-    setOpportunites(op.data || []);
+    setOpportunites(allOpportunites);
     setLoading(false);
   };
 
   // CLIENT CRUD
-  const openNewClient = () => { setEditItem(null); setForm({code: genCode('CLI'), type_client: 'entreprise', nom: '', denomination: '', ninea: '', adresse: '', ville: 'DAKAR', email: '', telephone: '', est_prospect: false}); setModal('client'); };
+  const openNewClient = () => { setEditItem(null); setForm({code: genCode('CLI'), type_client: 'entreprise', nom: '', denomination: '', ninea: '', adresse: '', ville: 'DAKAR', email: '', telephone: '', est_prospect: false, departement_id: userDeptId || ''}); setModal('client'); };
   const openEditClient = (c) => { setEditItem(c); setForm({...c}); setModal('client'); };
   const saveClient = async () => {
     if (!form.nom && !form.denomination) return alert('Nom requis');
@@ -3314,7 +3341,7 @@ const CRMPage = () => {
   const deleteClient = async (c) => { if (!confirm(`Supprimer "${c.nom}" ?`)) return; await supabase.from('clients').delete().eq('id', c.id); loadData(); };
   
   // PROSPECT CRUD
-  const openNewProspect = () => { setEditItem(null); setForm({code: genCode('PRO'), type_client: 'entreprise', nom: '', denomination: '', ninea: '', adresse: '', ville: 'DAKAR', email: '', telephone: '', est_prospect: true}); setModal('prospect'); };
+  const openNewProspect = () => { setEditItem(null); setForm({code: genCode('PRO'), type_client: 'entreprise', nom: '', denomination: '', ninea: '', adresse: '', ville: 'DAKAR', email: '', telephone: '', est_prospect: true, departement_id: userDeptId || ''}); setModal('prospect'); };
   const openEditProspect = (p) => { setEditItem(p); setForm({...p}); setModal('prospect'); };
   const saveProspect = async () => {
     if (!form.nom && !form.denomination) return alert('Nom requis');
@@ -3676,6 +3703,7 @@ const CRMPage = () => {
           </>) : (
             <div className="grid grid-cols-2 gap-4"><Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} /><Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required /></div>
           )}
+          <Select label="Département" value={form.departement_id} onChange={v => setForm(p => ({...p, departement_id: v}))} options={departements.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner un département" required />
           <Input label="Adresse" value={form.adresse} onChange={v => setForm(p => ({...p, adresse: v}))} />
           <div className="grid grid-cols-2 gap-4"><Input label="Ville" value={form.ville} onChange={v => setForm(p => ({...p, ville: v}))} /><Input label="Pays" value={form.pays || 'Sénégal'} onChange={v => setForm(p => ({...p, pays: v}))} /></div>
           <div className="grid grid-cols-2 gap-4"><Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} /><Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} /></div>
@@ -3774,6 +3802,7 @@ const CRMPage = () => {
               <Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
             </div>
           )}
+          <Select label="Département" value={form.departement_id} onChange={v => setForm(p => ({...p, departement_id: v}))} options={departements.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner un département" required />
           <Input label="Adresse" value={form.adresse} onChange={v => setForm(p => ({...p, adresse: v}))} />
           <div className="grid grid-cols-2 gap-4">
             <Input label="Ville" value={form.ville || 'DAKAR'} onChange={v => setForm(p => ({...p, ville: v}))} />
@@ -3861,8 +3890,8 @@ const MissionsPage = () => {
     const hasAccess = isManagingPartner || isSuperAdmin || isAdmin || (privs.data || []).some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global');
     
     if (!hasAccess && userDeptId) {
-      // Filtrer par département - seulement les missions du département
-      missionsData = missionsData.filter(mission => mission.departement_id === userDeptId);
+      // Filtrer par département OU missions internes (sans client = globales pour saisie temps)
+      missionsData = missionsData.filter(mission => mission.departement_id === userDeptId || !mission.client_id);
     }
     
     // Enrichir les missions avec les stats de tâches
@@ -8494,8 +8523,8 @@ const RapportsPage = () => {
       // Filtrer les collaborateurs par département
       allCollabs = allCollabs.filter(c => c.departement_id === effectiveDeptFilter);
       
-      // Filtrer les missions - SEULEMENT celles du département
-      m = m.filter(p => p.departement_id === effectiveDeptFilter);
+      // Filtrer les missions : département OU missions internes (sans client = globales)
+      m = m.filter(p => p.departement_id === effectiveDeptFilter || !p.client_id);
       
       // Obtenir les user_ids des collaborateurs du département
       const deptCollabEmails = allCollabs.map(c => c.email).filter(Boolean);
@@ -8504,8 +8533,8 @@ const RapportsPage = () => {
       // Filtrer les temps par utilisateur du département
       allTemps = allTemps.filter(t => deptUtilisateurIds.includes(t.utilisateur_id));
       
-      // Filtrer les factures par projet du département
-      const deptProjetIds = m.map(p => p.id);
+      // Filtrer les factures par projet du département (exclure missions internes)
+      const deptProjetIds = m.filter(p => p.client_id).map(p => p.id);
       allFactures = allFactures.filter(f => deptProjetIds.includes(f.projet_id));
     }
     
@@ -8760,14 +8789,6 @@ const RapportsPage = () => {
           </div>
         }
       />
-      
-      {/* Indicateur de filtrage pour non-global */}
-      {!hasGlobalAccess && userDeptId && (
-        <div className="mb-4 p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2 text-sm">
-          <span className="text-blue-500">🔒</span>
-          <span className="text-blue-700">Données du département : <b>{departements.find(d => d.id === userDeptId)?.nom || '-'}</b></span>
-        </div>
-      )}
       
       <TabContent tabKey={tab}>
       {/* ========== ONGLET SYNTHÈSE ========== */}
