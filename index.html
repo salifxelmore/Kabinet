@@ -2137,8 +2137,8 @@ const DashboardPage = () => {
         // Filtrer les collaborateurs par département
         allCollabs = allCollabs.filter(c => c.departement_id === effectiveDeptFilter);
         
-        // Filtrer les projets par département (si le champ existe) ou par les collaborateurs du département
-        allProjets = allProjets.filter(p => p.departement_id === effectiveDeptFilter || !p.departement_id);
+        // Filtrer les projets - SEULEMENT ceux du département (exclure ceux sans département)
+        allProjets = allProjets.filter(p => p.departement_id === effectiveDeptFilter);
         
         // Obtenir les user_ids des collaborateurs du département
         const deptUserIds = allCollabs.map(c => c.user_id).filter(Boolean);
@@ -3794,7 +3794,7 @@ const CRMPage = () => {
 };
 // ========== MISSIONS PAGE ==========
 const MissionsPage = () => {
-  const {org, collab, isManager, isAdmin, isCollaborateur} = useApp();
+  const {org, collab, isManager, isAdmin, isCollaborateur, isSuperAdmin, userDeptId} = useApp();
   const [missions, setMissions] = useState([]);
   const [clients, setClients] = useState([]);
   const [depts, setDepts] = useState([]);
@@ -3810,16 +3810,22 @@ const MissionsPage = () => {
   const [factures, setFactures] = useState([]);
   const [tachesMission, setTachesMission] = useState(null); // Mission sélectionnée pour voir les tâches
   const [mesMissionsIds, setMesMissionsIds] = useState([]); // IDs des missions sur lesquelles je suis staffé
+  const [privileges, setPrivileges] = useState([]);
   
   // Permissions
   const canCreate = isManager && !isCollaborateur; // Seuls les managers+ peuvent créer
   const canEdit = isManager && !isCollaborateur; // Seuls les managers+ peuvent modifier
   const isJuniorSenior = isCollaborateur; // Junior/Senior ne voit que ses missions
+  
+  // Vérifier si accès global
+  const gradeNiveau = collab?.grades?.niveau || 0;
+  const isManagingPartner = gradeNiveau >= 6;
+  const hasGlobalAccess = isManagingPartner || isSuperAdmin || isAdmin || privileges.some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global');
 
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    const [m, c, d, a, collabs, grades, f, t, affectations] = await Promise.all([
+    const [m, c, d, a, collabs, grades, f, t, affectations, privs] = await Promise.all([
       supabase.from('projets').select('*,clients(nom),departements:departement_id(nom),responsable:responsable_id(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
       supabase.from('clients').select('id,nom').eq('organisation_id', org.id).eq('est_prospect', false),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
@@ -3828,8 +3834,11 @@ const MissionsPage = () => {
       supabase.from('grades').select('*').eq('organisation_id', org.id),
       supabase.from('factures').select('id,projet_id,montant_ht,montant_total').eq('organisation_id', org.id),
       supabase.from('taches_projet').select('id,projet_id,statut').eq('organisation_id', org.id),
-      supabase.from('affectations').select('projet_id').eq('collaborateur_id', collab?.id)
+      supabase.from('affectations').select('projet_id').eq('collaborateur_id', collab?.id),
+      supabase.from('privileges_speciaux').select('*').eq('organisation_id', org.id).eq('actif', true)
     ]);
+    
+    setPrivileges(privs.data || []);
     
     // Récupérer les IDs des missions où je suis staffé
     const missionsStaffees = [...new Set((affectations.data || []).map(a => a.projet_id))];
@@ -3847,8 +3856,17 @@ const MissionsPage = () => {
       }
     });
     
+    // Filtrer les missions par département si pas d'accès global
+    let missionsData = m.data || [];
+    const hasAccess = isManagingPartner || isSuperAdmin || isAdmin || (privs.data || []).some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global');
+    
+    if (!hasAccess && userDeptId) {
+      // Filtrer par département - seulement les missions du département
+      missionsData = missionsData.filter(mission => mission.departement_id === userDeptId);
+    }
+    
     // Enrichir les missions avec les stats de tâches
-    const missionsAvecTaches = (m.data || []).map(mission => ({
+    const missionsAvecTaches = missionsData.map(mission => ({
       ...mission,
       taches_total: tachesParMission[mission.id]?.total || 0,
       taches_done: tachesParMission[mission.id]?.done || 0,
@@ -8476,8 +8494,8 @@ const RapportsPage = () => {
       // Filtrer les collaborateurs par département
       allCollabs = allCollabs.filter(c => c.departement_id === effectiveDeptFilter);
       
-      // Filtrer les missions par département
-      m = m.filter(p => p.departement_id === effectiveDeptFilter || !p.departement_id);
+      // Filtrer les missions - SEULEMENT celles du département
+      m = m.filter(p => p.departement_id === effectiveDeptFilter);
       
       // Obtenir les user_ids des collaborateurs du département
       const deptCollabEmails = allCollabs.map(c => c.email).filter(Boolean);
