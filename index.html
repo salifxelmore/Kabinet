@@ -3342,15 +3342,22 @@ const CRMPage = () => {
   }, [accesGlobalActif]);
 
   const loadData = async () => {
-    // Requêtes de base - on récupère les clients séparément pour éviter les erreurs si departement_id n'existe pas
-    const [c, co, op, depts, privs, demandes] = await Promise.all([
+    // Requêtes de base
+    const [c, co, op, depts, privs] = await Promise.all([
       supabase.from('clients').select('*').eq('organisation_id', org.id).order('nom'),
       supabase.from('contacts').select('*,clients(nom)').eq('organisation_id', org.id).order('nom'),
       supabase.from('opportunites').select('*,clients(nom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
-      supabase.from('privileges_speciaux').select('*').eq('organisation_id', org.id).eq('actif', true),
-      supabase.from('demandes_acces_global_clients').select('*,collaborateurs:collaborateur_id(nom,prenom),approbateur:approuve_par(nom,prenom)').eq('organisation_id', org.id).order('date_demande', {ascending: false}).catch(() => ({data: []}))
+      supabase.from('privileges_speciaux').select('*').eq('organisation_id', org.id).eq('actif', true)
     ]);
+    
+    // Requête séparée pour les demandes d'accès (peut échouer si table n'existe pas)
+    let demandes = { data: [] };
+    try {
+      demandes = await supabase.from('demandes_acces_global_clients').select('*,collaborateurs:collaborateur_id(nom,prenom),approbateur:approuve_par(nom,prenom)').eq('organisation_id', org.id).order('date_demande', {ascending: false});
+    } catch (e) {
+      console.log('Table demandes_acces_global_clients non disponible');
+    }
     
     setDepartements(depts.data || []);
     setPrivileges(privs.data || []);
