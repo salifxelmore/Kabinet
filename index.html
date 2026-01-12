@@ -5460,7 +5460,7 @@ const TimesheetPage = () => {
     setMissions(filteredMissions);
     
     setCategories(cat.data || []);
-    setHolidays((h.data || []).map(x => x.date));
+    setHolidays(h.data || []); // Garder les données complètes {date, nom}
     setConges(cg.data || []);
     setClients(cl.data || []);
     
@@ -5545,10 +5545,17 @@ const TimesheetPage = () => {
   const getEntry = (projId, date) => entries.find(e => e.projet_id === projId && e.date === date);
 
   // Vérifier si une date est bloquée (weekend ou férié seulement, pas les congés)
-  const isDateDisabled = (date) => {
-    if (isWeekend(date)) return 'weekend';
-    if (holidays.includes(date)) return 'holiday';
+  const isDateDisabled = (date, dayIndex) => {
+    // Utiliser l'index pour le weekend (Lun=0, ..., Sam=5, Dim=6)
+    if (dayIndex >= 5) return 'weekend';
+    if (holidays.some(h => h.date === date)) return 'holiday';
     return false;
+  };
+  
+  // Obtenir le nom du jour férié
+  const getHolidayName = (date) => {
+    const holiday = holidays.find(h => h.date === date);
+    return holiday?.nom || 'Jour férié';
   };
   
   // Vérifier si le collaborateur est en congé ce jour
@@ -5636,15 +5643,18 @@ const TimesheetPage = () => {
           </div>
           <div className="text-xs text-slate-400">{m.code} • {m.clients?.nom || 'Interne'}</div>
         </td>
-        {days.map(d => {
-          const disabled = isDateDisabled(d.date);
+        {days.map((d, dayIndex) => {
+          const disabled = isDateDisabled(d.date, dayIndex);
           const entry = getEntry(m.id, d.date);
           const heuresJour = getHeuresParJour(d.date);
           const depassement = heuresJour > 8;
           return (
             <td key={d.date} className={cn('px-1 py-2 text-center', disabled === 'weekend' && 'cell-weekend', disabled === 'holiday' && 'cell-holiday', depassement && !disabled && 'bg-red-50')}>
               {disabled ? (
-                <div className="w-14 h-10 flex items-center justify-center text-xs text-slate-400">
+                <div 
+                  className="w-14 h-10 flex items-center justify-center text-xs text-slate-400"
+                  title={disabled === 'holiday' ? getHolidayName(d.date) : 'Weekend'}
+                >
                   {disabled === 'holiday' ? '🎌' : '-'}
                 </div>
               ) : (
@@ -5922,12 +5932,15 @@ const TimesheetPage = () => {
               <thead>
                 <tr className="border-b">
                   <th className="px-4 py-3 text-left w-64">Mission</th>
-                  {days.map(d => (
-                    <th key={d.date} className={cn('px-2 py-3 text-center w-16', d.isWeekend && 'bg-slate-50')}>
-                      {d.label}<br/><span className="text-xs text-slate-400">{d.date.split('-')[2]}</span>
-                      {holidays.includes(d.date) && <span className="block text-xs">🎌</span>}
-                    </th>
-                  ))}
+                  {days.map(d => {
+                    const holiday = holidays.find(h => h.date === d.date);
+                    return (
+                      <th key={d.date} className={cn('px-2 py-3 text-center w-16', d.isWeekend && 'bg-slate-50')} title={holiday ? holiday.nom : ''}>
+                        {d.label}<br/><span className="text-xs text-slate-400">{d.date.split('-')[2]}</span>
+                        {holiday && <span className="block text-xs" title={holiday.nom}>🎌</span>}
+                      </th>
+                    );
+                  })}
                   <th className="px-4 py-3 text-right w-20">Total</th>
                 </tr>
               </thead>
@@ -5948,11 +5961,14 @@ const TimesheetPage = () => {
               <thead>
                 <tr className="border-b">
                   <th className="px-4 py-3 text-left w-64">Activité</th>
-                  {days.map(d => (
-                    <th key={d.date} className={cn('px-2 py-3 text-center w-16', d.isWeekend && 'bg-slate-50')}>
-                      {d.label}<br/><span className="text-xs text-slate-400">{d.date.split('-')[2]}</span>
-                    </th>
-                  ))}
+                  {days.map(d => {
+                    const holiday = holidays.find(h => h.date === d.date);
+                    return (
+                      <th key={d.date} className={cn('px-2 py-3 text-center w-16', d.isWeekend && 'bg-slate-50')} title={holiday ? holiday.nom : ''}>
+                        {d.label}<br/><span className="text-xs text-slate-400">{d.date.split('-')[2]}</span>
+                      </th>
+                    );
+                  })}
                   <th className="px-4 py-3 text-right w-20">Total</th>
                 </tr>
               </thead>
@@ -5968,9 +5984,9 @@ const TimesheetPage = () => {
                         <div className="font-medium text-sm text-amber-700">🏖️ Congés / Absences</div>
                         <div className="text-xs text-amber-500">Non facturable - Auto-rempli</div>
                       </td>
-                      {days.map(d => {
+                      {days.map((d, dayIndex) => {
                         const conge = getCongeForDate(d.date);
-                        const disabled = isDateDisabled(d.date);
+                        const disabled = isDateDisabled(d.date, dayIndex);
                         return (
                           <td key={d.date} className={cn('px-1 py-2 text-center', disabled === 'weekend' && 'cell-weekend')}>
                             {disabled ? (
