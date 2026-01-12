@@ -3989,6 +3989,11 @@ const CRMPage = () => {
         </div>
       </Modal>
 
+      {/* DEBUG - AFFICHAGE DE L'ÉTAT MODAL */}
+      <div style={{position: 'fixed', bottom: 10, right: 10, background: 'red', color: 'white', padding: '10px', zIndex: 9999, borderRadius: '5px'}}>
+        Modal: {modal || 'null'}
+      </div>
+
       {/* MODAL CONTACT */}
       <Modal isOpen={modal === 'contact'} onClose={() => setModal(null)} title={editItem ? 'Modifier contact' : 'Nouveau contact'}>
         <div className="space-y-4">
