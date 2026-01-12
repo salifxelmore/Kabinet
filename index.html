@@ -2206,12 +2206,23 @@ const DashboardPage = () => {
         caParMois.push({mois: mois.charAt(0).toUpperCase() + mois.slice(1), montant, isFuture: selectedYear === now.getFullYear() && i > now.getMonth()});
       }
       
-      // Top missions par budget - UNIQUEMENT les missions facturables, avec CA HT
+      // Top missions par budget - UNIQUEMENT les missions facturables avec client (exclure Formation, Réunion, etc.)
       const missionsAvecCA = allProjets
-        .filter(p => p.facturable !== false) // Exclure les missions non facturables
+        .filter(p => {
+          // Exclure si facturable est explicitement false
+          if (p.facturable === false) return false;
+          // Exclure si pas de client (missions internes)
+          if (!p.client_id) return false;
+          // Exclure les missions internes typiques par nom (sécurité supplémentaire)
+          const nomLower = (p.nom || '').toLowerCase();
+          if (nomLower.includes('formation') || nomLower.includes('réunion') || nomLower.includes('reunion') || 
+              nomLower.includes('interne') || nomLower.includes('congé') || nomLower.includes('conge') ||
+              nomLower.includes('absence') || nomLower.includes('maladie') || nomLower.includes('admin')) return false;
+          return true;
+        })
         .map(p => ({
           ...p,
-          ca: allFactures.filter(f => f.projet_id === p.id).reduce((s, f) => s + (parseFloat(f.montant_ht) || 0), 0) || 0, // Utiliser HT
+          ca: allFactures.filter(f => f.projet_id === p.id).reduce((s, f) => s + (parseFloat(f.montant_ht) || 0), 0) || 0,
           heuresConsommees: tempsPeriode.filter(t => t.projet_id === p.id).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0) || 0
         }))
         .sort((a, b) => (parseFloat(b.budget_montant) || 0) - (parseFloat(a.budget_montant) || 0))
@@ -6465,11 +6476,18 @@ const CongesPage = () => {
   const tabs = [
     {key: 'mes', label: 'Mes congés', count: mesConges.length}
   ];
+  // Onglet "À valider" uniquement pour les validateurs
   if (isValidateur) {
     tabs.push({key: 'valider', label: 'À valider', count: congesAValider.length, icon: '🔔'});
   }
-  if (isManager || isAdmin) {
-    tabs.push({key: 'tous', label: 'Tous', count: conges.length});
+  // Onglet "Tous" uniquement pour validateurs et admin (ils voient seulement leur département)
+  if (isValidateur || isAdmin) {
+    // Filtrer par département pour les validateurs non-admin
+    const congesDept = isAdmin ? conges : conges.filter(c => {
+      const collabConge = collaborateurs.find(col => col.user_id === c.utilisateur_id);
+      return collabConge?.departement_id === userDeptId;
+    });
+    tabs.push({key: 'tous', label: 'Tous', count: congesDept.length});
   }
   if (isAdmin) {
     tabs.push({key: 'soldes', label: 'Soldes équipe', icon: '⚙️'});
@@ -6673,7 +6691,18 @@ const CongesPage = () => {
             {header: 'Jours', render: r => <span className="font-medium">{r.nb_jours}j</span>},
             {header: 'Statut', render: r => <Badge color={LEAVE_STATUS[r.statut]?.color}>{LEAVE_STATUS[r.statut]?.label}</Badge>},
             {header: 'Motif', render: r => <span className="text-sm text-slate-500 truncate max-w-xs">{r.motif || '-'}</span>}
-          ]} data={tab === 'mes' ? mesConges : tab === 'valider' ? congesAValider : conges.filter(c => c.type_conge !== 'report_anterieur')}
+          ]} data={(() => {
+            if (tab === 'mes') return mesConges;
+            if (tab === 'valider') return congesAValider;
+            // Onglet "Tous" - filtrer par département pour les validateurs non-admin
+            const congesTous = conges.filter(c => c.type_conge !== 'report_anterieur');
+            if (isAdmin) return congesTous;
+            // Pour les validateurs, filtrer par département
+            return congesTous.filter(c => {
+              const collabConge = collaborateurs.find(col => col.user_id === c.utilisateur_id);
+              return collabConge?.departement_id === userDeptId;
+            });
+          })()}
           actions={r => (
             <div className="flex gap-1">
               {tab === 'valider' && r.statut === 'pending' && (<>
@@ -8371,14 +8400,33 @@ const EquipePage = () => {
 
 // ========== RAPPORTS PAGE ==========
 const RapportsPage = () => {
-  const {org} = useApp();
+  const {org, collab, isAdmin, isSuperAdmin, userDeptId} = useApp();
   const [data, setData] = useState({});
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState('year'); // month, quarter, year
   const [tab, setTab] = useState('global');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [departements, setDepartements] = useState([]);
+  const [filterDept, setFilterDept] = useState('');
+  const [privileges, setPrivileges] = useState([]);
+  
+  // Vérifier si accès global
+  const gradeNiveau = collab?.grades?.niveau || 0;
+  const isManagingPartner = gradeNiveau >= 6;
+  const hasGlobalAccess = isManagingPartner || isSuperAdmin || isAdmin || privileges.some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global');
+  const effectiveDeptFilter = hasGlobalAccess ? filterDept : userDeptId;
 
-  useEffect(() => { loadData(); }, [period, selectedYear]);
+  useEffect(() => { loadDepts(); }, []);
+  useEffect(() => { loadData(); }, [period, selectedYear, effectiveDeptFilter]);
+  
+  const loadDepts = async () => {
+    const [depts, privs] = await Promise.all([
+      supabase.from('departements').select('id,nom').eq('organisation_id', org.id).order('nom'),
+      supabase.from('privileges_speciaux').select('*').eq('organisation_id', org.id).eq('actif', true)
+    ]);
+    setDepartements(depts.data || []);
+    setPrivileges(privs.data || []);
+  };
 
   const getPeriodDates = () => {
     const now = new Date();
@@ -8409,7 +8457,7 @@ const RapportsPage = () => {
       supabase.from('saisies_temps').select('*').eq('organisation_id', org.id),
       supabase.from('factures').select('*').eq('organisation_id', org.id),
       supabase.from('collaborateurs').select('*,grades:grade_id(nom,taux_journalier),departements:departement_id(nom)').eq('organisation_id', org.id).eq('actif', true),
-      supabase.from('projets').select('*,clients(nom)').eq('organisation_id', org.id),
+      supabase.from('projets').select('*,clients(nom),departement_id').eq('organisation_id', org.id),
       supabase.from('clients').select('*').eq('organisation_id', org.id),
       supabase.from('conges').select('*').eq('organisation_id', org.id).eq('statut', 'approved'),
       supabase.from('affectations').select('*').eq('organisation_id', org.id),
@@ -8417,16 +8465,38 @@ const RapportsPage = () => {
       supabase.from('utilisateurs').select('id,auth_id,email').eq('organisation_id', org.id)
     ]);
 
-    const allFactures = factures.data || [];
-    const allTemps = temps.data || [];
+    let allFactures = factures.data || [];
+    let allTemps = temps.data || [];
+    let allCollabs = collabs.data || [];
+    let m = missions.data || [];
     const allUsers = utilisateurs.data || [];
+    
+    // ===== FILTRAGE PAR DÉPARTEMENT =====
+    if (effectiveDeptFilter) {
+      // Filtrer les collaborateurs par département
+      allCollabs = allCollabs.filter(c => c.departement_id === effectiveDeptFilter);
+      
+      // Filtrer les missions par département
+      m = m.filter(p => p.departement_id === effectiveDeptFilter || !p.departement_id);
+      
+      // Obtenir les user_ids des collaborateurs du département
+      const deptCollabEmails = allCollabs.map(c => c.email).filter(Boolean);
+      const deptUtilisateurIds = allUsers.filter(u => deptCollabEmails.includes(u.email)).map(u => u.id);
+      
+      // Filtrer les temps par utilisateur du département
+      allTemps = allTemps.filter(t => deptUtilisateurIds.includes(t.utilisateur_id));
+      
+      // Filtrer les factures par projet du département
+      const deptProjetIds = m.map(p => p.id);
+      allFactures = allFactures.filter(f => deptProjetIds.includes(f.projet_id));
+    }
     
     // Mapping: Les saisies de temps utilisent utilisateur_id = ID de la table utilisateurs
     // Il faut lier utilisateurs -> collaborateurs via l'email
     const userIdToCollabId = {};
     allUsers.forEach(u => {
       // Trouver le collaborateur avec le même email
-      const collab = (collabs.data || []).find(c => c.email === u.email);
+      const collab = allCollabs.find(c => c.email === u.email);
       if (collab) {
         userIdToCollabId[u.id] = collab.id;
       }
@@ -8435,7 +8505,7 @@ const RapportsPage = () => {
     // Créer aussi un mapping inverse : collab.id -> user.id pour filtrer les temps
     const collabIdToUserId = {};
     allUsers.forEach(u => {
-      const collab = (collabs.data || []).find(c => c.email === u.email);
+      const collab = allCollabs.find(c => c.email === u.email);
       if (collab) {
         collabIdToUserId[collab.id] = u.id;
       }
@@ -8462,7 +8532,6 @@ const RapportsPage = () => {
     // CA En attente = Total facturé TTC - Total encaissé
     const caEnAttente = caTotal - caEncaisse;
     
-    const m = missions.data || [];
     const missionsActives = m.filter(x => x.statut === 'active').length;
     const budgetTotal = m.reduce((s, x) => s + (parseFloat(x.budget_montant) || 0), 0);
     
@@ -8471,7 +8540,7 @@ const RapportsPage = () => {
     
     // Production valorisée - utiliser la config de l'organisation pour le type de taux
     const diviseur = (org.config_taux_type === 'horaire') ? 1 : 8;
-    const tauxMoyen = collabs.data?.length > 0 ? collabs.data.reduce((s, c) => s + (parseFloat(c.grades?.taux_journalier) || 0), 0) / collabs.data.length / diviseur : 0;
+    const tauxMoyen = allCollabs.length > 0 ? allCollabs.reduce((s, c) => s + (parseFloat(c.grades?.taux_journalier) || 0), 0) / allCollabs.length / diviseur : 0;
     const production = heuresFact * tauxMoyen;
 
     // CA par mois (Janvier à Décembre)
@@ -8620,13 +8689,6 @@ const RapportsPage = () => {
       return mission?.statut === 'active' && t.facturable;
     }).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
     const heuresRestantes = Math.max(0, budgetHeuresTotal - heuresConsommeesActives);
-    
-    // Jours sans saisie complète (moins de 8h)
-    // Compter les jours ouvrés de la période où les collaborateurs n'ont pas saisi 8h
-    const joursOuvresPeriode = Math.ceil((new Date(end) - new Date(start)) / (1000 * 60 * 60 * 24)) * 5 / 7; // Approximation
-    const heuresAttenduesTotales = joursOuvresPeriode * 8 * (collabs.data?.length || 1);
-    const heuresManquantes = Math.max(0, heuresAttenduesTotales - heuresTotal);
-    const joursNonSaisis = Math.ceil(heuresManquantes / 8);
 
     setData({
       heuresTotal, heuresFact, heuresNonFact,
@@ -8634,13 +8696,13 @@ const RapportsPage = () => {
       caTotal, caTotalHT, caEncaisse, caEnAttente, budgetTotal, resteAFacturer, production,
       rentabilite: budgetTotal > 0 ? Math.round((caEncaisse / budgetTotal) * 100) : 0,
       missionsActives, totalMissions: m.length,
-      nbCollabs: collabs.data?.length || 0,
+      nbCollabs: allCollabs.length || 0,
       nbClients: clients.data?.length || 0,
       topClients, topMissions, joursConges, tauxMoyen,
       caParMois, heuresParMois, collabPerf, deptPerf, missionsByStatus,
       joursTravailles, productiviteMoyenne, caMoyenMission,
       nbFactures: fPeriod.length,
-      heuresRestantes, joursNonSaisis, heuresManquantes, budgetHeuresTotal
+      heuresRestantes, budgetHeuresTotal
     });
     setLoading(false);
   };
@@ -8651,7 +8713,7 @@ const RapportsPage = () => {
 
   return (
     <div>
-      <PageHeader title="📊 Rapports & Analyses" subtitle={label}
+      <PageHeader title="📊 Rapports & Analyses" subtitle={`${label}${effectiveDeptFilter ? ' • ' + (departements.find(d => d.id === effectiveDeptFilter)?.nom || '') : ''}`}
         tabs={[
           {key: 'global', label: '🏠 Synthèse'},
           {key: 'temps', label: '⏱️ Temps'},
@@ -8661,7 +8723,13 @@ const RapportsPage = () => {
         ]}
         activeTab={tab} onTabChange={setTab}
         action={
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {hasGlobalAccess && departements.length > 0 && (
+              <Select value={filterDept} onChange={setFilterDept} options={[
+                {value: '', label: 'Tous dép.'},
+                ...departements.map(d => ({value: d.id, label: d.nom}))
+              ]} className="w-32" />
+            )}
             <Select value={selectedYear.toString()} onChange={v => setSelectedYear(parseInt(v))} options={[
               {value: (new Date().getFullYear() - 1).toString(), label: (new Date().getFullYear() - 1).toString()},
               {value: new Date().getFullYear().toString(), label: new Date().getFullYear().toString()}
@@ -8674,6 +8742,14 @@ const RapportsPage = () => {
           </div>
         }
       />
+      
+      {/* Indicateur de filtrage pour non-global */}
+      {!hasGlobalAccess && userDeptId && (
+        <div className="mb-4 p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2 text-sm">
+          <span className="text-blue-500">🔒</span>
+          <span className="text-blue-700">Données du département : <b>{departements.find(d => d.id === userDeptId)?.nom || '-'}</b></span>
+        </div>
+      )}
       
       <TabContent tabKey={tab}>
       {/* ========== ONGLET SYNTHÈSE ========== */}
@@ -8942,28 +9018,12 @@ const RapportsPage = () => {
 
       {/* ========== ONGLET TEMPS ========== */}
       {tab === 'temps' && (<>
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <StatCard title="Heures totales" value={fmt(data.heuresTotal) + 'h'} icon="⏱️" color="blue" />
           <StatCard title="Facturables" value={fmt(data.heuresFact) + 'h'} icon="💼" color="green" />
-          <StatCard title="Non-facturables" value={fmt(data.heuresNonFact) + 'h'} icon="📋" color="gray" />
+          <StatCard title="Non-facturables" value={fmt(data.heuresNonFact) + 'h'} icon="📋" color="slate" />
           <StatCard title="Taux facturable" value={data.tauxCharge + '%'} icon="📊" color="purple" />
-          <StatCard title="Heures restantes" value={fmt(data.heuresRestantes || 0) + 'h'} subtitle="Budget - Consommé" icon="🎯" color="amber" />
         </div>
-
-        {/* Alerte heures non saisies */}
-        {data.joursNonSaisis > 0 && (
-          <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl">
-            <div className="flex items-center gap-3">
-              <span className="text-2xl">⚠️</span>
-              <div>
-                <h4 className="font-semibold text-amber-800">Attention : {data.joursNonSaisis} jour(s) sans saisie complète</h4>
-                <p className="text-sm text-amber-600">
-                  Certains collaborateurs n'ont pas saisi leurs 8h/jour. Total heures manquantes estimé : <b>{fmt(data.heuresManquantes || 0)}h</b>
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
 
         <div className="grid lg:grid-cols-2 gap-6 mb-6">
           <Card title="📊 Répartition globale">
