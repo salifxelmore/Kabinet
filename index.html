@@ -3394,13 +3394,6 @@ const CRMPage = () => {
       clientDeptMap[client.id] = client.departement_id;
     });
     
-    // DEBUG
-    console.log('=== DEBUG CRM ===');
-    console.log('Contacts bruts:', allContactsRaw.length, allContactsRaw);
-    console.log('Clients bruts:', allClientsRaw.length);
-    console.log('hasAccess:', hasAccess, 'isManagingPartner:', isManagingPartner, 'isSuperAdmin:', isSuperAdmin);
-    console.log('filterDept:', filterDept, 'userDeptId:', userDeptId);
-    
     // Déterminer le filtre effectif
     const hasAccess = isManagingPartner || isSuperAdmin || 
       (privs.data || []).some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global') ||
@@ -3408,7 +3401,12 @@ const CRMPage = () => {
     
     const deptFilter = hasAccess ? filterDept : userDeptId;
     
-    console.log('deptFilter effectif:', deptFilter);
+    // DEBUG
+    console.log('=== DEBUG CRM ===');
+    console.log('Contacts bruts:', allContactsRaw.length, allContactsRaw);
+    console.log('Clients bruts:', allClientsRaw.length);
+    console.log('hasAccess:', hasAccess, 'isSuperAdmin:', isSuperAdmin);
+    console.log('filterDept:', filterDept, 'deptFilter effectif:', deptFilter);
     
     let filteredClients = [...allClientsRaw];
     let filteredContacts = [...allContactsRaw];
