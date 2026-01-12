@@ -3543,7 +3543,13 @@ const CRMPage = () => {
   };
 
   // CONTACT CRUD
-  const openNewContact = (clientId = '') => { setEditItem(null); setForm({client_id: clientId, nom: '', prenom: '', fonction: '', email: '', telephone: '', principal: false}); setModal('contact'); };
+  const openNewContact = (clientId = '') => { 
+    console.log('openNewContact appelé, clientId:', clientId);
+    setEditItem(null); 
+    setForm({client_id: clientId, nom: '', prenom: '', fonction: '', email: '', telephone: '', principal: false}); 
+    setModal('contact'); 
+    console.log('Modal devrait être contact maintenant');
+  };
   const openEditContact = (c) => { setEditItem(c); setForm({...c}); setModal('contact'); };
   const saveContact = async () => {
     if (!form.nom || !form.client_id) return alert('Client et nom requis');
