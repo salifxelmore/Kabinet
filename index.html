@@ -3965,14 +3965,49 @@ const CRMPage = () => {
       </TabContent>)}
 
       {/* MODAL CLIENT */}
-      <Modal isOpen={modal === 'client'} onClose={() => setModal(null)} title={editItem ? 'Modifier client' : 'Nouveau client'} size="lg">
+      <Modal isOpen={modal === 'client'} onClose={() => setModal(null)} title={editItem ? 'Modifier client' : 'Nouveau client'}>
         <div className="space-y-4">
-          <Select label="Type de client" value={form.type_client} onChange={v => setForm(p => ({...p, type_client: v}))} options={CLIENT_TYPES} required />
-          {form.type_client === 'entreprise' ? (<>
-            <div className="grid grid-cols-2 gap-4"><Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} /><Input label="NINEA" value={form.ninea} onChange={v => setForm(p => ({...p, ninea: v}))} /></div>
-            <Input label="Dénomination sociale" value={form.denomination} onChange={v => setForm(p => ({...p, denomination: v}))} required />
-          </>) : (
-            <div className="grid grid-cols-2 gap-4"><Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} /><Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required /></div>
+          <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
+          <Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
+          <Select label="Type" value={form.type_client} onChange={v => setForm(p => ({...p, type_client: v}))} options={CLIENT_TYPES} />
+          <Select label="Département" value={form.departement_id} onChange={v => setForm(p => ({...p, departement_id: v}))} options={departements.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner un département" />
+          <Input label="Adresse" value={form.adresse} onChange={v => setForm(p => ({...p, adresse: v}))} />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Ville" value={form.ville || 'DAKAR'} onChange={v => setForm(p => ({...p, ville: v}))} />
+            <Input label="Pays" value={form.pays || 'Sénégal'} onChange={v => setForm(p => ({...p, pays: v}))} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} />
+            <Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} />
+          </div>
+          <Input label="NINEA" value={form.ninea} onChange={v => setForm(p => ({...p, ninea: v}))} />
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={saveClient} loading={saving} className="flex-1">Enregistrer</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* MODAL PROSPECT */}
+      <Modal isOpen={modal === 'prospect'} onClose={() => setModal(null)} title={editItem ? 'Modifier prospect' : 'Nouveau prospect'}>
+        <div className="space-y-4">
+          <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
+          <Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
+          <Select label="Département" value={form.departement_id} onChange={v => setForm(p => ({...p, departement_id: v}))} options={departements.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner un département" />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Ville" value={form.ville || 'DAKAR'} onChange={v => setForm(p => ({...p, ville: v}))} />
+            <Input label="Pays" value={form.pays || 'Sénégal'} onChange={v => setForm(p => ({...p, pays: v}))} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} />
+            <Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} />
+          </div>
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={saveProspect} loading={saving} className="flex-1">Enregistrer</Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* MODAL CONTACT */}
       <Modal isOpen={modal === 'contact'} onClose={() => setModal(null)} title={editItem ? 'Modifier contact' : 'Nouveau contact'}>
