@@ -2159,12 +2159,11 @@ const DashboardPage = () => {
       // Filtrer les temps par période
       const tempsPeriode = allTemps.filter(t => t.date >= start && t.date <= end);
 
-      const projetsActifs = projets.data?.filter(p => p.statut === 'active') || [];
+      const projetsActifs = allProjets.filter(p => p.statut === 'active') || [];
       const heuresTotal = tempsPeriode.reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
       const heuresFact = tempsPeriode.filter(t => t.facturable).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
       
-      // Récupérer les factures (filtrer par période aussi)
-      const allFactures = factures.data || [];
+      // Filtrer les factures par période
       const facturesPeriode = allFactures.filter(f => {
         const dateF = f.date_emission || f.created_at?.split('T')[0];
         return dateF && dateF >= start && dateF <= end;
@@ -2181,7 +2180,7 @@ const DashboardPage = () => {
       const caEnAttente = allFactures.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0) - caEncaisse;
       
       // Budget total des missions (en HT)
-      const budgetTotal = projets.data?.reduce((s, p) => s + (parseFloat(p.budget_montant) || 0), 0) || 0;
+      const budgetTotal = allProjets.reduce((s, p) => s + (parseFloat(p.budget_montant) || 0), 0) || 0;
       
       // Reste à facturer = Budget HT - CA Facturé HT (comparaison HT vs HT)
       const caFactureHTTotal = allFactures.reduce((s, f) => s + (parseFloat(f.montant_ht) || 0), 0);
@@ -2208,7 +2207,7 @@ const DashboardPage = () => {
       }
       
       // Top missions par budget
-      const missionsAvecCA = projets.data?.map(p => ({
+      const missionsAvecCA = allProjets.map(p => ({
         ...p,
         ca: allFactures.filter(f => f.projet_id === p.id).reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0) || 0,
         heuresConsommees: tempsPeriode.filter(t => t.projet_id === p.id).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0) || 0
