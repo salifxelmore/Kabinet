@@ -172,7 +172,13 @@ const fmtSimple = (n) => Math.round(n || 0).toString().replace(/\B(?=(\d{3})+(?!
 const fmtMoney = (n) => fmt(n) + ' FCFA';
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR') : '';
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('fr-FR') : '';
-const today = () => new Date().toISOString().split('T')[0];
+const today = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 const genCode = (prefix) => prefix + Date.now().toString().slice(-6);
 const uuid = () => crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).substr(2, 9);
 
@@ -233,25 +239,51 @@ const exportToExcel = (data, columns, filename) => {
 };
 
 const getWeekStart = (date = new Date()) => {
-  const d = new Date(date);
-  // Ajuster pour le fuseau horaire local
-  d.setHours(12, 0, 0, 0);
+  // Parser la date correctement en UTC pour éviter les décalages
+  let d;
+  if (typeof date === 'string') {
+    const [year, month, day] = date.split('-').map(Number);
+    d = new Date(year, month - 1, day, 12, 0, 0);
+  } else {
+    d = new Date(date);
+    d.setHours(12, 0, 0, 0);
+  }
   const day = d.getDay();
   // getDay(): 0=Dimanche, 1=Lundi, ..., 6=Samedi
   // On veut que la semaine commence le Lundi
   const diff = day === 0 ? -6 : 1 - day;
   d.setDate(d.getDate() + diff);
-  return d.toISOString().split('T')[0];
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const dayNum = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${dayNum}`;
 };
 
 const addDays = (date, n) => {
-  const d = new Date(date);
+  // Parser la date correctement pour éviter les décalages de fuseau horaire
+  let d;
+  if (typeof date === 'string') {
+    const [year, month, day] = date.split('-').map(Number);
+    d = new Date(year, month - 1, day, 12, 0, 0);
+  } else {
+    d = new Date(date);
+    d.setHours(12, 0, 0, 0);
+  }
   d.setDate(d.getDate() + n);
-  return d.toISOString().split('T')[0];
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const dayNum = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${dayNum}`;
 };
 
 const isWeekend = (date) => {
-  const d = new Date(date);
+  let d;
+  if (typeof date === 'string') {
+    const [year, month, day] = date.split('-').map(Number);
+    d = new Date(year, month - 1, day, 12, 0, 0);
+  } else {
+    d = new Date(date);
+  }
   return d.getDay() === 0 || d.getDay() === 6;
 };
 
@@ -5024,13 +5056,12 @@ const StaffingPage = () => {
   }, [userDeptId, canChooseDept, isJuniorSenior]);
 
   const loadData = async () => {
-    const [a, c, m, d, conges, utilisateurs] = await Promise.all([
+    const [a, c, m, d, conges] = await Promise.all([
       supabase.from('affectations').select('*,collaborateurs(nom,prenom,departement_id),projets(id,nom,code,description,date_debut,date_fin_prevue,statut,budget_heures,budget_montant,clients(nom),responsable:responsable_id(id,nom,prenom))').eq('organisation_id', org.id),
       supabase.from('collaborateurs').select('*,grades:grade_id(nom,niveau),departements:departement_id(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
       supabase.from('projets').select('id,nom,code,description,date_debut,date_fin_prevue,statut,budget_heures,clients(nom)').eq('organisation_id', org.id).eq('statut', 'active'),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id).order('nom'),
-      supabase.from('conges').select('*').eq('organisation_id', org.id).eq('statut', 'approved'),
-      supabase.from('utilisateurs').select('id,email').eq('organisation_id', org.id)
+      supabase.from('conges').select('*').eq('organisation_id', org.id).eq('statut', 'approved')
     ]);
     setAffectations(a.data || []);
     setAllCollaborateurs(c.data || []);
@@ -5038,14 +5069,11 @@ const StaffingPage = () => {
     setDepts(d.data || []);
     
     // Mapper les congés avec collaborateur_id
-    // Les congés ont utilisateur_id, on doit trouver le collaborateur via l'email
-    const allUsers = utilisateurs.data || [];
+    // Les congés ont utilisateur_id, on trouve le collaborateur via son user_id
     const allCollabs = c.data || [];
     const congesAvecCollab = (conges.data || []).map(cg => {
-      // Trouver l'utilisateur
-      const userOfConge = allUsers.find(u => u.id === cg.utilisateur_id);
-      // Trouver le collaborateur par email
-      const collabOfConge = userOfConge ? allCollabs.find(col => col.email === userOfConge.email) : null;
+      // Trouver le collaborateur par user_id
+      const collabOfConge = allCollabs.find(col => col.user_id === cg.utilisateur_id);
       return {
         ...cg,
         collaborateur_id_mapped: collabOfConge?.id || null
