@@ -3301,18 +3301,21 @@ const CRMPage = () => {
     
     // Filtrer les clients par département si pas Manager+
     // Note: Les Managers+ voient tous les clients pour raison KYC
+    // Les clients sans département (Administration/Interne) sont visibles par tous
     const hasAccess = isManager || isManagingPartner || isSuperAdmin || isAdmin || (privs.data || []).some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global');
     
     if (!hasAccess && userDeptId) {
-      // Filtrer les clients par département
-      allClients = allClients.filter(x => x.departement_id === userDeptId);
+      // Filtrer les clients par département OU clients globaux (sans département)
+      allClients = allClients.filter(x => x.departement_id === userDeptId || !x.departement_id);
     }
     
     // Pipeline/Opportunités : TOUJOURS filtrées par département (même pour Managers)
+    // Exclure les opportunités du client Administration
     if (!hasGlobalAccess && userDeptId) {
       allOpportunites = allOpportunites.filter(x => {
-        const client = allClients.find(cl => cl.id === x.client_id);
-        return client?.departement_id === userDeptId;
+        const client = (c.data || []).find(cl => cl.id === x.client_id);
+        // Inclure si client du département OU pas de client associé
+        return client?.departement_id === userDeptId || !client?.departement_id;
       });
     }
     
@@ -5586,10 +5589,10 @@ const TimesheetPage = () => {
       return true;
     });
     
-    if (!isManager && userDeptId) {
-      // Junior/Senior: uniquement missions de leur département ou sans département
+    // Filtrer par département : missions du département OU missions internes (sans client)
+    if (userDeptId) {
       filteredMissions = filteredMissions.filter(mission => 
-        !mission.departement_id || mission.departement_id === userDeptId
+        mission.departement_id === userDeptId || !mission.client_id
       );
     }
     setMissions(filteredMissions);
@@ -10899,14 +10902,15 @@ const ParametresPage = () => {
                       <div className="grid grid-cols-2 gap-4">
                         <div>
                           <label className="text-xs text-slate-500">Objectif CA ({selectedYear})</label>
-                          <Input 
+                          <input 
                             type="number"
-                            value={budget?.budget_ca || ''}
-                            onChange={async (v) => {
-                              const val = parseFloat(v) || 0;
+                            className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            defaultValue={budget?.budget_ca || ''}
+                            onBlur={async (e) => {
+                              const val = parseFloat(e.target.value) || 0;
                               if (budget) {
                                 await supabase.from('budgets_departement').update({budget_ca: val, updated_at: new Date().toISOString()}).eq('id', budget.id);
-                              } else {
+                              } else if (val > 0) {
                                 await supabase.from('budgets_departement').insert([{
                                   organisation_id: org.id,
                                   departement_id: dept.id,
@@ -10922,14 +10926,15 @@ const ParametresPage = () => {
                         </div>
                         <div>
                           <label className="text-xs text-slate-500">Objectif heures facturables</label>
-                          <Input 
+                          <input 
                             type="number"
-                            value={budget?.budget_heures || ''}
-                            onChange={async (v) => {
-                              const val = parseInt(v) || 0;
+                            className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            defaultValue={budget?.budget_heures || ''}
+                            onBlur={async (e) => {
+                              const val = parseInt(e.target.value) || 0;
                               if (budget) {
                                 await supabase.from('budgets_departement').update({budget_heures: val, updated_at: new Date().toISOString()}).eq('id', budget.id);
-                              } else {
+                              } else if (val > 0) {
                                 await supabase.from('budgets_departement').insert([{
                                   organisation_id: org.id,
                                   departement_id: dept.id,
