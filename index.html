@@ -3286,6 +3286,7 @@ const CRMPage = () => {
   const {org, user, collab, isAdmin, isSuperAdmin, userDeptId} = useApp();
   const [tab, setTab] = useState('clients');
   const [clients, setClients] = useState([]);
+  const [allClientsData, setAllClientsData] = useState([]); // Tous les clients non filtrés
   const [prospects, setProspects] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [opportunites, setOpportunites] = useState([]);
@@ -3293,117 +3294,417 @@ const CRMPage = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('');
-  const [filterDept, setFilterDept] = useState('');
+  const [filterDept, setFilterDept] = useState(''); // Filtre département UI
   const [modal, setModal] = useState(null);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [privileges, setPrivileges] = useState([]);
   
+  // Accès global temporaire clients
+  const [accesGlobalActif, setAccesGlobalActif] = useState(null);
+  const [demandeEnCours, setDemandeEnCours] = useState(null);
+  const [demandesAttente, setDemandesAttente] = useState([]);
+  const [motifDemande, setMotifDemande] = useState('');
+  const [dureeAcces, setDureeAcces] = useState(2);
+  
+  // Vérifier si accès global permanent
   const gradeNiveau = collab?.grades?.niveau || 0;
-  const hasGlobalAccess = isSuperAdmin || isAdmin || gradeNiveau >= 6;
+  const isManager = gradeNiveau >= 3;
+  const isManagingPartner = gradeNiveau >= 6;
+  const hasGlobalAccessPermanent = isManagingPartner || isSuperAdmin || privileges.some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global');
+  
+  // Accès global clients = permanent OU temporaire actif
+  const hasClientGlobalAccess = hasGlobalAccessPermanent || (accesGlobalActif && new Date(accesGlobalActif.date_expiration) > new Date());
+  
+  // Temps restant pour l'accès temporaire
+  const tempsRestant = accesGlobalActif ? Math.max(0, Math.floor((new Date(accesGlobalActif.date_expiration) - new Date()) / 60000)) : 0;
+  
+  // Filtre effectif (UI ou département utilisateur si pas d'accès global)
+  const effectiveDeptFilter = hasClientGlobalAccess ? filterDept : (userDeptId || '');
+  
+  // Ref pour éviter les rechargements multiples
+  const isFirstRender = React.useRef(true);
+  const prevFilterDept = React.useRef(filterDept);
 
   useEffect(() => { loadData(); }, []);
+  
+  // Recharger SEULEMENT quand filterDept change (pas accesGlobalActif)
+  useEffect(() => { 
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    if (prevFilterDept.current !== filterDept) {
+      prevFilterDept.current = filterDept;
+      loadData(); 
+    }
+  }, [filterDept]);
+  
+  // Vérifier périodiquement si l'accès a expiré
+  useEffect(() => {
+    if (accesGlobalActif) {
+      const interval = setInterval(() => {
+        if (new Date(accesGlobalActif.date_expiration) <= new Date()) {
+          setAccesGlobalActif(null);
+          loadData();
+        }
+      }, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [accesGlobalActif]);
 
   const loadData = async () => {
-    setLoading(true);
-    const [c, co, op, depts] = await Promise.all([
+    // Requêtes de base
+    const [c, co, op, depts, privs] = await Promise.all([
       supabase.from('clients').select('*').eq('organisation_id', org.id).order('nom'),
       supabase.from('contacts').select('*,clients(nom)').eq('organisation_id', org.id).order('nom'),
       supabase.from('opportunites').select('*,clients(nom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
-      supabase.from('departements').select('id,nom').eq('organisation_id', org.id)
+      supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
+      supabase.from('privileges_speciaux').select('*').eq('organisation_id', org.id).eq('actif', true)
     ]);
     
-    setDepartements(depts.data || []);
-    
-    let allClients = c.data || [];
-    let allContacts = co.data || [];
-    let allOpportunites = op.data || [];
-    
-    const deptFilter = hasGlobalAccess ? filterDept : userDeptId;
-    if (deptFilter) {
-      allClients = allClients.filter(x => x.departement_id === deptFilter || !x.departement_id);
-      const clientIds = allClients.map(cl => cl.id);
-      allContacts = allContacts.filter(ct => clientIds.includes(ct.client_id));
-      allOpportunites = allOpportunites.filter(opp => clientIds.includes(opp.client_id));
+    // Requête séparée pour les demandes d'accès (peut échouer si table n'existe pas)
+    let demandes = { data: [] };
+    try {
+      demandes = await supabase.from('demandes_acces_global_clients').select('*,collaborateurs:collaborateur_id(nom,prenom),approbateur:approuve_par(nom,prenom)').eq('organisation_id', org.id).order('date_demande', {ascending: false});
+    } catch (e) {
+      console.log('Table demandes_acces_global_clients non disponible');
     }
     
-    setClients(allClients.filter(x => !x.est_prospect));
-    setProspects(allClients.filter(x => x.est_prospect === true));
-    setContacts(allContacts);
-    setOpportunites(allOpportunites);
+    setDepartements(depts.data || []);
+    setPrivileges(privs.data || []);
+    
+    // Gérer les demandes d'accès global
+    const toutesDemandesData = demandes?.data || [];
+    
+    const maDemandePending = toutesDemandesData.find(d => 
+      d.collaborateur_id === collab?.id && d.statut === 'pending'
+    );
+    setDemandeEnCours(maDemandePending || null);
+    
+    const monAccesActif = toutesDemandesData.find(d => 
+      d.collaborateur_id === collab?.id && 
+      d.statut === 'approved' && 
+      new Date(d.date_expiration) > new Date()
+    );
+    setAccesGlobalActif(monAccesActif || null);
+    
+    if (isSuperAdmin || isAdmin) {
+      setDemandesAttente(toutesDemandesData.filter(d => d.statut === 'pending'));
+    }
+    
+    // Données brutes
+    const allClientsRaw = c.data || [];
+    const allContactsRaw = co.data || [];
+    const allOpportunitesRaw = op.data || [];
+    
+    setAllClientsData(allClientsRaw);
+    
+    // Créer un map client_id -> departement_id pour le filtrage
+    const clientDeptMap = {};
+    allClientsRaw.forEach(client => {
+      clientDeptMap[client.id] = client.departement_id;
+    });
+    
+    // Déterminer le filtre effectif
+    const hasAccess = isManagingPartner || isSuperAdmin || 
+      (privs.data || []).some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global') ||
+      (monAccesActif && new Date(monAccesActif.date_expiration) > new Date());
+    
+    const deptFilter = hasAccess ? filterDept : userDeptId;
+    
+    
+    let filteredClients = [...allClientsRaw];
+    let filteredContacts = [...allContactsRaw];
+    let filteredOpportunites = [...allOpportunitesRaw];
+    
+    // Appliquer le filtre département SEULEMENT si un département spécifique est sélectionné
+    if (deptFilter) {
+      // Clients : département du client OU clients globaux (sans département)
+      filteredClients = filteredClients.filter(x => x.departement_id === deptFilter || !x.departement_id);
+      
+      // Contacts : département du client associé (via le map)
+      filteredContacts = filteredContacts.filter(ct => {
+        const clientDept = clientDeptMap[ct.client_id];
+        return clientDept === deptFilter || !clientDept;
+      });
+      
+      // Opportunités : département du client associé (via le map)
+      filteredOpportunites = filteredOpportunites.filter(opp => {
+        const clientDept = clientDeptMap[opp.client_id];
+        return clientDept === deptFilter || !clientDept;
+      });
+    }
+    
+    
+    // Séparer clients et prospects
+    setClients(filteredClients.filter(x => !x.est_prospect));
+    setProspects(filteredClients.filter(x => x.est_prospect === true));
+    setContacts(filteredContacts);
+    setOpportunites(filteredOpportunites);
     setLoading(false);
   };
+  
+  // Demander un accès global temporaire
+  const demanderAccesGlobal = async () => {
+    if (!motifDemande.trim()) {
+      alert('Veuillez indiquer le motif de votre demande');
+      return;
+    }
+    setSaving(true);
+    try {
+      await supabase.from('demandes_acces_global_clients').insert([{
+        organisation_id: org.id,
+        collaborateur_id: collab.id,
+        motif: motifDemande,
+        statut: 'pending'
+      }]);
+      setMotifDemande('');
+      setModal(null);
+      loadData();
+      alert('Demande envoyée ! Un administrateur va la traiter.');
+    } catch (e) {
+      alert('Erreur: ' + e.message);
+    }
+    setSaving(false);
+  };
+  
+  // Approuver une demande (Admin)
+  const approuverDemande = async (demande) => {
+    setSaving(true);
+    try {
+      const dateExpiration = new Date();
+      dateExpiration.setHours(dateExpiration.getHours() + dureeAcces);
+      
+      await supabase.from('demandes_acces_global_clients').update({
+        statut: 'approved',
+        approuve_par: collab.id,
+        date_traitement: new Date().toISOString(),
+        duree_heures: dureeAcces,
+        date_expiration: dateExpiration.toISOString()
+      }).eq('id', demande.id);
+      
+      setModal(null);
+      loadData();
+      alert(`Accès accordé pour ${dureeAcces}h`);
+    } catch (e) {
+      alert('Erreur: ' + e.message);
+    }
+    setSaving(false);
+  };
+  
+  // Rejeter une demande (Admin)
+  const rejeterDemande = async (demande, commentaire = '') => {
+    if (!confirm('Rejeter cette demande ?')) return;
+    setSaving(true);
+    try {
+      await supabase.from('demandes_acces_global_clients').update({
+        statut: 'rejected',
+        approuve_par: collab.id,
+        date_traitement: new Date().toISOString(),
+        commentaire_validateur: commentaire || 'Demande rejetée'
+      }).eq('id', demande.id);
+      loadData();
+    } catch (e) {
+      alert('Erreur: ' + e.message);
+    }
+    setSaving(false);
+  };
 
-  const filteredClients = clients.filter(c => c.nom?.toLowerCase().includes(search.toLowerCase()) && (!filterType || c.type_client === filterType));
-  const filteredProspects = prospects.filter(c => c.nom?.toLowerCase().includes(search.toLowerCase()));
-  const filteredContacts = contacts.filter(c => c.nom?.toLowerCase().includes(search.toLowerCase()) || c.prenom?.toLowerCase().includes(search.toLowerCase()));
-  const oppActives = opportunites.filter(o => !['gagne', 'perdu'].includes(o.stage));
-  const totalPipeline = oppActives.reduce((s, o) => s + (o.montant * (o.probabilite || 0) / 100), 0);
-
-  const openNewClient = () => { setEditItem(null); setForm({code: genCode('CLI'), nom: '', type_client: 'entreprise', adresse: '', ville: 'DAKAR', pays: 'Sénégal', email: '', telephone: '', ninea: '', departement_id: ''}); setModal('client'); };
+  // CLIENT CRUD
+  const openNewClient = () => { setEditItem(null); setForm({code: genCode('CLI'), type_client: 'entreprise', nom: '', denomination: '', ninea: '', adresse: '', ville: 'DAKAR', email: '', telephone: '', est_prospect: false, departement_id: userDeptId || ''}); setModal('client'); };
   const openEditClient = (c) => { setEditItem(c); setForm({...c}); setModal('client'); };
-  const openNewProspect = () => { setEditItem(null); setForm({code: genCode('PRO'), nom: '', type_client: 'entreprise', adresse: '', ville: 'DAKAR', pays: 'Sénégal', email: '', telephone: '', departement_id: ''}); setModal('prospect'); };
-  const openNewContact = (clientId = '') => { setEditItem(null); setForm({client_id: clientId, nom: '', prenom: '', fonction: '', email: '', telephone: '', principal: false}); setModal('contact'); };
-  const openEditContact = (c) => { setEditItem(c); setForm({...c}); setModal('contact'); };
-  const openNewOpp = () => { setEditItem(null); setForm({code: genCode('OPP'), nom: '', client_id: '', montant: 0, probabilite: 50, stage: 'qualification', date_cloture_prevue: ''}); setModal('opportunite'); };
-  const openEditOpp = (o) => { setEditItem(o); setForm({...o, date_cloture_prevue: o.date_cloture_prevue?.split('T')[0] || ''}); setModal('opportunite'); };
-
   const saveClient = async () => {
-    if (!form.nom) return alert('Nom requis');
+    if (!form.nom && !form.denomination) return alert('Nom requis');
     setSaving(true);
     try {
-      if (editItem?.id) { await supabase.from('clients').update({...form, est_prospect: false}).eq('id', editItem.id); }
-      else { await supabase.from('clients').insert([{...form, organisation_id: org.id, est_prospect: false}]); }
+      const data = {...form, nom: form.denomination || form.nom};
+      if (editItem?.id) await supabase.from('clients').update(data).eq('id', editItem.id);
+      else await supabase.from('clients').insert([{...data, organisation_id: org.id}]);
       setModal(null); loadData();
-    } catch (e) { alert('Erreur: ' + e.message); }
+    } catch (e) { alert(e.message); }
     setSaving(false);
   };
-
+  const deleteClient = async (c) => { if (!confirm(`Supprimer "${c.nom}" ?`)) return; await supabase.from('clients').delete().eq('id', c.id); loadData(); };
+  
+  // PROSPECT CRUD
+  const openNewProspect = () => { setEditItem(null); setForm({code: genCode('PRO'), type_client: 'entreprise', nom: '', denomination: '', ninea: '', adresse: '', ville: 'DAKAR', email: '', telephone: '', est_prospect: true, departement_id: userDeptId || ''}); setModal('prospect'); };
+  const openEditProspect = (p) => { setEditItem(p); setForm({...p}); setModal('prospect'); };
   const saveProspect = async () => {
-    if (!form.nom) return alert('Nom requis');
+    if (!form.nom && !form.denomination) return alert('Nom requis');
     setSaving(true);
     try {
-      if (editItem?.id) { await supabase.from('clients').update({...form, est_prospect: true}).eq('id', editItem.id); }
-      else { await supabase.from('clients').insert([{...form, organisation_id: org.id, est_prospect: true}]); }
+      const data = {...form, nom: form.denomination || form.nom, est_prospect: true};
+      if (editItem?.id) await supabase.from('clients').update(data).eq('id', editItem.id);
+      else await supabase.from('clients').insert([{...data, organisation_id: org.id}]);
       setModal(null); loadData();
-    } catch (e) { alert('Erreur: ' + e.message); }
+    } catch (e) { alert(e.message); }
     setSaving(false);
   };
+  const convertToClient = async (p) => {
+    if (!confirm(`Convertir "${p.nom}" en client ?`)) return;
+    await supabase.from('clients').update({est_prospect: false, code: genCode('CLI')}).eq('id', p.id);
+    loadData();
+  };
 
+  // CONTACT CRUD
+  const openNewContact = (clientId = '') => { 
+    
+    setEditItem(null); 
+    setForm({client_id: clientId, nom: '', prenom: '', fonction: '', email: '', telephone: '', principal: false}); 
+    setModal('contact'); 
+    
+  };
+  const openEditContact = (c) => { setEditItem(c); setForm({...c}); setModal('contact'); };
   const saveContact = async () => {
     if (!form.nom || !form.client_id) return alert('Client et nom requis');
     setSaving(true);
     try {
-      if (editItem?.id) { await supabase.from('contacts').update(form).eq('id', editItem.id); }
-      else { await supabase.from('contacts').insert([{...form, organisation_id: org.id}]); }
+      const data = {
+        client_id: form.client_id,
+        nom: form.nom,
+        prenom: form.prenom || '',
+        fonction: form.fonction || '',
+        email: form.email || '',
+        telephone: form.telephone || '',
+        mobile: form.mobile || '',
+        principal: form.principal || false
+      };
+      
+      let result;
+      if (editItem?.id) {
+        result = await supabase.from('contacts').update(data).eq('id', editItem.id);
+      } else {
+        result = await supabase.from('contacts').insert([{...data, organisation_id: org.id}]);
+      }
+      
+      if (result.error) throw result.error;
       setModal(null); loadData();
-    } catch (e) { alert('Erreur: ' + e.message); }
+    } catch (e) { 
+      console.error('Contact save error:', e);
+      alert('Erreur: ' + e.message); 
+    }
     setSaving(false);
   };
+  const deleteContact = async (c) => { if (!confirm(`Supprimer "${c.prenom} ${c.nom}" ?`)) return; await supabase.from('contacts').delete().eq('id', c.id); loadData(); };
 
+  // OPPORTUNITE CRUD
+  const allClientsAndProspects = [...clients, ...prospects]; // Pour le select dans le modal
+  const openNewOpp = () => { setEditItem(null); setForm({code: genCode('OPP'), nom: '', client_id: '', nouveau_prospect: false, prospect_nom: '', prospect_email: '', prospect_telephone: '', montant: 0, probabilite: 50, stage: 'prospect', date_cloture_prevue: ''}); setModal('opportunite'); };
+  const openEditOpp = (o) => { setEditItem(o); setForm({...o, date_cloture_prevue: o.date_cloture_prevue?.split('T')[0] || '', nouveau_prospect: false}); setModal('opportunite'); };
+  
   const saveOpp = async () => {
-    if (!form.nom || !form.client_id) return alert('Client et nom requis');
     setSaving(true);
     try {
-      const data = {...form, montant: parseFloat(form.montant) || 0, probabilite: parseInt(form.probabilite) || 0};
-      if (editItem?.id) { await supabase.from('opportunites').update(data).eq('id', editItem.id); }
-      else { await supabase.from('opportunites').insert([{...data, organisation_id: org.id}]); }
+      let clientId = form.client_id;
+      
+      // Si nouveau prospect, le créer d'abord
+      if (form.nouveau_prospect && form.prospect_nom) {
+        const prospectData = {
+          code: genCode('PRO'),
+          nom: form.prospect_nom,
+          email: form.prospect_email || '',
+          telephone: form.prospect_telephone || '',
+          type_client: 'entreprise',
+          ville: 'DAKAR',
+          est_prospect: true,
+          organisation_id: org.id
+        };
+        const {data: newProspect, error: prospectError} = await supabase.from('clients').insert([prospectData]).select().single();
+        if (prospectError) throw prospectError;
+        clientId = newProspect.id;
+      }
+      
+      if (!form.nom || !clientId) return alert('Nom et client/prospect requis');
+      
+      const ref = form.code || genCode('OPP');
+      const data = {
+        reference: ref,
+        nom: form.nom,
+        client_id: clientId,
+        description: form.description || '',
+        montant: parseFloat(form.montant) || 0,
+        probabilite: parseInt(form.probabilite) || 50,
+        stage: form.stage || 'prospect',
+        date_cloture_prevue: form.date_cloture_prevue || null
+      };
+      
+      let result;
+      if (editItem?.id) {
+        data.reference = editItem.reference || ref;
+        result = await supabase.from('opportunites').update(data).eq('id', editItem.id);
+      } else {
+        result = await supabase.from('opportunites').insert([{...data, organisation_id: org.id}]);
+      }
+      
+      if (result.error) throw result.error;
       setModal(null); loadData();
-    } catch (e) { alert('Erreur: ' + e.message); }
+    } catch (e) { 
+      console.error('Opportunite save error:', e);
+      alert('Erreur: ' + e.message); 
+    }
     setSaving(false);
   };
+  
+  // Mettre à jour le stage d'une opportunité (avec conversion auto prospect -> client si gagné)
+  const updateOppStage = async (o, stage) => { 
+    try {
+      // Important: inclure reference pour éviter l'erreur NOT NULL
+      const {error} = await supabase.from('opportunites').update({
+        stage,
+        reference: o.reference || o.code || genCode('OPP')
+      }).eq('id', o.id); 
+      if (error) throw error;
+      
+      // Si l'opportunité passe à "gagne", convertir le prospect en client
+      if (stage === 'gagne' && o.client_id) {
+        // Vérifier si c'est un prospect
+        const prospect = prospects.find(p => p.id === o.client_id);
+        if (prospect) {
+          await supabase.from('clients').update({
+            est_prospect: false,
+            code: genCode('CLI')
+          }).eq('id', o.client_id);
+          // Notification
+          alert(`✅ Opportunité gagnée ! Le prospect "${prospect.nom}" a été converti en client.`);
+        }
+      }
+      
+      loadData(); 
+    } catch(e) {
+      console.error('Update stage error:', e);
+      alert('Erreur: ' + e.message);
+    }
+  };
 
-  const deleteClient = async (c) => { if (confirm('Supprimer ' + c.nom + ' ?')) { await supabase.from('clients').delete().eq('id', c.id); loadData(); } };
-  const deleteContact = async (c) => { if (confirm('Supprimer ce contact ?')) { await supabase.from('contacts').delete().eq('id', c.id); loadData(); } };
-  const convertToClient = async (p) => { if (confirm('Convertir en client ?')) { await supabase.from('clients').update({est_prospect: false}).eq('id', p.id); loadData(); } };
-
-  const exportClients = () => exportToExcel(clients, [{header: 'Code', key: 'code'}, {header: 'Nom', key: 'nom'}, {header: 'Ville', key: 'ville'}, {header: 'Email', key: 'email'}], 'clients');
-
-  if (loading) return <Loader />;
+  const filteredClients = clients.filter(c => {
+    const matchSearch = c.nom?.toLowerCase().includes(search.toLowerCase()) || c.ninea?.toLowerCase().includes(search.toLowerCase());
+    const matchType = !filterType || c.type_client === filterType;
+    return matchSearch && matchType;
+  });
+  const filteredProspects = prospects.filter(p => {
+    const matchSearch = p.nom?.toLowerCase().includes(search.toLowerCase()) || p.email?.toLowerCase().includes(search.toLowerCase());
+    const matchType = !filterType || p.type_client === filterType;
+    return matchSearch && matchType;
+  });
+  const filteredContacts = contacts.filter(c => c.nom?.toLowerCase().includes(search.toLowerCase()) || c.prenom?.toLowerCase().includes(search.toLowerCase()));
+  const oppActives = opportunites.filter(o => !['gagne', 'perdu'].includes(o.stage));
+  const totalPipeline = oppActives.reduce((s, o) => s + (o.montant * o.probabilite / 100), 0);
+  
+  const exportClients = () => exportToExcel(clients, [
+    {header: 'Code', key: 'code'},
+    {header: 'Nom', key: 'nom'},
+    {header: 'Type', getValue: r => CLIENT_TYPES.find(t => t.value === r.type_client)?.label || ''},
+    {header: 'NINEA', key: 'ninea'},
+    {header: 'Ville', key: 'ville'},
+    {header: 'Email', key: 'email'},
+    {header: 'Téléphone', key: 'telephone'}
+  ], 'clients');
 
   return (
     <div>
-      <PageHeader title="CRM" subtitle={clients.length + ' clients • ' + prospects.length + ' prospects • ' + contacts.length + ' contacts'}
+      <PageHeader title="CRM" subtitle={`${clients.length} clients • ${prospects.length} prospects • ${contacts.length} contacts • ${opportunites.length} opportunités${effectiveDeptFilter ? ' • ' + (departements.find(d => d.id === effectiveDeptFilter)?.nom || '') : ''}`}
         tabs={[
           {key: 'clients', label: 'Clients', icon: '🏢', count: clients.length}, 
           {key: 'prospects', label: 'Prospects', icon: '🎯', count: prospects.length},
@@ -3413,143 +3714,467 @@ const CRMPage = () => {
         ]}
         activeTab={tab} onTabChange={setTab}
         action={<div className="flex gap-2 items-center">
-          {hasGlobalAccess && departements.length > 0 && (
-            <Select value={filterDept} onChange={(v) => { setFilterDept(v); setTimeout(loadData, 100); }} options={[{value: '', label: 'Tous dép.'}, ...departements.map(d => ({value: d.id, label: d.nom}))]} className="w-40" />
+          {/* Filtre département pour les utilisateurs avec accès global */}
+          {hasClientGlobalAccess && departements.length > 0 && (
+            <Select 
+              value={filterDept} 
+              onChange={setFilterDept} 
+              options={[
+                {value: '', label: '🏢 Tous dép.'},
+                ...departements.map(d => ({value: d.id, label: d.nom}))
+              ]} 
+              className="w-40" 
+            />
           )}
           <Button variant="secondary" size="sm" onClick={exportClients} icon="📥">Export</Button>
-          {tab === 'clients' && <Button size="sm" onClick={openNewClient} icon="➕">Client</Button>}
           {tab === 'prospects' && <Button size="sm" onClick={openNewProspect} icon="➕">Prospect</Button>}
+          {tab === 'clients' && <Button size="sm" onClick={openNewClient} icon="➕">Client</Button>}
           {tab === 'contacts' && <Button size="sm" onClick={openNewContact} icon="➕">Contact</Button>}
           {(tab === 'opportunites' || tab === 'pipeline') && <Button size="sm" onClick={openNewOpp} icon="➕">Opportunité</Button>}
         </div>}
       />
 
-      {tab === 'clients' && (
-        <Card>
-          <div className="flex gap-4 mb-4">
-            <SearchInput value={search} onChange={setSearch} placeholder="Rechercher..." className="flex-1" />
-            <Select value={filterType} onChange={setFilterType} options={CLIENT_TYPES} placeholder="Tous types" className="w-48" />
-          </div>
-          <Table columns={[
-            {header: 'Client', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.code}</div></div>},
-            {header: 'Type', render: r => <Badge>{CLIENT_TYPES.find(t => t.value === r.type_client)?.label}</Badge>},
-            {header: 'Ville', key: 'ville'},
-            {header: 'Contact', render: r => <div className="text-sm">{r.email}<br/><span className="text-slate-400">{r.telephone}</span></div>}
-          ]} data={filteredClients} actions={r => <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openNewContact(r.id)}>👤</Button><Button variant="ghost" size="xs" onClick={() => openEditClient(r)}>✏️</Button><Button variant="ghost" size="xs" onClick={() => deleteClient(r)}>🗑️</Button></div>} />
-        </Card>
-      )}
-
-      {tab === 'prospects' && (
-        <Card>
-          <div className="mb-4"><SearchInput value={search} onChange={setSearch} placeholder="Rechercher..." /></div>
-          <Table columns={[
-            {header: 'Prospect', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.code}</div></div>},
-            {header: 'Ville', key: 'ville'},
-            {header: 'Contact', render: r => <div className="text-sm">{r.email}</div>}
-          ]} data={filteredProspects} actions={r => <div className="flex gap-1"><Button variant="success" size="xs" onClick={() => convertToClient(r)}>✓</Button><Button variant="ghost" size="xs" onClick={() => { setEditItem(r); setForm({...r}); setModal('prospect'); }}>✏️</Button><Button variant="ghost" size="xs" onClick={() => deleteClient(r)}>🗑️</Button></div>} />
-        </Card>
-      )}
-
-      {tab === 'contacts' && (
-        <Card>
-          <div className="mb-4"><SearchInput value={search} onChange={setSearch} placeholder="Rechercher..." /></div>
-          <Table columns={[
-            {header: 'Contact', render: r => <div><div className="font-medium">{r.prenom} {r.nom}</div><div className="text-xs text-slate-400">{r.fonction}</div></div>},
-            {header: 'Client', render: r => r.clients?.nom || '-'},
-            {header: 'Email', key: 'email'},
-            {header: 'Téléphone', key: 'telephone'},
-            {header: 'Principal', render: r => r.principal ? <Badge color="green">✓</Badge> : ''}
-          ]} data={filteredContacts} actions={r => <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openEditContact(r)}>✏️</Button><Button variant="ghost" size="xs" onClick={() => deleteContact(r)}>🗑️</Button></div>} />
-        </Card>
-      )}
-
-      {tab === 'opportunites' && (
-        <Card>
-          <div className="grid grid-cols-3 gap-4 mb-6 p-4 bg-slate-50 rounded-xl">
-            <div className="text-center"><div className="text-2xl font-bold">{oppActives.length}</div><div className="text-sm text-slate-500">En cours</div></div>
-            <div className="text-center"><div className="text-2xl font-bold text-green-600">{fmtMoney(totalPipeline)}</div><div className="text-sm text-slate-500">Pipeline</div></div>
-            <div className="text-center"><div className="text-2xl font-bold">{opportunites.filter(o => o.stage === 'gagne').length}</div><div className="text-sm text-slate-500">Gagnées</div></div>
-          </div>
-          <Table columns={[
-            {header: 'Opportunité', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.code}</div></div>},
-            {header: 'Client', render: r => r.clients?.nom || '-'},
-            {header: 'Montant', render: r => fmtMoney(r.montant)},
-            {header: 'Proba', render: r => r.probabilite + '%'},
-            {header: 'Stage', render: r => { const s = OPPORTUNITY_STAGES.find(s => s.id === r.stage); return <Badge color={s?.color}>{s?.nom}</Badge>; }}
-          ]} data={opportunites} actions={r => <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openEditOpp(r)}>✏️</Button></div>} />
-        </Card>
-      )}
-
-      {tab === 'pipeline' && (
-        <div className="flex gap-4 overflow-x-auto pb-4">
-          {OPPORTUNITY_STAGES.filter(s => !['gagne', 'perdu'].includes(s.id)).map(stage => {
-            const opps = opportunites.filter(o => o.stage === stage.id);
-            return (
-              <div key={stage.id} className="flex-shrink-0 w-72">
-                <div className="bg-slate-100 rounded-t-xl p-3 flex justify-between"><span className="font-medium">{stage.nom}</span><Badge color={stage.color}>{opps.length}</Badge></div>
-                <div className="bg-slate-50 rounded-b-xl p-2 min-h-[200px] space-y-2">
-                  {opps.map(o => (
-                    <div key={o.id} className="bg-white p-3 rounded-lg shadow-sm cursor-pointer hover:shadow-md" onClick={() => openEditOpp(o)}>
-                      <div className="font-medium text-sm">{o.nom}</div>
-                      <div className="text-xs text-slate-400">{o.clients?.nom}</div>
-                      <div className="text-sm font-bold text-green-600 mt-1">{fmtMoney(o.montant)}</div>
-                    </div>
-                  ))}
+      {/* Bandeau d'accès global temporaire */}
+      {!hasGlobalAccessPermanent && (
+        <div className="mb-4">
+          {/* Accès actif */}
+          {accesGlobalActif && tempsRestant > 0 ? (
+            <div className="p-3 bg-green-50 border border-green-200 rounded-xl flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">🔓</span>
+                <div>
+                  <div className="font-medium text-green-800">Accès global clients actif</div>
+                  <div className="text-sm text-green-600">
+                    Expire dans {tempsRestant >= 60 ? `${Math.floor(tempsRestant/60)}h ${tempsRestant%60}min` : `${tempsRestant} min`}
+                  </div>
                 </div>
               </div>
-            );
-          })}
+              <Badge color="green">{allClientsData.length} clients visibles</Badge>
+            </div>
+          ) : demandeEnCours ? (
+            /* Demande en attente */
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">⏳</span>
+                <div>
+                  <div className="font-medium text-amber-800">Demande d'accès en attente</div>
+                  <div className="text-sm text-amber-600">En attente de validation par un administrateur</div>
+                </div>
+              </div>
+              <Badge color="amber">En attente</Badge>
+            </div>
+          ) : isManager ? (
+            /* Bouton de demande (Managers+ uniquement) */
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">🔒</span>
+                <div>
+                  <div className="font-medium text-slate-700">Accès limité au département {departements.find(d => d.id === userDeptId)?.nom}</div>
+                  <div className="text-sm text-slate-500">Demandez un accès temporaire pour voir tous les clients (KYC)</div>
+                </div>
+              </div>
+              <Button size="sm" onClick={() => setModal('demande_acces')} icon="🔓">Demander accès global</Button>
+            </div>
+          ) : (
+            /* Non-managers : juste l'info de filtrage */
+            <div className="p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2 text-sm">
+              <span className="text-blue-500">🔒</span>
+              <span className="text-blue-700">Clients du département <b>{departements.find(d => d.id === userDeptId)?.nom || '-'}</b></span>
+            </div>
+          )}
         </div>
       )}
 
-      <Modal isOpen={modal === 'client'} onClose={() => setModal(null)} title={editItem ? 'Modifier client' : 'Nouveau client'}>
-        <div className="space-y-4">
-          <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
-          <Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
-          <Select label="Type" value={form.type_client} onChange={v => setForm(p => ({...p, type_client: v}))} options={CLIENT_TYPES} />
-          <Select label="Département" value={form.departement_id} onChange={v => setForm(p => ({...p, departement_id: v}))} options={departements.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" />
-          <div className="grid grid-cols-2 gap-4"><Input label="Ville" value={form.ville} onChange={v => setForm(p => ({...p, ville: v}))} /><Input label="Pays" value={form.pays} onChange={v => setForm(p => ({...p, pays: v}))} /></div>
-          <div className="grid grid-cols-2 gap-4"><Input label="Email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} /><Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} /></div>
-          <Input label="NINEA" value={form.ninea} onChange={v => setForm(p => ({...p, ninea: v}))} />
-          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveClient} loading={saving} className="flex-1">Enregistrer</Button></div>
+      {/* Alerte demandes en attente pour Admin */}
+      {(isSuperAdmin || isAdmin) && demandesAttente.length > 0 && (
+        <div className="mb-4 p-3 bg-purple-50 border border-purple-200 rounded-xl flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">📬</span>
+            <div>
+              <div className="font-medium text-purple-800">{demandesAttente.length} demande(s) d'accès en attente</div>
+              <div className="text-sm text-purple-600">Cliquez pour traiter les demandes</div>
+            </div>
+          </div>
+          <Button size="sm" variant="secondary" onClick={() => setModal('gestion_demandes')} icon="👁️">Voir les demandes</Button>
         </div>
-      </Modal>
+      )}
 
-      <Modal isOpen={modal === 'prospect'} onClose={() => setModal(null)} title={editItem ? 'Modifier prospect' : 'Nouveau prospect'}>
+      {loading ? <Loader /> : (
+        <TabContent tabKey={tab}>
+        {tab === 'clients' && (
+          <Card className="animate-fade-up">
+            <div className="flex gap-4 mb-4">
+              <SearchInput value={search} onChange={setSearch} placeholder="Rechercher..." className="flex-1" />
+              <Select value={filterType} onChange={setFilterType} options={CLIENT_TYPES} placeholder="Tous les types" className="w-48" />
+              {filterType && <Button variant="ghost" size="sm" onClick={() => setFilterType('')}>🔄</Button>}
+            </div>
+            <Table columns={[
+              {header: 'Client', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.code} • {CLIENT_TYPES.find(t => t.value === r.type_client)?.label}</div></div>},
+              {header: 'NINEA', render: r => r.ninea || '-'},
+              {header: 'Ville', key: 'ville'},
+              {header: 'Contact', render: r => <div className="text-sm"><div>{r.email}</div><div className="text-slate-400">{r.telephone}</div></div>}
+            ]} data={filteredClients} actions={r => <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openNewContact(r.id)}>👤</Button><Button variant="ghost" size="xs" onClick={() => openEditClient(r)}>✏️</Button><Button variant="ghost" size="xs" onClick={() => deleteClient(r)}>🗑️</Button></div>} />
+          </Card>
+        )}
+        
+        {tab === 'prospects' && (
+          <Card className="animate-fade-up">
+            <div className="flex gap-4 mb-4">
+              <SearchInput value={search} onChange={setSearch} placeholder="Rechercher..." className="flex-1" />
+              <Select value={filterType} onChange={setFilterType} options={CLIENT_TYPES} placeholder="Tous les types" className="w-48" />
+              {filterType && <Button variant="ghost" size="sm" onClick={() => setFilterType('')}>🔄</Button>}
+            </div>
+            {filteredProspects.length === 0 ? (
+              <div className="text-center py-12 text-slate-400">
+                <div className="text-4xl mb-4">🎯</div>
+                <p>Aucun prospect pour l'instant</p>
+                <p className="text-sm mt-2">Les prospects sont créés lors de la saisie d'une opportunité ou manuellement</p>
+              </div>
+            ) : (
+              <Table columns={[
+                {header: 'Prospect', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.code} • {CLIENT_TYPES.find(t => t.value === r.type_client)?.label}</div></div>},
+                {header: 'Contact', render: r => <div className="text-sm"><div>{r.email || '-'}</div><div className="text-slate-400">{r.telephone || '-'}</div></div>},
+                {header: 'Ville', key: 'ville'},
+                {header: 'Opportunités', render: r => {
+                  const oppCount = opportunites.filter(o => o.client_id === r.id).length;
+                  return oppCount > 0 ? <Badge color="blue">{oppCount}</Badge> : <span className="text-slate-400">-</span>;
+                }}
+              ]} data={filteredProspects} actions={r => (
+                <div className="flex gap-1">
+                  <Button variant="success" size="xs" onClick={() => convertToClient(r)} title="Convertir en client">✓ Client</Button>
+                  <Button variant="ghost" size="xs" onClick={() => openEditProspect(r)} title="Modifier">✏️</Button>
+                  <Button variant="ghost" size="xs" onClick={() => deleteClient(r)} title="Supprimer">🗑️</Button>
+                </div>
+              )} />
+            )}
+          </Card>
+        )}
+
+        {tab === 'contacts' && (
+          <Card>
+            <div className="mb-4"><SearchInput value={search} onChange={setSearch} placeholder="Rechercher..." /></div>
+            <Table columns={[
+              {header: 'Contact', render: r => <div><div className="font-medium">{r.prenom} {r.nom}</div><div className="text-xs text-slate-400">{r.fonction}</div></div>},
+              {header: 'Client', render: r => r.clients?.nom || '-'},
+              {header: 'Email', key: 'email'},
+              {header: 'Téléphone', render: r => r.telephone || '-'},
+              {header: 'Principal', render: r => r.principal ? <Badge color="green">✓</Badge> : ''}
+            ]} data={filteredContacts} actions={r => <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openEditContact(r)}>✏️</Button><Button variant="ghost" size="xs" onClick={() => deleteContact(r)}>🗑️</Button></div>} />
+          </Card>
+        )}
+
+        {tab === 'opportunites' && (
+          <Card action={<Button size="sm" onClick={openNewOpp} icon="➕">Opportunité</Button>}>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6 p-3 sm:p-4 bg-slate-50 rounded-xl">
+              <div className="text-center"><div className="text-xl sm:text-2xl font-bold">{oppActives.length}</div><div className="text-xs sm:text-sm text-slate-500">En cours</div></div>
+              <div className="text-center"><div className="text-xl sm:text-2xl font-bold text-green-600">{fmtMoney(totalPipeline)}</div><div className="text-xs sm:text-sm text-slate-500">Pipeline pondéré</div></div>
+              <div className="text-center"><div className="text-xl sm:text-2xl font-bold">{opportunites.filter(o => o.stage === 'gagne').length}</div><div className="text-xs sm:text-sm text-slate-500">Gagnées</div></div>
+            </div>
+            <Table columns={[
+              {header: 'Opportunité', render: r => <div><div className="font-medium">{r.nom}</div><div className="text-xs text-slate-400">{r.code}</div></div>},
+              {header: 'Client', render: r => r.clients?.nom || '-'},
+              {header: 'Montant', render: r => <span className="font-medium">{fmtMoney(r.montant)}</span>},
+              {header: 'Proba', render: r => <span>{r.probabilite}%</span>},
+              {header: 'Stage', render: r => { const s = OPPORTUNITY_STAGES.find(s => s.id === r.stage); return <Badge color={s?.color}>{s?.nom}</Badge>; }},
+              {header: 'Clôture', render: r => r.date_cloture_prevue ? fmtDate(r.date_cloture_prevue) : '-'}
+            ]} data={opportunites} actions={r => <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openEditOpp(r)}>✏️</Button></div>} />
+          </Card>
+        )}
+
+        {tab === 'pipeline' && (
+          <div>
+            {/* Pipeline actif */}
+            <div className="flex gap-4 overflow-x-auto pb-4">
+              {OPPORTUNITY_STAGES.filter(s => !['gagne', 'perdu'].includes(s.id)).map(stage => {
+                const opps = opportunites.filter(o => o.stage === stage.id);
+                const total = opps.reduce((s, o) => s + o.montant, 0);
+                return (
+                  <div key={stage.id} className="pipeline-stage flex-shrink-0">
+                    <div className="bg-slate-100 rounded-t-xl p-3">
+                      <div className="flex justify-between items-center"><span className="font-medium">{stage.nom}</span><Badge color={stage.color}>{opps.length}</Badge></div>
+                      <div className="text-sm text-slate-500 mt-1">{fmtMoney(total)}</div>
+                    </div>
+                    <div className="bg-slate-50 rounded-b-xl p-2 min-h-[300px] space-y-2">
+                      {opps.map(o => (
+                        <div key={o.id} className="kanban-card bg-white p-3 rounded-lg shadow-sm border hover:shadow-md transition-shadow cursor-pointer" onClick={() => openEditOpp(o)}>
+                          <div className="font-medium text-sm">{o.nom}</div>
+                          <div className="text-xs text-slate-400">{o.clients?.nom}</div>
+                          <div className="flex justify-between items-center mt-2">
+                            <span className="text-sm font-medium text-green-600">{fmtMoney(o.montant)}</span>
+                            <span className="text-xs text-slate-400">{o.probabilite}%</span>
+                          </div>
+                          {/* Boutons pour passer à Gagné/Perdu */}
+                          <div className="flex gap-1 mt-2 pt-2 border-t">
+                            <Button size="xs" variant="success" onClick={(e) => { e.stopPropagation(); updateOppStage(o, 'gagne'); }}>✓ Gagné</Button>
+                            <Button size="xs" variant="danger" onClick={(e) => { e.stopPropagation(); updateOppStage(o, 'perdu'); }}>✗ Perdu</Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            
+            {/* Résultats: Gagné et Perdu */}
+            <div className="grid grid-cols-2 gap-4 mt-6">
+              {/* Colonne Gagné */}
+              <Card className="border-green-200 bg-green-50/50">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-green-700">✓ Gagnés</h3>
+                  <Badge color="green">{opportunites.filter(o => o.stage === 'gagne').length}</Badge>
+                </div>
+                <div className="text-lg font-bold text-green-600 mb-3">{fmtMoney(opportunites.filter(o => o.stage === 'gagne').reduce((s, o) => s + o.montant, 0))}</div>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {opportunites.filter(o => o.stage === 'gagne').map(o => (
+                    <div key={o.id} className="bg-white p-2 rounded-lg text-sm flex justify-between items-center">
+                      <div>
+                        <div className="font-medium">{o.nom}</div>
+                        <div className="text-xs text-slate-400">{o.clients?.nom}</div>
+                      </div>
+                      <span className="font-bold text-green-600">{fmtMoney(o.montant)}</span>
+                    </div>
+                  ))}
+                  {opportunites.filter(o => o.stage === 'gagne').length === 0 && <div className="text-center text-slate-400 py-4">Aucune opportunité gagnée</div>}
+                </div>
+              </Card>
+              
+              {/* Colonne Perdu */}
+              <Card className="border-red-200 bg-red-50/50">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-red-700">✗ Perdus</h3>
+                  <Badge color="red">{opportunites.filter(o => o.stage === 'perdu').length}</Badge>
+                </div>
+                <div className="text-lg font-bold text-red-600 mb-3">{fmtMoney(opportunites.filter(o => o.stage === 'perdu').reduce((s, o) => s + o.montant, 0))}</div>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {opportunites.filter(o => o.stage === 'perdu').map(o => (
+                    <div key={o.id} className="bg-white p-2 rounded-lg text-sm flex justify-between items-center">
+                      <div>
+                        <div className="font-medium">{o.nom}</div>
+                        <div className="text-xs text-slate-400">{o.clients?.nom}</div>
+                      </div>
+                      <span className="font-bold text-red-600">{fmtMoney(o.montant)}</span>
+                    </div>
+                  ))}
+                  {opportunites.filter(o => o.stage === 'perdu').length === 0 && <div className="text-center text-slate-400 py-4">Aucune opportunité perdue</div>}
+                </div>
+              </Card>
+            </div>
+          </div>
+        )}
+      </TabContent>)}
+
+      {/* MODAL CLIENT */}
+      <Modal isOpen={modal === 'client'} onClose={() => setModal(null)} title={editItem ? 'Modifier client' : 'Nouveau client'} size="lg">
         <div className="space-y-4">
-          <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
-          <Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
-          <Select label="Département" value={form.departement_id} onChange={v => setForm(p => ({...p, departement_id: v}))} options={departements.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" />
-          <div className="grid grid-cols-2 gap-4"><Input label="Ville" value={form.ville} onChange={v => setForm(p => ({...p, ville: v}))} /><Input label="Email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} /></div>
-          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveProspect} loading={saving} className="flex-1">Enregistrer</Button></div>
-        </div>
-      </Modal>
+          <Select label="Type de client" value={form.type_client} onChange={v => setForm(p => ({...p, type_client: v}))} options={CLIENT_TYPES} required />
+          {form.type_client === 'entreprise' ? (<>
+            <div className="grid grid-cols-2 gap-4"><Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} /><Input label="NINEA" value={form.ninea} onChange={v => setForm(p => ({...p, ninea: v}))} /></div>
+            <Input label="Dénomination sociale" value={form.denomination} onChange={v => setForm(p => ({...p, denomination: v}))} required />
+          </>) : (
+            <div className="grid grid-cols-2 gap-4"><Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} /><Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required /></div>
 
+      {/* MODAL CONTACT */}
       <Modal isOpen={modal === 'contact'} onClose={() => setModal(null)} title={editItem ? 'Modifier contact' : 'Nouveau contact'}>
         <div className="space-y-4">
           <Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" required />
-          <div className="grid grid-cols-2 gap-4"><Input label="Prénom" value={form.prenom} onChange={v => setForm(p => ({...p, prenom: v}))} /><Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required /></div>
-          <Input label="Fonction" value={form.fonction} onChange={v => setForm(p => ({...p, fonction: v}))} />
-          <div className="grid grid-cols-2 gap-4"><Input label="Email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} /><Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} /></div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Prénom" value={form.prenom} onChange={v => setForm(p => ({...p, prenom: v}))} />
+            <Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
+          </div>
+          <Input label="Fonction" value={form.fonction} onChange={v => setForm(p => ({...p, fonction: v}))} placeholder="Ex: Directeur Financier" />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} />
+            <Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} />
+          </div>
           <Checkbox label="Contact principal" checked={form.principal} onChange={v => setForm(p => ({...p, principal: v}))} />
-          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveContact} loading={saving} className="flex-1">Enregistrer</Button></div>
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={saveContact} loading={saving} className="flex-1">Enregistrer</Button>
+          </div>
         </div>
       </Modal>
 
-      <Modal isOpen={modal === 'opportunite'} onClose={() => setModal(null)} title={editItem ? 'Modifier opportunité' : 'Nouvelle opportunité'}>
+      {/* MODAL OPPORTUNITE */}
+      <Modal isOpen={modal === 'opportunite'} onClose={() => setModal(null)} title={editItem ? 'Modifier opportunité' : 'Nouvelle opportunité'} size="lg">
         <div className="space-y-4">
           <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
-          <Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
-          <Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={[...clients, ...prospects].map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" required />
-          <div className="grid grid-cols-2 gap-4"><Input label="Montant" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} /><Input label="Probabilité %" type="number" value={form.probabilite} onChange={v => setForm(p => ({...p, probabilite: v}))} /></div>
-          <Select label="Stage" value={form.stage} onChange={v => setForm(p => ({...p, stage: v}))} options={OPPORTUNITY_STAGES.map(s => ({value: s.id, label: s.nom}))} />
-          <Input label="Date clôture" type="date" value={form.date_cloture_prevue} onChange={v => setForm(p => ({...p, date_cloture_prevue: v}))} />
-          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveOpp} loading={saving} className="flex-1">Enregistrer</Button></div>
+          <Input label="Nom de l'opportunité" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required placeholder="Ex: Audit comptable 2026" />
+          
+          {/* Choix Client existant ou Nouveau prospect */}
+          {!editItem && (
+            <div className="p-4 bg-slate-50 rounded-xl space-y-4">
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" checked={!form.nouveau_prospect} onChange={() => setForm(p => ({...p, nouveau_prospect: false, client_id: ''}))} className="w-4 h-4" />
+                  <span className="font-medium">Client ou Prospect existant</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" checked={form.nouveau_prospect} onChange={() => setForm(p => ({...p, nouveau_prospect: true, client_id: ''}))} className="w-4 h-4" />
+                  <span className="font-medium">Nouveau prospect</span>
+                </label>
+              </div>
+              
+              {!form.nouveau_prospect ? (
+                <Select 
+                  label="Client / Prospect" 
+                  value={form.client_id} 
+                  onChange={v => setForm(p => ({...p, client_id: v}))} 
+                  options={[
+                    ...clients.map(c => ({value: c.id, label: '🏢 ' + c.nom})),
+                    ...prospects.map(p => ({value: p.id, label: '🎯 ' + p.nom}))
+                  ]} 
+                  placeholder="Sélectionner un client ou prospect" 
+                  required 
+                />
+              ) : (
+                <div className="space-y-3">
+                  <Input label="Nom du prospect" value={form.prospect_nom} onChange={v => setForm(p => ({...p, prospect_nom: v}))} required placeholder="Ex: SONATEL SA" />
+                  <div className="grid grid-cols-2 gap-4">
+                    <Input label="Email" type="email" value={form.prospect_email} onChange={v => setForm(p => ({...p, prospect_email: v}))} placeholder="contact@example.com" />
+                    <Input label="Téléphone" value={form.prospect_telephone} onChange={v => setForm(p => ({...p, prospect_telephone: v}))} placeholder="+221 77 000 00 00" />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* En mode édition, juste afficher le client */}
+          {editItem && (
+            <Select label="Client / Prospect" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={allClientsAndProspects.map(c => ({value: c.id, label: c.nom}))} required />
+          )}
+          
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+            <Input label="Montant (FCFA)" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} />
+            <Input label="Probabilité (%)" type="number" value={form.probabilite} onChange={v => setForm(p => ({...p, probabilite: v}))} min={0} max={100} />
+            <Select label="Étape" value={form.stage} onChange={v => setForm(p => ({...p, stage: v}))} options={OPPORTUNITY_STAGES.map(s => ({value: s.id, label: s.nom}))} />
+          </div>
+          <Input label="Date clôture prévue" type="date" value={form.date_cloture_prevue} onChange={v => setForm(p => ({...p, date_cloture_prevue: v}))} />
+          <TextArea label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} rows={3} />
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={saveOpp} loading={saving} className="flex-1">Enregistrer</Button>
+          </div>
+        </div>
+      </Modal>
+      
+      {/* MODAL PROSPECT */}
+      <Modal isOpen={modal === 'prospect'} onClose={() => setModal(null)} title={editItem ? 'Modifier prospect' : 'Nouveau prospect'} size="lg">
+        <div className="space-y-4">
+          <Select label="Type" value={form.type_client} onChange={v => setForm(p => ({...p, type_client: v}))} options={CLIENT_TYPES} required />
+          {form.type_client === 'entreprise' ? (<>
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
+              <Input label="NINEA" value={form.ninea} onChange={v => setForm(p => ({...p, ninea: v}))} />
+            </div>
+            <Input label="Dénomination sociale" value={form.denomination} onChange={v => setForm(p => ({...p, denomination: v}))} required />
+          </>) : (
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
+              <Input label="Nom" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
+            </div>
+          )}
+          <Select label="Département" value={form.departement_id} onChange={v => setForm(p => ({...p, departement_id: v}))} options={departements.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner un département" required />
+          <Input label="Adresse" value={form.adresse} onChange={v => setForm(p => ({...p, adresse: v}))} />
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Ville" value={form.ville || 'DAKAR'} onChange={v => setForm(p => ({...p, ville: v}))} />
+            <Input label="Pays" value={form.pays || 'Sénégal'} onChange={v => setForm(p => ({...p, pays: v}))} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Email" type="email" value={form.email} onChange={v => setForm(p => ({...p, email: v}))} />
+            <Input label="Téléphone" value={form.telephone} onChange={v => setForm(p => ({...p, telephone: v}))} />
+          </div>
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={saveProspect} loading={saving} className="flex-1">Enregistrer</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* MODAL DEMANDE ACCÈS GLOBAL */}
+      <Modal isOpen={modal === 'demande_acces'} onClose={() => setModal(null)} title="🔓 Demander un accès global clients" size="md">
+        <div className="space-y-4">
+          <div className="p-4 bg-blue-50 rounded-xl text-blue-700 text-sm">
+            <strong>ℹ️ Information :</strong> Cette demande vous permettra de voir temporairement tous les clients de l'organisation (2-4h) pour effectuer des vérifications KYC ou d'autres besoins ponctuels.
+          </div>
+          
+          <TextArea 
+            label="Motif de la demande *" 
+            value={motifDemande} 
+            onChange={setMotifDemande} 
+            rows={3} 
+            placeholder="Ex: Vérification KYC pour nouveau prospect, recherche de doublons..."
+            required
+          />
+          
+          <div className="p-4 bg-amber-50 rounded-xl text-amber-700 text-sm">
+            <strong>⚠️ Note :</strong> Votre demande sera traitée par un administrateur. L'accès sera accordé pour une durée limitée (généralement 2 à 4 heures).
+          </div>
+          
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
+            <Button onClick={demanderAccesGlobal} loading={saving} className="flex-1" disabled={!motifDemande.trim()}>Envoyer la demande</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* MODAL GESTION DEMANDES (Admin) */}
+      <Modal isOpen={modal === 'gestion_demandes'} onClose={() => setModal(null)} title="📬 Demandes d'accès global clients" size="lg">
+        <div className="space-y-4">
+          {demandesAttente.length === 0 ? (
+            <div className="text-center py-8 text-slate-400">
+              <div className="text-4xl mb-2">✅</div>
+              <p>Aucune demande en attente</p>
+            </div>
+          ) : (
+            demandesAttente.map(demande => (
+              <div key={demande.id} className="p-4 bg-slate-50 rounded-xl border">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold text-sm">
+                      {demande.collaborateurs?.prenom?.[0]}{demande.collaborateurs?.nom?.[0]}
+                    </div>
+                    <div>
+                      <div className="font-medium">{demande.collaborateurs?.prenom} {demande.collaborateurs?.nom}</div>
+                      <div className="text-xs text-slate-500">{new Date(demande.date_demande).toLocaleString('fr-FR')}</div>
+                    </div>
+                  </div>
+                  <Badge color="amber">En attente</Badge>
+                </div>
+                
+                <div className="mb-4 p-3 bg-white rounded-lg text-sm">
+                  <div className="text-slate-500 mb-1">Motif :</div>
+                  <div>{demande.motif || 'Non précisé'}</div>
+                </div>
+                
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-slate-600">Durée :</span>
+                    <Select 
+                      value={dureeAcces.toString()} 
+                      onChange={v => setDureeAcces(parseInt(v))}
+                      options={[
+                        {value: '1', label: '1 heure'},
+                        {value: '2', label: '2 heures'},
+                        {value: '3', label: '3 heures'},
+                        {value: '4', label: '4 heures'}
+                      ]}
+                      className="w-28"
+                    />
+                  </div>
+                  <div className="flex-1" />
+                  <Button variant="danger" size="sm" onClick={() => rejeterDemande(demande)}>Rejeter</Button>
+                  <Button variant="success" size="sm" onClick={() => approuverDemande(demande)} loading={saving}>Approuver</Button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </Modal>
     </div>
   );
 };
+// ========== MISSIONS PAGE ==========
 const MissionsPage = () => {
   const {org, collab, isManager, isAdmin, isCollaborateur, isSuperAdmin, userDeptId} = useApp();
   const [missions, setMissions] = useState([]);
