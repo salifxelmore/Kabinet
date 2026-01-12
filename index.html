@@ -10850,8 +10850,11 @@ const AuditLogsPage = () => {
 
 // ========== PARAMETRES PAGE ==========
 const ParametresPage = () => {
-  const {org, abo, reload} = useApp();
+  const {org, abo, reload, isSuperAdmin, isAdmin, user} = useApp();
   const [tab, setTab] = useState('org');
+  
+  // Seul le développeur peut voir la config Landing Page
+  const isDeveloper = user?.email === 'sawadgsalif@gmail.com';
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [depts, setDepts] = useState([]);
@@ -11002,7 +11005,7 @@ const ParametresPage = () => {
         {key: 'validateurs', label: '✅ Validateurs'},
         {key: 'privileges', label: '🔐 Privilèges'},
         {key: 'budgets', label: '🎯 Budgets'},
-        {key: 'landing', label: '🌐 Landing Page'},
+        ...(isDeveloper ? [{key: 'landing', label: '🌐 Landing Page'}] : []),
         {key: 'backup', label: '💾 Sauvegarde'}
       ]} active={tab} onChange={setTab} />
 
@@ -11498,7 +11501,7 @@ const ParametresPage = () => {
           </div>
         )}
 
-        {tab === 'landing' && (
+        {tab === 'landing' && isDeveloper && (
           <LandingLogosManager org={org} />
         )}
 
