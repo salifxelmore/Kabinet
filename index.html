@@ -2141,20 +2141,30 @@ const DashboardPage = () => {
         // Filtrer les collaborateurs par département
         allCollabs = allCollabs.filter(c => c.departement_id === effectiveDeptFilter);
         
-        // Filtrer les projets : département OU missions internes (sans client = globales)
+        // Filtrer les projets : département du projet OU missions internes (sans client)
+        // Note: Si un projet n'a pas de département, on le garde si c'est une mission interne
         allProjets = allProjets.filter(p => p.departement_id === effectiveDeptFilter || !p.client_id);
         
         // Obtenir les user_ids des collaborateurs du département
-        const deptUserIds = allCollabs.map(c => c.user_id).filter(Boolean);
         const deptCollabEmails = allCollabs.map(c => c.email).filter(Boolean);
         const deptUtilisateurIds = allUsers.filter(u => deptCollabEmails.includes(u.email)).map(u => u.id);
         
         // Filtrer les temps par utilisateur du département
         allTemps = allTemps.filter(t => deptUtilisateurIds.includes(t.utilisateur_id));
         
-        // Filtrer les factures par projet du département (exclure missions internes)
-        const deptProjetIds = allProjets.filter(p => p.client_id).map(p => p.id);
+        // Filtrer les factures par projet du département
+        // Si le projet a un departement_id qui correspond, on garde la facture
+        const deptProjetIds = allProjets.filter(p => p.departement_id === effectiveDeptFilter).map(p => p.id);
+        
+        // DEBUG: Afficher dans la console pour comprendre
+        console.log('Dept filter:', effectiveDeptFilter);
+        console.log('Projets avec ce dept:', allProjets.filter(p => p.departement_id === effectiveDeptFilter).map(p => ({nom: p.nom, dept: p.departement_id})));
+        console.log('IDs projets:', deptProjetIds);
+        console.log('Factures avant filtre:', allFactures.length);
+        
         allFactures = allFactures.filter(f => deptProjetIds.includes(f.projet_id));
+        
+        console.log('Factures après filtre:', allFactures.length);
       }
       
       // Stocker les collaborateurs pour le sélecteur (filtrés si nécessaire)
