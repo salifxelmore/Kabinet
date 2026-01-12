@@ -3342,20 +3342,21 @@ const CRMPage = () => {
   }, [accesGlobalActif]);
 
   const loadData = async () => {
+    // Requêtes de base - on récupère les clients séparément pour éviter les erreurs si departement_id n'existe pas
     const [c, co, op, depts, privs, demandes] = await Promise.all([
       supabase.from('clients').select('*').eq('organisation_id', org.id).order('nom'),
-      supabase.from('contacts').select('*,clients(nom,departement_id)').eq('organisation_id', org.id).order('nom'),
-      supabase.from('opportunites').select('*,clients(nom,departement_id)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
+      supabase.from('contacts').select('*,clients(nom)').eq('organisation_id', org.id).order('nom'),
+      supabase.from('opportunites').select('*,clients(nom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
       supabase.from('privileges_speciaux').select('*').eq('organisation_id', org.id).eq('actif', true),
-      supabase.from('demandes_acces_global_clients').select('*,collaborateurs:collaborateur_id(nom,prenom),approbateur:approuve_par(nom,prenom)').eq('organisation_id', org.id).order('date_demande', {ascending: false})
+      supabase.from('demandes_acces_global_clients').select('*,collaborateurs:collaborateur_id(nom,prenom),approbateur:approuve_par(nom,prenom)').eq('organisation_id', org.id).order('date_demande', {ascending: false}).catch(() => ({data: []}))
     ]);
     
     setDepartements(depts.data || []);
     setPrivileges(privs.data || []);
     
     // Gérer les demandes d'accès global
-    const toutesDemandesData = demandes.data || [];
+    const toutesDemandesData = demandes?.data || [];
     
     const maDemandePending = toutesDemandesData.find(d => 
       d.collaborateur_id === collab?.id && d.statut === 'pending'
@@ -3380,6 +3381,12 @@ const CRMPage = () => {
     
     setAllClientsData(allClientsRaw);
     
+    // Créer un map client_id -> departement_id pour le filtrage
+    const clientDeptMap = {};
+    allClientsRaw.forEach(client => {
+      clientDeptMap[client.id] = client.departement_id;
+    });
+    
     // Déterminer le filtre effectif
     const hasAccess = isManagingPartner || isSuperAdmin || 
       (privs.data || []).some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global') ||
@@ -3396,15 +3403,15 @@ const CRMPage = () => {
       // Clients : département du client OU clients globaux (sans département)
       filteredClients = filteredClients.filter(x => x.departement_id === deptFilter || !x.departement_id);
       
-      // Contacts : département du client associé
+      // Contacts : département du client associé (via le map)
       filteredContacts = filteredContacts.filter(ct => {
-        const clientDept = ct.clients?.departement_id;
+        const clientDept = clientDeptMap[ct.client_id];
         return clientDept === deptFilter || !clientDept;
       });
       
-      // Opportunités : département du client associé
-      filteredOpportunites = filteredOpportunites.filter(op => {
-        const clientDept = op.clients?.departement_id;
+      // Opportunités : département du client associé (via le map)
+      filteredOpportunites = filteredOpportunites.filter(opp => {
+        const clientDept = clientDeptMap[opp.client_id];
         return clientDept === deptFilter || !clientDept;
       });
     }
