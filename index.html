@@ -3294,6 +3294,7 @@ const CRMPage = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('');
+  const [filterDept, setFilterDept] = useState(''); // Filtre département UI
   const [modal, setModal] = useState(null);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
@@ -3301,13 +3302,13 @@ const CRMPage = () => {
   const [privileges, setPrivileges] = useState([]);
   
   // Accès global temporaire clients
-  const [accesGlobalActif, setAccesGlobalActif] = useState(null); // Demande approuvée active
-  const [demandeEnCours, setDemandeEnCours] = useState(null); // Demande en attente
-  const [demandesAttente, setDemandesAttente] = useState([]); // Pour admin : demandes à valider
+  const [accesGlobalActif, setAccesGlobalActif] = useState(null);
+  const [demandeEnCours, setDemandeEnCours] = useState(null);
+  const [demandesAttente, setDemandesAttente] = useState([]);
   const [motifDemande, setMotifDemande] = useState('');
   const [dureeAcces, setDureeAcces] = useState(2);
   
-  // Vérifier si accès global permanent (Managing Partner+ ou privilège spécial)
+  // Vérifier si accès global permanent
   const gradeNiveau = collab?.grades?.niveau || 0;
   const isManager = gradeNiveau >= 3;
   const isManagingPartner = gradeNiveau >= 6;
@@ -3318,8 +3319,14 @@ const CRMPage = () => {
   
   // Temps restant pour l'accès temporaire
   const tempsRestant = accesGlobalActif ? Math.max(0, Math.floor((new Date(accesGlobalActif.date_expiration) - new Date()) / 60000)) : 0;
+  
+  // Filtre effectif (UI ou département utilisateur si pas d'accès global)
+  const effectiveDeptFilter = hasClientGlobalAccess ? filterDept : (userDeptId || '');
 
   useEffect(() => { loadData(); }, []);
+  
+  // Recharger quand le filtre change
+  useEffect(() => { if (!loading) loadData(); }, [filterDept, accesGlobalActif]);
   
   // Vérifier périodiquement si l'accès a expiré
   useEffect(() => {
@@ -3327,9 +3334,9 @@ const CRMPage = () => {
       const interval = setInterval(() => {
         if (new Date(accesGlobalActif.date_expiration) <= new Date()) {
           setAccesGlobalActif(null);
-          loadData(); // Recharger pour filtrer les clients
+          loadData();
         }
-      }, 30000); // Vérifier toutes les 30 secondes
+      }, 30000);
       return () => clearInterval(interval);
     }
   }, [accesGlobalActif]);
@@ -3337,8 +3344,8 @@ const CRMPage = () => {
   const loadData = async () => {
     const [c, co, op, depts, privs, demandes] = await Promise.all([
       supabase.from('clients').select('*').eq('organisation_id', org.id).order('nom'),
-      supabase.from('contacts').select('*,clients(nom)').eq('organisation_id', org.id).order('nom'),
-      supabase.from('opportunites').select('*,clients(nom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
+      supabase.from('contacts').select('*,clients(nom,departement_id)').eq('organisation_id', org.id).order('nom'),
+      supabase.from('opportunites').select('*,clients(nom,departement_id)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
       supabase.from('privileges_speciaux').select('*').eq('organisation_id', org.id).eq('actif', true),
       supabase.from('demandes_acces_global_clients').select('*,collaborateurs:collaborateur_id(nom,prenom),approbateur:approuve_par(nom,prenom)').eq('organisation_id', org.id).order('date_demande', {ascending: false})
@@ -3350,13 +3357,11 @@ const CRMPage = () => {
     // Gérer les demandes d'accès global
     const toutesDemandesData = demandes.data || [];
     
-    // Ma demande en cours (pending)
     const maDemandePending = toutesDemandesData.find(d => 
       d.collaborateur_id === collab?.id && d.statut === 'pending'
     );
     setDemandeEnCours(maDemandePending || null);
     
-    // Mon accès actif (approved et non expiré)
     const monAccesActif = toutesDemandesData.find(d => 
       d.collaborateur_id === collab?.id && 
       d.statut === 'approved' && 
@@ -3364,41 +3369,51 @@ const CRMPage = () => {
     );
     setAccesGlobalActif(monAccesActif || null);
     
-    // Pour admin : demandes en attente
     if (isSuperAdmin || isAdmin) {
       setDemandesAttente(toutesDemandesData.filter(d => d.statut === 'pending'));
     }
     
-    // Stocker tous les clients
+    // Données brutes
     const allClientsRaw = c.data || [];
+    const allContactsRaw = co.data || [];
+    const allOpportunitesRaw = op.data || [];
+    
     setAllClientsData(allClientsRaw);
     
-    let allClients = [...allClientsRaw];
-    let allOpportunites = op.data || [];
-    
-    // Vérifier l'accès global clients (permanent ou temporaire)
+    // Déterminer le filtre effectif
     const hasAccess = isManagingPartner || isSuperAdmin || 
       (privs.data || []).some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global') ||
       (monAccesActif && new Date(monAccesActif.date_expiration) > new Date());
     
-    if (!hasAccess && userDeptId) {
-      // Filtrer les clients par département OU clients globaux (sans département)
-      allClients = allClients.filter(x => x.departement_id === userDeptId || !x.departement_id);
-    }
+    const deptFilter = hasAccess ? filterDept : userDeptId;
     
-    // Pipeline/Opportunités : TOUJOURS filtrées par département (sauf Managing Partner+)
-    if (!hasGlobalAccessPermanent && userDeptId) {
-      allOpportunites = allOpportunites.filter(x => {
-        const client = allClientsRaw.find(cl => cl.id === x.client_id);
-        return client?.departement_id === userDeptId || !client?.departement_id;
+    let filteredClients = [...allClientsRaw];
+    let filteredContacts = [...allContactsRaw];
+    let filteredOpportunites = [...allOpportunitesRaw];
+    
+    // Appliquer le filtre département
+    if (deptFilter) {
+      // Clients : département du client OU clients globaux (sans département)
+      filteredClients = filteredClients.filter(x => x.departement_id === deptFilter || !x.departement_id);
+      
+      // Contacts : département du client associé
+      filteredContacts = filteredContacts.filter(ct => {
+        const clientDept = ct.clients?.departement_id;
+        return clientDept === deptFilter || !clientDept;
+      });
+      
+      // Opportunités : département du client associé
+      filteredOpportunites = filteredOpportunites.filter(op => {
+        const clientDept = op.clients?.departement_id;
+        return clientDept === deptFilter || !clientDept;
       });
     }
     
     // Séparer clients et prospects
-    setClients(allClients.filter(x => !x.est_prospect));
-    setProspects(allClients.filter(x => x.est_prospect === true));
-    setContacts(co.data || []);
-    setOpportunites(allOpportunites);
+    setClients(filteredClients.filter(x => !x.est_prospect));
+    setProspects(filteredClients.filter(x => x.est_prospect === true));
+    setContacts(filteredContacts);
+    setOpportunites(filteredOpportunites);
     setLoading(false);
   };
   
@@ -3654,7 +3669,7 @@ const CRMPage = () => {
 
   return (
     <div>
-      <PageHeader title="CRM" subtitle={`${clients.length} clients • ${prospects.length} prospects • ${contacts.length} contacts • ${opportunites.length} opportunités`}
+      <PageHeader title="CRM" subtitle={`${clients.length} clients • ${prospects.length} prospects • ${contacts.length} contacts • ${opportunites.length} opportunités${effectiveDeptFilter ? ' • ' + (departements.find(d => d.id === effectiveDeptFilter)?.nom || '') : ''}`}
         tabs={[
           {key: 'clients', label: 'Clients', icon: '🏢', count: clients.length}, 
           {key: 'prospects', label: 'Prospects', icon: '🎯', count: prospects.length},
@@ -3663,7 +3678,19 @@ const CRMPage = () => {
           {key: 'pipeline', label: 'Pipeline', icon: '📊'}
         ]}
         activeTab={tab} onTabChange={setTab}
-        action={<div className="flex gap-2">
+        action={<div className="flex gap-2 items-center">
+          {/* Filtre département pour les utilisateurs avec accès global */}
+          {hasClientGlobalAccess && departements.length > 0 && (
+            <Select 
+              value={filterDept} 
+              onChange={setFilterDept} 
+              options={[
+                {value: '', label: '🏢 Tous dép.'},
+                ...departements.map(d => ({value: d.id, label: d.nom}))
+              ]} 
+              className="w-40" 
+            />
+          )}
           <Button variant="secondary" size="sm" onClick={exportClients} icon="📥">Export</Button>
           {tab === 'prospects' && <Button size="sm" onClick={openNewProspect} icon="➕">Prospect</Button>}
           {tab === 'clients' && <Button size="sm" onClick={openNewClient} icon="➕">Client</Button>}
@@ -7229,40 +7256,87 @@ const CongesPage = () => {
 };
 // ========== FACTURATION PAGE ==========
 const FacturationPage = () => {
-  const {org, collab, isAssocie, isAdmin} = useApp();
+  const {org, collab, isAssocie, isAdmin, isSuperAdmin, userDeptId} = useApp();
   const [factures, setFactures] = useState([]);
   const [allMissions, setAllMissions] = useState([]);
   const [clients, setClients] = useState([]);
+  const [departements, setDepartements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState('toutes');
+  const [filterDept, setFilterDept] = useState(''); // Filtre département
+  const [privileges, setPrivileges] = useState([]);
+  
+  // Vérifier accès global
+  const gradeNiveau = collab?.grades?.niveau || 0;
+  const isManagingPartner = gradeNiveau >= 6;
+  const hasGlobalAccess = isManagingPartner || isSuperAdmin || isAdmin || privileges.some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global');
   
   // Associé+ voit tout, Manager voit seulement ses missions
-  const canViewAll = isAssocie || isAdmin;
+  const canViewAll = isAssocie || isAdmin || hasGlobalAccess;
+  
+  // Filtre effectif
+  const effectiveDeptFilter = hasGlobalAccess ? filterDept : userDeptId;
 
   useEffect(() => { loadData(); }, []);
+  useEffect(() => { if (!loading) loadData(); }, [filterDept]);
 
   const loadData = async () => {
-    const [f, m, c] = await Promise.all([
-      supabase.from('factures').select('*,clients(nom),projets(nom,code,responsable_id)').eq('organisation_id', org.id).order('date_emission', {ascending: false}),
+    const [f, m, c, depts, privs] = await Promise.all([
+      supabase.from('factures').select('*,clients(nom,departement_id),projets(nom,code,responsable_id,departement_id)').eq('organisation_id', org.id).order('date_emission', {ascending: false}),
       supabase.from('projets').select('*,clients(nom),departements:departement_id(nom)').eq('organisation_id', org.id),
-      supabase.from('clients').select('id,nom').eq('organisation_id', org.id)
+      supabase.from('clients').select('id,nom,departement_id').eq('organisation_id', org.id),
+      supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
+      supabase.from('privileges_speciaux').select('*').eq('organisation_id', org.id).eq('actif', true)
     ]);
     
-    // Filtrer les factures pour les managers (seulement leurs missions)
+    setDepartements(depts.data || []);
+    setPrivileges(privs.data || []);
+    
+    const hasAccess = isManagingPartner || isSuperAdmin || isAdmin || (privs.data || []).some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global');
+    const deptFilter = hasAccess ? filterDept : userDeptId;
+    
+    // Filtrer les factures
     let filteredFactures = f.data || [];
-    if (!canViewAll && collab?.id) {
+    
+    // Filtrer par département (via projet ou client)
+    if (deptFilter) {
+      filteredFactures = filteredFactures.filter(fac => {
+        const projetDept = fac.projets?.departement_id;
+        const clientDept = fac.clients?.departement_id;
+        return projetDept === deptFilter || clientDept === deptFilter || (!projetDept && !clientDept);
+      });
+    }
+    
+    // Filtrer pour les managers (seulement leurs missions) si pas d'accès global
+    if (!hasAccess && collab?.id) {
       filteredFactures = filteredFactures.filter(fac => 
         !fac.projet_id || fac.projets?.responsable_id === collab.id
       );
     }
     
+    // Filtrer les missions par département
+    let filteredMissions = m.data || [];
+    if (deptFilter) {
+      filteredMissions = filteredMissions.filter(mission => 
+        mission.departement_id === deptFilter || !mission.departement_id
+      );
+    }
+    
+    // Filtrer les clients par département
+    let filteredClients = c.data || [];
+    if (deptFilter) {
+      filteredClients = filteredClients.filter(client => 
+        client.departement_id === deptFilter || !client.departement_id
+      );
+    }
+    
     setFactures(filteredFactures);
-    setAllMissions(m.data || []);
-    setClients(c.data || []);
+    setAllMissions(filteredMissions);
+    setClients(filteredClients);
     setLoading(false);
   };
   
@@ -7611,7 +7685,7 @@ const FacturationPage = () => {
 
   return (
     <div>
-      <PageHeader title="Facturation" subtitle={canViewAll ? factures.length + ' factures' : 'Mes missions - ' + factures.length + ' factures'} 
+      <PageHeader title="Facturation" subtitle={`${factures.length} factures${effectiveDeptFilter ? ' • ' + (departements.find(d => d.id === effectiveDeptFilter)?.nom || '') : ''}`} 
         tabs={[
           {key: 'toutes', label: 'Toutes', count: factures.length},
           {key: 'draft', label: 'Brouillons', count: factures.filter(f => f.statut === 'draft').length},
@@ -7620,15 +7694,29 @@ const FacturationPage = () => {
           {key: 'paid', label: 'Payées', count: factures.filter(f => f.statut === 'paid').length}
         ]}
         activeTab={tab} onTabChange={setTab}
-        action={<div className="flex gap-2">
+        action={<div className="flex gap-2 items-center">
+          {/* Filtre département pour les utilisateurs avec accès global */}
+          {hasGlobalAccess && departements.length > 0 && (
+            <Select 
+              value={filterDept} 
+              onChange={setFilterDept} 
+              options={[
+                {value: '', label: '🏢 Tous dép.'},
+                ...departements.map(d => ({value: d.id, label: d.nom}))
+              ]} 
+              className="w-40" 
+            />
+          )}
           <Button variant="secondary" size="sm" onClick={exportFactures} icon="📥">Export</Button>
           <Button onClick={openNew} icon="➕">Nouvelle</Button>
         </div>} 
       />
       
-      {!canViewAll && (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-sm animate-fade">
-          ℹ️ Vous voyez uniquement les factures des missions dont vous êtes responsable.
+      {/* Info département pour non-global */}
+      {!hasGlobalAccess && userDeptId && (
+        <div className="mb-4 p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2 text-sm">
+          <span className="text-blue-500">🔒</span>
+          <span className="text-blue-700">Factures du département <b>{departements.find(d => d.id === userDeptId)?.nom || '-'}</b></span>
         </div>
       )}
       
