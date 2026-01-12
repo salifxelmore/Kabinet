@@ -170,6 +170,13 @@ const cn = (...classes) => classes.filter(Boolean).join(' ');
 const fmt = (n, dec = 0) => new Intl.NumberFormat('fr-FR', {maximumFractionDigits: dec}).format(n || 0);
 const fmtSimple = (n) => Math.round(n || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' '); // Pour PDF sans caractères spéciaux
 const fmtMoney = (n) => fmt(n) + ' FCFA';
+const fmtMoneyShort = (n) => {
+  const v = n || 0;
+  if (v >= 1000000000) return (v / 1000000000).toFixed(1).replace('.0', '') + ' Md';
+  if (v >= 1000000) return (v / 1000000).toFixed(1).replace('.0', '') + ' M';
+  if (v >= 1000) return (v / 1000).toFixed(0) + ' K';
+  return fmt(v);
+};
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('fr-FR') : '';
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString('fr-FR') : '';
 const today = () => {
@@ -2053,7 +2060,7 @@ const SuperAdminApp = ({user, onLogout, onSwitchToOrg, hasOrg = true}) => {
 };
 // ========== DASHBOARD PAGE ==========
 const DashboardPage = () => {
-  const {org, user, collab, isManager, isAdmin, isAssocie, isSuperAdmin, isCollaborateur, setPage} = useApp();
+  const {org, user, collab, isManager, isAdmin, isAssocie, isSuperAdmin, isCollaborateur, setPage, userDeptId} = useApp();
   const [stats, setStats] = useState({});
   const [myStats, setMyStats] = useState({});
   const [loading, setLoading] = useState(true);
@@ -2064,13 +2071,34 @@ const DashboardPage = () => {
   const [allCollaborateurs, setAllCollaborateurs] = useState([]);
   const [selectedCollabId, setSelectedCollabId] = useState(''); // Pour voir la perf d'un collab
   const [collabStats, setCollabStats] = useState(null); // Stats du collab sélectionné
+  const [departements, setDepartements] = useState([]);
+  const [privileges, setPrivileges] = useState([]);
   
   // Filtres période
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [filterMode, setFilterMode] = useState('year'); // 'year' ou 'range'
+  const [filterDept, setFilterDept] = useState(''); // Filtre département
 
-  useEffect(() => { loadStats(); }, [selectedYear, dateRange, filterMode]);
+  // Vérifier si l'utilisateur a un accès global (Managing Partner niveau 6+ ou privilège spécial)
+  const gradeNiveau = collab?.grades?.niveau || 0;
+  const isManagingPartner = gradeNiveau >= 6;
+  const hasGlobalAccess = isManagingPartner || isSuperAdmin || privileges.some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global');
+  
+  // Pour les non-Managing Partners, forcer le filtre sur leur département
+  const effectiveDeptFilter = hasGlobalAccess ? filterDept : userDeptId;
+
+  useEffect(() => { loadPrivileges(); }, []);
+  useEffect(() => { loadStats(); }, [selectedYear, dateRange, filterMode, filterDept, effectiveDeptFilter]);
+  
+  const loadPrivileges = async () => {
+    const [depts, privs] = await Promise.all([
+      supabase.from('departements').select('id,nom').eq('organisation_id', org.id).order('nom'),
+      supabase.from('privileges_speciaux').select('*').eq('organisation_id', org.id).eq('actif', true)
+    ]);
+    setDepartements(depts.data || []);
+    setPrivileges(privs.data || []);
+  };
   
   // Calculer les dates de période
   const getPeriodDates = () => {
@@ -2090,19 +2118,42 @@ const DashboardPage = () => {
     if (isManager || isAdmin) {
       const [clients, projets, temps, factures, collabList, affectations, utilisateurs] = await Promise.all([
         supabase.from('clients').select('id, created_at').eq('organisation_id', org.id),
-        supabase.from('projets').select('id, nom, code, statut, budget_montant, montant_facture, budget_heures, clients(nom)').eq('organisation_id', org.id),
+        supabase.from('projets').select('id, nom, code, statut, budget_montant, montant_facture, budget_heures, departement_id, clients(nom)').eq('organisation_id', org.id),
         supabase.from('saisies_temps').select('*').eq('organisation_id', org.id),
         supabase.from('factures').select('*').eq('organisation_id', org.id),
-        supabase.from('collaborateurs').select('id, nom, prenom, email, actif, grade_id, departement_id, grades(nom)').eq('organisation_id', org.id),
+        supabase.from('collaborateurs').select('id, nom, prenom, email, actif, grade_id, departement_id, user_id, grades(nom,niveau)').eq('organisation_id', org.id),
         supabase.from('affectations').select('*').eq('organisation_id', org.id),
         supabase.from('utilisateurs').select('id, auth_id, email, nom, prenom').eq('organisation_id', org.id)
       ]);
       
-      const allTemps = temps.data || [];
+      let allTemps = temps.data || [];
       const allUsers = utilisateurs.data || [];
-      const allCollabs = collabList.data || [];
+      let allCollabs = collabList.data || [];
+      let allProjets = projets.data || [];
+      let allFactures = factures.data || [];
       
-      // Stocker les collaborateurs pour le sélecteur
+      // ===== FILTRAGE PAR DÉPARTEMENT =====
+      if (effectiveDeptFilter) {
+        // Filtrer les collaborateurs par département
+        allCollabs = allCollabs.filter(c => c.departement_id === effectiveDeptFilter);
+        
+        // Filtrer les projets par département (si le champ existe) ou par les collaborateurs du département
+        allProjets = allProjets.filter(p => p.departement_id === effectiveDeptFilter || !p.departement_id);
+        
+        // Obtenir les user_ids des collaborateurs du département
+        const deptUserIds = allCollabs.map(c => c.user_id).filter(Boolean);
+        const deptCollabEmails = allCollabs.map(c => c.email).filter(Boolean);
+        const deptUtilisateurIds = allUsers.filter(u => deptCollabEmails.includes(u.email)).map(u => u.id);
+        
+        // Filtrer les temps par utilisateur du département
+        allTemps = allTemps.filter(t => deptUtilisateurIds.includes(t.utilisateur_id));
+        
+        // Filtrer les factures par projet du département
+        const deptProjetIds = allProjets.map(p => p.id);
+        allFactures = allFactures.filter(f => deptProjetIds.includes(f.projet_id));
+      }
+      
+      // Stocker les collaborateurs pour le sélecteur (filtrés si nécessaire)
       setAllCollaborateurs(allCollabs.filter(c => c.actif));
       
       // Filtrer les temps par période
@@ -2668,7 +2719,7 @@ const DashboardPage = () => {
   // Dashboard Manager/Admin - Version enrichie
   return (
     <div>
-      <PageHeader title="Tableau de bord" subtitle={`Bienvenue, ${collab?.prenom || user.prenom} ! Voici l'état de votre cabinet.`} />
+      <PageHeader title="Tableau de bord" subtitle={`Bienvenue, ${collab?.prenom || user.prenom} ! ${hasGlobalAccess ? 'Voici l\'état de votre cabinet.' : `Données de votre département : ${departements.find(d => d.id === userDeptId)?.nom || '-'}`}`} />
       
       {/* Filtre période */}
       <div className="flex flex-wrap items-center gap-4 mb-6 p-4 bg-white rounded-xl shadow-sm">
@@ -2718,8 +2769,25 @@ const DashboardPage = () => {
            'Sélectionnez une plage'}
         </div>
         
+        {/* Filtre département - visible uniquement pour Managing Partner et Admin avec accès global */}
+        {hasGlobalAccess && departements.length > 0 && (
+          <div className="flex items-center gap-2 border-l pl-4 ml-2">
+            <span className="text-sm text-slate-600 font-medium">🏢 Département :</span>
+            <select 
+              value={filterDept} 
+              onChange={e => setFilterDept(e.target.value)}
+              className="input py-1.5 text-sm min-w-40"
+            >
+              <option value="">Tous les départements</option>
+              {departements.map(d => (
+                <option key={d.id} value={d.id}>{d.nom}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        
         {/* Sélecteur collaborateur - visible pour Admin/Associé/SuperAdmin */}
-        {(isAdmin || isAssocie || isSuperAdmin) && (
+        {(isAdmin || isAssocie || isSuperAdmin || hasGlobalAccess) && (
           <div className="ml-auto flex items-center gap-2">
             <span className="text-sm text-slate-600 font-medium">👤 Voir performance :</span>
             <select 
@@ -2738,6 +2806,16 @@ const DashboardPage = () => {
           </div>
         )}
       </div>
+      
+      {/* Indicateur de filtrage */}
+      {!hasGlobalAccess && userDeptId && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-2">
+          <span className="text-blue-500">🔒</span>
+          <span className="text-sm text-blue-700">
+            Vous visualisez les données de votre département : <b>{departements.find(d => d.id === userDeptId)?.nom || '-'}</b>
+          </span>
+        </div>
+      )}
       
       {/* Panneau Performance Collaborateur */}
       {selectedCollabId && collabStats && (
@@ -9026,10 +9104,10 @@ const RapportsPage = () => {
       {/* ========== ONGLET FINANCE ========== */}
       {tab === 'finance' && (<>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <StatCard title="CA facturé" value={fmtMoney(data.caTotal)} icon="📄" color="blue" />
-          <StatCard title="CA encaissé" value={fmtMoney(data.caEncaisse)} icon="✅" color="green" />
-          <StatCard title="En attente" value={fmtMoney(data.caEnAttente)} icon="⏳" color="amber" />
-          <StatCard title="Budget total" value={fmtMoney(data.budgetTotal)} icon="🎯" color="purple" />
+          <StatCard title="CA facturé" value={fmtMoneyShort(data.caTotal) + ' FCFA'} icon="📄" color="blue" />
+          <StatCard title="CA encaissé" value={fmtMoneyShort(data.caEncaisse) + ' FCFA'} icon="✅" color="green" />
+          <StatCard title="En attente" value={fmtMoneyShort(data.caEnAttente) + ' FCFA'} icon="⏳" color="amber" />
+          <StatCard title="Budget total" value={fmtMoneyShort(data.budgetTotal) + ' FCFA'} icon="🎯" color="purple" />
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6 mb-6">
