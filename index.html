@@ -454,20 +454,20 @@ const Card = ({title, subtitle, children, action, className, collapsible, defaul
 const StatCard = ({title, value, subtitle, icon, color = 'blue', trend, onClick}) => {
   const colors = {blue: 'bg-blue-500', green: 'bg-emerald-500', purple: 'bg-purple-500', amber: 'bg-amber-500', red: 'bg-red-500', cyan: 'bg-cyan-500', slate: 'bg-slate-500'};
   return (
-    <div className={cn('card p-3 sm:p-4 lg:p-6 transition-all hover:shadow-lg', onClick && 'cursor-pointer')} onClick={onClick}>
+    <div className={cn('card p-3 sm:p-4 transition-all hover:shadow-lg', onClick && 'cursor-pointer')} onClick={onClick}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p className="text-slate-500 text-xs sm:text-sm font-medium truncate">{title}</p>
-          <p className="text-lg sm:text-xl lg:text-2xl font-bold text-slate-800 mt-0.5 sm:mt-1 truncate">{value}</p>
-          {subtitle && <p className="text-slate-400 text-xs sm:text-sm mt-0.5 sm:mt-1 truncate">{subtitle}</p>}
+          <p className="text-slate-500 text-xs font-medium truncate">{title}</p>
+          <p className="text-base sm:text-lg font-bold text-slate-800 mt-0.5">{value}</p>
+          {subtitle && <p className="text-slate-400 text-xs mt-0.5 truncate">{subtitle}</p>}
           {trend !== undefined && (
-            <div className={cn('flex items-center gap-1 mt-1 sm:mt-2 text-xs sm:text-sm font-medium', trend >= 0 ? 'text-emerald-500' : 'text-red-500')}>
+            <div className={cn('flex items-center gap-1 mt-1 text-xs font-medium', trend >= 0 ? 'text-emerald-500' : 'text-red-500')}>
               <span>{trend >= 0 ? '↑' : '↓'}</span>
               <span>{Math.abs(trend)}%</span>
             </div>
           )}
         </div>
-        <div className={cn('w-8 h-8 sm:w-10 sm:h-10 lg:w-12 lg:h-12 rounded-lg sm:rounded-xl flex-shrink-0 flex items-center justify-center text-white text-base sm:text-lg lg:text-xl', colors[color])}>{icon}</div>
+        <div className={cn('w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex-shrink-0 flex items-center justify-center text-white text-sm sm:text-base', colors[color])}>{icon}</div>
       </div>
     </div>
   );
@@ -2206,12 +2206,16 @@ const DashboardPage = () => {
         caParMois.push({mois: mois.charAt(0).toUpperCase() + mois.slice(1), montant, isFuture: selectedYear === now.getFullYear() && i > now.getMonth()});
       }
       
-      // Top missions par budget
-      const missionsAvecCA = allProjets.map(p => ({
-        ...p,
-        ca: allFactures.filter(f => f.projet_id === p.id).reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0) || 0,
-        heuresConsommees: tempsPeriode.filter(t => t.projet_id === p.id).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0) || 0
-      })).sort((a, b) => (parseFloat(b.budget_montant) || 0) - (parseFloat(a.budget_montant) || 0)).slice(0, 5) || [];
+      // Top missions par budget - UNIQUEMENT les missions facturables, avec CA HT
+      const missionsAvecCA = allProjets
+        .filter(p => p.facturable !== false) // Exclure les missions non facturables
+        .map(p => ({
+          ...p,
+          ca: allFactures.filter(f => f.projet_id === p.id).reduce((s, f) => s + (parseFloat(f.montant_ht) || 0), 0) || 0, // Utiliser HT
+          heuresConsommees: tempsPeriode.filter(t => t.projet_id === p.id).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0) || 0
+        }))
+        .sort((a, b) => (parseFloat(b.budget_montant) || 0) - (parseFloat(a.budget_montant) || 0))
+        .slice(0, 5) || [];
       
       // Performance équipe - basée sur les utilisateurs qui ont saisi du temps
       const tempsByUser = {};
@@ -2718,101 +2722,59 @@ const DashboardPage = () => {
   // Dashboard Manager/Admin - Version enrichie
   return (
     <div>
-      <PageHeader title="Tableau de bord" subtitle={`Bienvenue, ${collab?.prenom || user.prenom} ! ${hasGlobalAccess ? 'Voici l\'état de votre cabinet.' : `Données de votre département : ${departements.find(d => d.id === userDeptId)?.nom || '-'}`}`} />
+      <PageHeader title="Tableau de bord" subtitle={`Bienvenue, ${collab?.prenom || user.prenom} ! ${hasGlobalAccess ? 'Voici l\'état de votre cabinet.' : `Données du département ${departements.find(d => d.id === userDeptId)?.nom || '-'}`}`} />
       
-      {/* Filtre période */}
-      <div className="flex flex-wrap items-center gap-4 mb-6 p-4 bg-white rounded-xl shadow-sm">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-slate-600 font-medium">📅 Période :</span>
-          <select 
-            value={filterMode} 
-            onChange={e => setFilterMode(e.target.value)}
-            className="input py-1.5 text-sm"
-          >
-            <option value="year">Année</option>
-            <option value="range">Plage de dates</option>
-          </select>
-        </div>
+      {/* Filtres sur une seule ligne */}
+      <div className="flex items-center gap-3 mb-6 p-3 bg-white rounded-xl shadow-sm overflow-x-auto">
+        <span className="text-sm text-slate-600 font-medium whitespace-nowrap">📅</span>
+        <select value={filterMode} onChange={e => setFilterMode(e.target.value)} className="input py-1.5 text-sm w-24">
+          <option value="year">Année</option>
+          <option value="range">Plage</option>
+        </select>
         
         {filterMode === 'year' ? (
-          <select 
-            value={selectedYear} 
-            onChange={e => setSelectedYear(parseInt(e.target.value))}
-            className="input py-1.5 text-sm"
-          >
-            {[2024, 2025, 2026, 2027].map(y => (
-              <option key={y} value={y}>{y}</option>
-            ))}
+          <select value={selectedYear} onChange={e => setSelectedYear(parseInt(e.target.value))} className="input py-1.5 text-sm w-20">
+            {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
           </select>
         ) : (
-          <div className="flex items-center gap-2">
-            <input 
-              type="date" 
-              value={dateRange.start}
-              onChange={e => setDateRange(d => ({...d, start: e.target.value}))}
-              className="input py-1.5 text-sm"
-            />
+          <>
+            <input type="date" value={dateRange.start} onChange={e => setDateRange(d => ({...d, start: e.target.value}))} className="input py-1.5 text-sm w-32" />
             <span className="text-slate-400">→</span>
-            <input 
-              type="date"
-              value={dateRange.end}
-              onChange={e => setDateRange(d => ({...d, end: e.target.value}))}
-              className="input py-1.5 text-sm"
-            />
-          </div>
+            <input type="date" value={dateRange.end} onChange={e => setDateRange(d => ({...d, end: e.target.value}))} className="input py-1.5 text-sm w-32" />
+          </>
         )}
         
-        <div className="text-xs text-slate-500">
-          {filterMode === 'year' ? `Données de ${selectedYear}` : 
-           dateRange.start && dateRange.end ? `Du ${new Date(dateRange.start).toLocaleDateString('fr-FR')} au ${new Date(dateRange.end).toLocaleDateString('fr-FR')}` : 
-           'Sélectionnez une plage'}
-        </div>
-        
-        {/* Filtre département - visible uniquement pour Managing Partner et Admin avec accès global */}
+        {/* Filtre département */}
         {hasGlobalAccess && departements.length > 0 && (
-          <div className="flex items-center gap-2 border-l pl-4 ml-2">
-            <span className="text-sm text-slate-600 font-medium">🏢 Département :</span>
-            <select 
-              value={filterDept} 
-              onChange={e => setFilterDept(e.target.value)}
-              className="input py-1.5 text-sm min-w-40"
-            >
-              <option value="">Tous les départements</option>
-              {departements.map(d => (
-                <option key={d.id} value={d.id}>{d.nom}</option>
-              ))}
+          <>
+            <div className="w-px h-6 bg-slate-200"></div>
+            <span className="text-sm whitespace-nowrap">🏢</span>
+            <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="input py-1.5 text-sm w-40">
+              <option value="">Tous dép.</option>
+              {departements.map(d => <option key={d.id} value={d.id}>{d.nom}</option>)}
             </select>
-          </div>
+          </>
         )}
         
-        {/* Sélecteur collaborateur - visible pour Admin/Associé/SuperAdmin */}
+        {/* Sélecteur collaborateur avec icône */}
         {(isAdmin || isAssocie || isSuperAdmin || hasGlobalAccess) && (
-          <div className="ml-auto flex items-center gap-2">
-            <span className="text-sm text-slate-600 font-medium">👤 Voir performance :</span>
-            <select 
-              value={selectedCollabId} 
-              onChange={e => setSelectedCollabId(e.target.value)}
-              className="input py-1.5 text-sm min-w-48"
-            >
-              <option value="">-- Sélectionner un collaborateur --</option>
-              {allCollaborateurs.map(c => (
-                <option key={c.id} value={c.id}>{c.prenom} {c.nom} ({c.grades?.nom || 'N/A'})</option>
-              ))}
+          <>
+            <div className="w-px h-6 bg-slate-200 ml-auto"></div>
+            <span className="text-sm" title="Voir performance collaborateur">👤</span>
+            <select value={selectedCollabId} onChange={e => setSelectedCollabId(e.target.value)} className="input py-1.5 text-sm w-44">
+              <option value="">Collaborateur...</option>
+              {allCollaborateurs.map(c => <option key={c.id} value={c.id}>{c.prenom} {c.nom}</option>)}
             </select>
-            {selectedCollabId && (
-              <Button variant="ghost" size="xs" onClick={() => setSelectedCollabId('')} title="Fermer">✕</Button>
-            )}
-          </div>
+            {selectedCollabId && <Button variant="ghost" size="xs" onClick={() => setSelectedCollabId('')}>✕</Button>}
+          </>
         )}
       </div>
       
-      {/* Indicateur de filtrage */}
+      {/* Indicateur de filtrage pour non-global */}
       {!hasGlobalAccess && userDeptId && (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-2">
+        <div className="mb-4 p-2 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2 text-sm">
           <span className="text-blue-500">🔒</span>
-          <span className="text-sm text-blue-700">
-            Vous visualisez les données de votre département : <b>{departements.find(d => d.id === userDeptId)?.nom || '-'}</b>
-          </span>
+          <span className="text-blue-700">Département : <b>{departements.find(d => d.id === userDeptId)?.nom || '-'}</b></span>
         </div>
       )}
       
@@ -2943,42 +2905,42 @@ const DashboardPage = () => {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div className="card card-animate p-4 bg-gradient-to-br from-blue-500 to-blue-600 text-white">
           <div className="flex items-center justify-between">
-            <div>
+            <div className="min-w-0">
               <div className="text-blue-100 text-sm">CA Encaissé</div>
-              <div className="text-2xl font-bold mt-1">{fmtMoney(stats.caEncaisse)}</div>
+              <div className="text-xl font-bold mt-1 whitespace-nowrap">{fmtMoneyShort(stats.caEncaisse)} F</div>
               <div className="text-blue-200 text-xs mt-1">+{stats.facturesPaid} factures payées</div>
             </div>
-            <div className="text-4xl opacity-80">💰</div>
+            <div className="text-3xl opacity-80">💰</div>
           </div>
         </div>
         <div className="card card-animate p-4 bg-gradient-to-br from-amber-500 to-orange-500 text-white">
           <div className="flex items-center justify-between">
-            <div>
+            <div className="min-w-0">
               <div className="text-amber-100 text-sm">En attente</div>
-              <div className="text-2xl font-bold mt-1">{fmtMoney(stats.caEnAttente)}</div>
+              <div className="text-xl font-bold mt-1 whitespace-nowrap">{fmtMoneyShort(stats.caEnAttente)} F</div>
               <div className="text-amber-200 text-xs mt-1">{stats.facturesEnAttente} factures</div>
             </div>
-            <div className="text-4xl opacity-80">⏳</div>
+            <div className="text-3xl opacity-80">⏳</div>
           </div>
         </div>
         <div className="card card-animate p-4 bg-gradient-to-br from-green-500 to-emerald-500 text-white">
           <div className="flex items-center justify-between">
-            <div>
+            <div className="min-w-0">
               <div className="text-green-100 text-sm">Taux chargeabilité</div>
-              <div className="text-2xl font-bold mt-1">{stats.tauxCharge}%</div>
+              <div className="text-xl font-bold mt-1">{stats.tauxCharge}%</div>
               <div className="text-green-200 text-xs mt-1">{fmt(stats.heuresFact)}h / {fmt(stats.heuresTotal)}h</div>
             </div>
-            <div className="text-4xl opacity-80">📊</div>
+            <div className="text-3xl opacity-80">📊</div>
           </div>
         </div>
         <div className="card card-animate p-4 bg-gradient-to-br from-purple-500 to-indigo-500 text-white">
           <div className="flex items-center justify-between">
-            <div>
+            <div className="min-w-0">
               <div className="text-purple-100 text-sm">Missions actives</div>
-              <div className="text-2xl font-bold mt-1">{stats.projetsActifs}</div>
+              <div className="text-xl font-bold mt-1">{stats.projetsActifs}</div>
               <div className="text-purple-200 text-xs mt-1">sur {stats.projetsTotal} total</div>
             </div>
-            <div className="text-4xl opacity-80">📋</div>
+            <div className="text-3xl opacity-80">📋</div>
           </div>
         </div>
       </div>
