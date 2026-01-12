@@ -3394,6 +3394,13 @@ const CRMPage = () => {
       clientDeptMap[client.id] = client.departement_id;
     });
     
+    // DEBUG
+    console.log('=== DEBUG CRM ===');
+    console.log('Contacts bruts:', allContactsRaw.length, allContactsRaw);
+    console.log('Clients bruts:', allClientsRaw.length);
+    console.log('hasAccess:', hasAccess, 'isManagingPartner:', isManagingPartner, 'isSuperAdmin:', isSuperAdmin);
+    console.log('filterDept:', filterDept, 'userDeptId:', userDeptId);
+    
     // Déterminer le filtre effectif
     const hasAccess = isManagingPartner || isSuperAdmin || 
       (privs.data || []).some(p => p.collaborateur_id === collab?.id && p.type_privilege === 'acces_global') ||
@@ -3401,11 +3408,13 @@ const CRMPage = () => {
     
     const deptFilter = hasAccess ? filterDept : userDeptId;
     
+    console.log('deptFilter effectif:', deptFilter);
+    
     let filteredClients = [...allClientsRaw];
     let filteredContacts = [...allContactsRaw];
     let filteredOpportunites = [...allOpportunitesRaw];
     
-    // Appliquer le filtre département
+    // Appliquer le filtre département SEULEMENT si un département spécifique est sélectionné
     if (deptFilter) {
       // Clients : département du client OU clients globaux (sans département)
       filteredClients = filteredClients.filter(x => x.departement_id === deptFilter || !x.departement_id);
@@ -3422,6 +3431,8 @@ const CRMPage = () => {
         return clientDept === deptFilter || !clientDept;
       });
     }
+    
+    console.log('Contacts après filtre:', filteredContacts.length);
     
     // Séparer clients et prospects
     setClients(filteredClients.filter(x => !x.est_prospect));
