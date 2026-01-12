@@ -5564,7 +5564,9 @@ const TimesheetPage = () => {
   };
 
   const updateEntry = async (projId, date, heures) => {
-    if (isDateDisabled(date)) return;
+    // Trouver l'index du jour pour isDateDisabled
+    const dayIndex = days.findIndex(d => d.date === date);
+    if (dayIndex >= 0 && isDateDisabled(date, dayIndex)) return;
     const existing = getEntry(projId, date);
     const h = parseFloat(heures) || 0;
     const mission = missions.find(m => m.id === projId);
@@ -5645,17 +5647,25 @@ const TimesheetPage = () => {
         </td>
         {days.map((d, dayIndex) => {
           const disabled = isDateDisabled(d.date, dayIndex);
+          const conge = getCongeForDate(d.date);
           const entry = getEntry(m.id, d.date);
           const heuresJour = getHeuresParJour(d.date);
           const depassement = heuresJour > 8;
           return (
-            <td key={d.date} className={cn('px-1 py-2 text-center', disabled === 'weekend' && 'cell-weekend', disabled === 'holiday' && 'cell-holiday', depassement && !disabled && 'bg-red-50')}>
+            <td key={d.date} className={cn('px-1 py-2 text-center', disabled === 'weekend' && 'cell-weekend', disabled === 'holiday' && 'cell-holiday', conge && 'bg-amber-50', depassement && !disabled && !conge && 'bg-red-50')}>
               {disabled ? (
                 <div 
                   className="w-14 h-10 flex items-center justify-center text-xs text-slate-400"
                   title={disabled === 'holiday' ? getHolidayName(d.date) : 'Weekend'}
                 >
                   {disabled === 'holiday' ? '🎌' : '-'}
+                </div>
+              ) : conge ? (
+                <div 
+                  className="w-14 h-10 flex items-center justify-center text-xs text-amber-500"
+                  title={`${conge.type_conge === 'conge_paye' ? 'Congé payé' : conge.type_conge === 'maladie' ? 'Arrêt maladie' : 'Absence'} - Pas de saisie`}
+                >
+                  🏖️
                 </div>
               ) : (
                 <div className="relative group">
@@ -5934,10 +5944,12 @@ const TimesheetPage = () => {
                   <th className="px-4 py-3 text-left w-64">Mission</th>
                   {days.map(d => {
                     const holiday = holidays.find(h => h.date === d.date);
+                    const conge = getCongeForDate(d.date);
                     return (
-                      <th key={d.date} className={cn('px-2 py-3 text-center w-16', d.isWeekend && 'bg-slate-50')} title={holiday ? holiday.nom : ''}>
+                      <th key={d.date} className={cn('px-2 py-3 text-center w-16', d.isWeekend && 'bg-slate-50', conge && 'bg-amber-50')} title={holiday ? holiday.nom : conge ? 'Congé' : ''}>
                         {d.label}<br/><span className="text-xs text-slate-400">{d.date.split('-')[2]}</span>
                         {holiday && <span className="block text-xs" title={holiday.nom}>🎌</span>}
+                        {conge && !holiday && <span className="block text-xs" title="Congé">🏖️</span>}
                       </th>
                     );
                   })}
