@@ -3032,28 +3032,65 @@ const DashboardPage = () => {
       
       {/* Top missions et performance */}
       <div className="grid lg:grid-cols-2 gap-6 mb-6">
-        {/* Top missions */}
+        {/* Top missions avec taux d'exécution */}
         <Card title="🏆 Top Missions (par budget)">
           <div className="space-y-3">
-            {topMissions.length > 0 ? topMissions.map((m, i) => (
-              <div key={i} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl">
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm ${
-                  i === 0 ? 'bg-amber-100 text-amber-700' : 
-                  i === 1 ? 'bg-slate-200 text-slate-700' : 
-                  i === 2 ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500'
-                }`}>
-                  {i + 1}
+            {topMissions.length > 0 ? topMissions.map((m, i) => {
+              const tauxExecHeures = m.budget_heures > 0 ? Math.round((m.heuresConsommees / m.budget_heures) * 100) : 0;
+              const tauxExecMontant = m.budget_montant > 0 ? Math.round((m.ca / m.budget_montant) * 100) : 0;
+              return (
+                <div key={i} className="p-3 bg-slate-50 rounded-xl">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm ${
+                      i === 0 ? 'bg-amber-100 text-amber-700' : 
+                      i === 1 ? 'bg-slate-200 text-slate-700' : 
+                      i === 2 ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      {i + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm truncate">{m.nom}</div>
+                      <div className="text-xs text-slate-400">{m.clients?.nom || '-'} • {m.code}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-bold text-sm">{fmtMoney(m.budget_montant || 0)}</div>
+                      <Badge color={m.statut === 'active' ? 'green' : m.statut === 'completed' ? 'blue' : 'gray'} size="xs">
+                        {m.statut === 'active' ? 'Active' : m.statut === 'completed' ? 'Terminée' : m.statut}
+                      </Badge>
+                    </div>
+                  </div>
+                  {/* Barres de progression */}
+                  <div className="grid grid-cols-2 gap-3 mt-2">
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-500">Heures</span>
+                        <span className={tauxExecHeures > 100 ? 'text-red-600 font-bold' : 'text-slate-600'}>
+                          {m.heuresConsommees}h / {m.budget_heures || '∞'}h
+                        </span>
+                      </div>
+                      <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full rounded-full ${tauxExecHeures > 100 ? 'bg-red-500' : tauxExecHeures > 80 ? 'bg-amber-500' : 'bg-blue-500'}`}
+                          style={{width: `${Math.min(tauxExecHeures, 100)}%`}}
+                        ></div>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-500">Facturé</span>
+                        <span className="text-slate-600">{tauxExecMontant}%</span>
+                      </div>
+                      <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-green-500 rounded-full"
+                          style={{width: `${Math.min(tauxExecMontant, 100)}%`}}
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm truncate">{m.nom}</div>
-                  <div className="text-xs text-slate-400">{m.clients?.nom || '-'}</div>
-                </div>
-                <div className="text-right">
-                  <div className="font-bold text-sm">{fmtMoney(m.budget_montant || 0)}</div>
-                  <div className="text-xs text-slate-400">{m.heuresConsommees}h utilisées</div>
-                </div>
-              </div>
-            )) : (
+              );
+            }) : (
               <div className="text-center text-slate-400 py-8">Aucune mission</div>
             )}
           </div>
@@ -8536,6 +8573,21 @@ const RapportsPage = () => {
     const joursTravailles = heuresTotal / 8;
     const productiviteMoyenne = collabs.data?.length > 0 ? heuresTotal / collabs.data.length : 0;
     const caMoyenMission = missionsActives > 0 ? caTotal / missionsActives : 0;
+    
+    // Heures restantes sur les budgets missions (budget heures - heures consommées)
+    const budgetHeuresTotal = m.filter(x => x.statut === 'active').reduce((s, x) => s + (parseFloat(x.budget_heures) || 0), 0);
+    const heuresConsommeesActives = tPeriod.filter(t => {
+      const mission = m.find(x => x.id === t.projet_id);
+      return mission?.statut === 'active' && t.facturable;
+    }).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
+    const heuresRestantes = Math.max(0, budgetHeuresTotal - heuresConsommeesActives);
+    
+    // Jours sans saisie complète (moins de 8h)
+    // Compter les jours ouvrés de la période où les collaborateurs n'ont pas saisi 8h
+    const joursOuvresPeriode = Math.ceil((new Date(end) - new Date(start)) / (1000 * 60 * 60 * 24)) * 5 / 7; // Approximation
+    const heuresAttenduesTotales = joursOuvresPeriode * 8 * (collabs.data?.length || 1);
+    const heuresManquantes = Math.max(0, heuresAttenduesTotales - heuresTotal);
+    const joursNonSaisis = Math.ceil(heuresManquantes / 8);
 
     setData({
       heuresTotal, heuresFact, heuresNonFact,
@@ -8548,7 +8600,8 @@ const RapportsPage = () => {
       topClients, topMissions, joursConges, tauxMoyen,
       caParMois, heuresParMois, collabPerf, deptPerf, missionsByStatus,
       joursTravailles, productiviteMoyenne, caMoyenMission,
-      nbFactures: fPeriod.length
+      nbFactures: fPeriod.length,
+      heuresRestantes, joursNonSaisis, heuresManquantes, budgetHeuresTotal
     });
     setLoading(false);
   };
@@ -8850,12 +8903,28 @@ const RapportsPage = () => {
 
       {/* ========== ONGLET TEMPS ========== */}
       {tab === 'temps' && (<>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
           <StatCard title="Heures totales" value={fmt(data.heuresTotal) + 'h'} icon="⏱️" color="blue" />
           <StatCard title="Facturables" value={fmt(data.heuresFact) + 'h'} icon="💼" color="green" />
           <StatCard title="Non-facturables" value={fmt(data.heuresNonFact) + 'h'} icon="📋" color="gray" />
           <StatCard title="Taux facturable" value={data.tauxCharge + '%'} icon="📊" color="purple" />
+          <StatCard title="Heures restantes" value={fmt(data.heuresRestantes || 0) + 'h'} subtitle="Budget - Consommé" icon="🎯" color="amber" />
         </div>
+
+        {/* Alerte heures non saisies */}
+        {data.joursNonSaisis > 0 && (
+          <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">⚠️</span>
+              <div>
+                <h4 className="font-semibold text-amber-800">Attention : {data.joursNonSaisis} jour(s) sans saisie complète</h4>
+                <p className="text-sm text-amber-600">
+                  Certains collaborateurs n'ont pas saisi leurs 8h/jour. Total heures manquantes estimé : <b>{fmt(data.heuresManquantes || 0)}h</b>
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="grid lg:grid-cols-2 gap-6 mb-6">
           <Card title="📊 Répartition globale">
@@ -10127,26 +10196,33 @@ const ParametresPage = () => {
   const [holidays, setHolidays] = useState([]);
   const [collaborateurs, setCollaborateurs] = useState([]);
   const [validateurs, setValidateurs] = useState([]);
+  const [privileges, setPrivileges] = useState([]);
+  const [budgets, setBudgets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editModal, setEditModal] = useState(null);
   const [editForm, setEditForm] = useState({});
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
   useEffect(() => { setForm({nom: org.nom, adresse: org.adresse || '', ville: org.ville || '', email: org.email || '', telephone: org.telephone || '', logo_url: org.logo_url || ''}); loadParams(); }, [org]);
 
   const loadParams = async () => {
-    const [d, g, c, h, col, val] = await Promise.all([
+    const [d, g, c, h, col, val, priv, budg] = await Promise.all([
       supabase.from('departements').select('*').eq('organisation_id', org.id).order('nom'),
       supabase.from('grades').select('*').eq('organisation_id', org.id).order('niveau', {ascending: false}),
       supabase.from('categories_taches').select('*').eq('organisation_id', org.id).order('nom'),
       supabase.from('jours_feries').select('*').eq('organisation_id', org.id).order('date'),
       supabase.from('collaborateurs').select('*,grades:grade_id(nom,niveau),departements:departement_id(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
-      supabase.from('validateurs_departement').select('*').eq('organisation_id', org.id)
+      supabase.from('validateurs_departement').select('*').eq('organisation_id', org.id),
+      supabase.from('privileges_speciaux').select('*').eq('organisation_id', org.id).eq('actif', true),
+      supabase.from('budgets_departement').select('*').eq('organisation_id', org.id)
     ]);
     setDepts(d.data || []); 
     setGrades(g.data || []); 
     setCategories(c.data || []); 
     setHolidays(h.data || []); 
     setCollaborateurs(col.data || []);
+    setPrivileges(priv.data || []);
+    setBudgets(budg.data || []);
     
     // Enrichir les validateurs avec les noms des collaborateurs et départements
     const enrichedValidateurs = (val.data || []).map(v => ({
@@ -10260,6 +10336,8 @@ const ParametresPage = () => {
         {key: 'abo', label: '💳 Abonnement'}, 
         {key: 'config', label: '⚙️ Configuration'}, 
         {key: 'validateurs', label: '✅ Validateurs'},
+        {key: 'privileges', label: '🔐 Privilèges'},
+        {key: 'budgets', label: '🎯 Budgets'},
         {key: 'landing', label: '🌐 Landing Page'},
         {key: 'backup', label: '💾 Sauvegarde'}
       ]} active={tab} onChange={setTab} />
@@ -10552,6 +10630,204 @@ const ParametresPage = () => {
                   </ul>
                 </div>
               </div>
+            </Card>
+          </div>
+        )}
+
+        {tab === 'privileges' && (
+          <div className="space-y-6">
+            <Card title="🔐 Gestion des privilèges spéciaux">
+              <div className="mb-6 p-4 bg-blue-50 rounded-xl">
+                <h4 className="font-semibold text-blue-800 mb-2">📋 Règles d'accès par défaut</h4>
+                <ul className="text-sm text-blue-700 space-y-1">
+                  <li>• <b>Junior / Senior</b> : Accès uniquement à leurs propres données</li>
+                  <li>• <b>Manager / Senior Manager</b> : Accès aux données de leur département</li>
+                  <li>• <b>Associé</b> : Accès aux données de leur département</li>
+                  <li>• <b>Managing Partner (niveau 6+)</b> : Accès global à toutes les données</li>
+                </ul>
+              </div>
+
+              <div className="mb-6">
+                <h4 className="font-semibold mb-4">Accorder un accès global</h4>
+                <p className="text-sm text-slate-500 mb-4">
+                  Permet à un collaborateur de voir les données de tous les départements (ex: équipe Admin, Contrôle de gestion...)
+                </p>
+                <div className="flex gap-4 items-end">
+                  <div className="flex-1">
+                    <Select 
+                      label="Collaborateur"
+                      value={editForm.privilege_collab || ''}
+                      onChange={v => setEditForm(p => ({...p, privilege_collab: v}))}
+                      options={collaborateurs
+                        .filter(c => !privileges.some(p => p.collaborateur_id === c.id && p.type_privilege === 'acces_global'))
+                        .map(c => ({value: c.id, label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'} - ${c.departements?.nom || '-'})`}))}
+                      placeholder="Sélectionner un collaborateur"
+                    />
+                  </div>
+                  <Button 
+                    onClick={async () => {
+                      if (!editForm.privilege_collab) return alert('Sélectionnez un collaborateur');
+                      setSaving(true);
+                      try {
+                        const {error} = await supabase.from('privileges_speciaux').insert([{
+                          organisation_id: org.id,
+                          collaborateur_id: editForm.privilege_collab,
+                          type_privilege: 'acces_global',
+                          actif: true,
+                          date_debut: today()
+                        }]);
+                        if (error) throw error;
+                        setEditForm(p => ({...p, privilege_collab: ''}));
+                        loadParams();
+                        alert('Privilège accordé !');
+                      } catch(e) { alert('Erreur: ' + e.message); }
+                      setSaving(false);
+                    }}
+                    loading={saving}
+                    icon="➕"
+                  >
+                    Accorder l'accès global
+                  </Button>
+                </div>
+              </div>
+
+              <h4 className="font-semibold mb-4">Privilèges actifs</h4>
+              {privileges.filter(p => p.type_privilege === 'acces_global').length === 0 ? (
+                <EmptyState icon="🔓" title="Aucun privilège spécial" description="Les accès sont gérés uniquement par les grades" />
+              ) : (
+                <Table columns={[
+                  {header: 'Collaborateur', render: r => {
+                    const c = collaborateurs.find(x => x.id === r.collaborateur_id);
+                    return c ? <span className="font-medium">{c.prenom} {c.nom}</span> : '-';
+                  }},
+                  {header: 'Grade', render: r => {
+                    const c = collaborateurs.find(x => x.id === r.collaborateur_id);
+                    return <Badge color="blue">{c?.grades?.nom || '-'}</Badge>;
+                  }},
+                  {header: 'Département', render: r => {
+                    const c = collaborateurs.find(x => x.id === r.collaborateur_id);
+                    return c?.departements?.nom || '-';
+                  }},
+                  {header: 'Type', render: r => <Badge color="purple">Accès global</Badge>},
+                  {header: 'Depuis', render: r => fmtDate(r.date_debut) || fmtDate(r.created_at)}
+                ]} data={privileges.filter(p => p.type_privilege === 'acces_global')} actions={r => (
+                  <Button 
+                    variant="ghost" 
+                    size="xs" 
+                    onClick={async () => {
+                      if (!confirm('Retirer cet accès global ?')) return;
+                      await supabase.from('privileges_speciaux').delete().eq('id', r.id);
+                      loadParams();
+                    }}
+                  >
+                    🗑️
+                  </Button>
+                )} />
+              )}
+            </Card>
+          </div>
+        )}
+
+        {tab === 'budgets' && (
+          <div className="space-y-6">
+            <Card title="🎯 Budgets annuels par département">
+              <div className="mb-6 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <span className="font-medium">Année :</span>
+                  <Select 
+                    value={selectedYear.toString()}
+                    onChange={v => setSelectedYear(parseInt(v))}
+                    options={[
+                      {value: (new Date().getFullYear() - 1).toString(), label: (new Date().getFullYear() - 1).toString()},
+                      {value: new Date().getFullYear().toString(), label: new Date().getFullYear().toString()},
+                      {value: (new Date().getFullYear() + 1).toString(), label: (new Date().getFullYear() + 1).toString()}
+                    ]}
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-4">
+                {depts.map(dept => {
+                  const budget = budgets.find(b => b.departement_id === dept.id && b.annee === selectedYear);
+                  return (
+                    <div key={dept.id} className="p-4 bg-slate-50 rounded-xl">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h4 className="font-semibold">{dept.nom}</h4>
+                          <span className="text-xs text-slate-500">{dept.code}</span>
+                        </div>
+                        {budget && <Badge color="green">Budget défini</Badge>}
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-xs text-slate-500">Objectif CA ({selectedYear})</label>
+                          <Input 
+                            type="number"
+                            value={budget?.budget_ca || ''}
+                            onChange={async (v) => {
+                              const val = parseFloat(v) || 0;
+                              if (budget) {
+                                await supabase.from('budgets_departement').update({budget_ca: val, updated_at: new Date().toISOString()}).eq('id', budget.id);
+                              } else {
+                                await supabase.from('budgets_departement').insert([{
+                                  organisation_id: org.id,
+                                  departement_id: dept.id,
+                                  annee: selectedYear,
+                                  budget_ca: val
+                                }]);
+                              }
+                              loadParams();
+                            }}
+                            placeholder="Ex: 500000000"
+                          />
+                          <span className="text-xs text-slate-400">FCFA</span>
+                        </div>
+                        <div>
+                          <label className="text-xs text-slate-500">Objectif heures facturables</label>
+                          <Input 
+                            type="number"
+                            value={budget?.budget_heures || ''}
+                            onChange={async (v) => {
+                              const val = parseInt(v) || 0;
+                              if (budget) {
+                                await supabase.from('budgets_departement').update({budget_heures: val, updated_at: new Date().toISOString()}).eq('id', budget.id);
+                              } else {
+                                await supabase.from('budgets_departement').insert([{
+                                  organisation_id: org.id,
+                                  departement_id: dept.id,
+                                  annee: selectedYear,
+                                  budget_heures: val
+                                }]);
+                              }
+                              loadParams();
+                            }}
+                            placeholder="Ex: 10000"
+                          />
+                          <span className="text-xs text-slate-400">heures</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {depts.length === 0 && (
+                <EmptyState icon="📁" title="Aucun département" description="Créez d'abord des départements dans Configuration" />
+              )}
+            </Card>
+
+            <Card title="📊 Récapitulatif {selectedYear}">
+              <Table columns={[
+                {header: 'Département', render: r => <b>{r.nom}</b>},
+                {header: 'Budget CA', render: r => {
+                  const b = budgets.find(x => x.departement_id === r.id && x.annee === selectedYear);
+                  return b?.budget_ca ? fmt(b.budget_ca) + ' F' : <span className="text-slate-400">Non défini</span>;
+                }},
+                {header: 'Budget heures', render: r => {
+                  const b = budgets.find(x => x.departement_id === r.id && x.annee === selectedYear);
+                  return b?.budget_heures ? fmt(b.budget_heures) + ' h' : <span className="text-slate-400">Non défini</span>;
+                }}
+              ]} data={depts} />
             </Card>
           </div>
         )}
