@@ -102,6 +102,7 @@ const OPPORTUNITY_STAGES = [
 ];
 
 const MISSION_STATUS = {
+  pending_validation: {label: 'En attente validation', color: 'amber'},
   draft: {label: 'Brouillon', color: 'gray'},
   active: {label: 'En cours', color: 'green'},
   completed: {label: 'Terminé', color: 'blue'},
@@ -4183,9 +4184,11 @@ const MissionsPage = () => {
 
   const openNew = () => {
     setEditItem(null);
+    // SuperAdmin peut créer directement en draft/active, les autres en pending_validation
+    const defaultStatut = isSuperAdmin ? 'draft' : 'pending_validation';
     setForm({
       code: genCode('MIS'), nom: '', client_id: '', departement_id: '',
-      type_facturation: 'regie', statut: 'draft', budget_montant: 0, budget_heures: 0,
+      type_facturation: 'regie', statut: defaultStatut, budget_montant: 0, budget_heures: 0,
       date_debut: today(), date_fin_prevue: '', description: '', facturable: true,
       responsable_id: ''
     });
@@ -4197,11 +4200,47 @@ const MissionsPage = () => {
     setForm({...m, date_debut: m.date_debut?.split('T')[0] || '', date_fin_prevue: m.date_fin_prevue?.split('T')[0] || ''});
     setModal('mission');
   };
+  
+  // Approuver une mission (SuperAdmin uniquement)
+  const approuverMission = async (mission) => {
+    if (!confirm(`Approuver la mission "${mission.nom}" ?`)) return;
+    try {
+      await supabase.from('projets').update({
+        statut: 'draft',
+        updated_at: new Date().toISOString()
+      }).eq('id', mission.id);
+      loadData();
+    } catch (e) {
+      alert('Erreur: ' + e.message);
+    }
+  };
+  
+  // Rejeter une mission (SuperAdmin uniquement)
+  const rejeterMission = async (mission) => {
+    const motif = prompt('Motif du rejet (optionnel):');
+    if (motif === null) return; // Annulé
+    try {
+      await supabase.from('projets').update({
+        statut: 'cancelled',
+        description: mission.description + (motif ? `\n\n❌ Rejetée: ${motif}` : '\n\n❌ Rejetée'),
+        updated_at: new Date().toISOString()
+      }).eq('id', mission.id);
+      loadData();
+    } catch (e) {
+      alert('Erreur: ' + e.message);
+    }
+  };
 
   const save = async () => {
     if (!form.nom || !form.client_id) return alert('Client et nom requis');
     setSaving(true);
     try {
+      // Pour les nouvelles missions créées par non-SuperAdmin, forcer pending_validation
+      let statutToSave = form.statut;
+      if (!editItem && !isSuperAdmin) {
+        statutToSave = 'pending_validation';
+      }
+      
       // Ne garder que les champs valides pour la table projets
       const data = {
         code: form.code,
@@ -4210,7 +4249,7 @@ const MissionsPage = () => {
         departement_id: form.departement_id || null,
         responsable_id: form.responsable_id || null,
         type_facturation: form.type_facturation,
-        statut: form.statut,
+        statut: statutToSave,
         budget_montant: parseFloat(form.budget_montant) || 0,
         budget_heures: parseFloat(form.budget_heures) || 0,
         date_debut: form.date_debut || null,
@@ -4350,6 +4389,9 @@ const MissionsPage = () => {
     {header: 'Date fin prévue', key: 'date_fin_prevue'},
     {header: 'Statut', getValue: r => MISSION_STATUS[r.statut]?.label || ''}
   ], 'missions');
+  
+  // Compter les missions en attente de validation
+  const missionsPendingValidation = missions.filter(m => m.statut === 'pending_validation');
 
   return (
     <div>
@@ -4366,6 +4408,29 @@ const MissionsPage = () => {
           </div>
         ) : null} 
       />
+
+      {/* Alerte missions en attente de validation (SuperAdmin) */}
+      {isSuperAdmin && missionsPendingValidation.length > 0 && (
+        <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">⏳</span>
+              <div>
+                <div className="font-medium text-amber-800">{missionsPendingValidation.length} mission(s) en attente de validation</div>
+                <div className="text-sm text-amber-600">Cliquez sur une mission pour l'approuver ou la rejeter</div>
+              </div>
+            </div>
+            <Button size="sm" variant="secondary" onClick={() => setFilterStatus('pending_validation')}>Voir les demandes</Button>
+          </div>
+        </div>
+      )}
+
+      {/* Info pour les créateurs de mission */}
+      {!isSuperAdmin && canCreate && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-700">
+          <span className="font-medium">ℹ️</span> Les nouvelles missions sont soumises à validation par l'administrateur avant d'être activées.
+        </div>
+      )}
 
       {loading ? <Loader /> : (
         <Card>
@@ -4440,8 +4505,15 @@ const MissionsPage = () => {
             )}
           ]} data={filtered} actions={r => (
             <div className="flex gap-1">
+              {/* Boutons d'approbation/rejet pour SuperAdmin sur missions pending */}
+              {isSuperAdmin && r.statut === 'pending_validation' && (
+                <>
+                  <Button variant="success" size="xs" onClick={() => approuverMission(r)} title="Approuver">✓</Button>
+                  <Button variant="danger" size="xs" onClick={() => rejeterMission(r)} title="Rejeter">✗</Button>
+                </>
+              )}
               <Button variant="ghost" size="xs" onClick={() => setTachesMission(r)} title="Tâches">📋</Button>
-              {canEdit && (
+              {canEdit && r.statut !== 'pending_validation' && (
                 <>
                   <Button variant="ghost" size="xs" onClick={() => openAcomptes(r)} title="Acomptes">💰</Button>
                   <Button variant="ghost" size="xs" onClick={() => openEdit(r)} title="Modifier">✏️</Button>
@@ -4456,6 +4528,13 @@ const MissionsPage = () => {
                     </Button>
                   )}
                   <Button variant="ghost" size="xs" onClick={() => deleteMission(r)} title="Supprimer">🗑️</Button>
+                </>
+              )}
+              {/* Pour les missions pending, seul le créateur peut voir/modifier */}
+              {canEdit && r.statut === 'pending_validation' && (
+                <>
+                  <Button variant="ghost" size="xs" onClick={() => openEdit(r)} title="Modifier">✏️</Button>
+                  <Button variant="ghost" size="xs" onClick={() => deleteMission(r)} title="Annuler">🗑️</Button>
                 </>
               )}
             </div>
@@ -5799,7 +5878,7 @@ const StaffingPage = () => {
 };
 // ========== TIMESHEET PAGE ==========
 const TimesheetPage = () => {
-  const {org, user, collab, isManager, userDeptId} = useApp();
+  const {org, user, collab, isManager, isSuperAdmin, userDeptId} = useApp();
   const [weekStart, setWeekStart] = useState(getWeekStart());
   const [entries, setEntries] = useState([]);
   const [missions, setMissions] = useState([]);
@@ -6374,7 +6453,7 @@ const TimesheetPage = () => {
 
         {/* Tableau temps non-facturables */}
         <Card title="📋 Temps non-facturables" collapsible defaultOpen={true} 
-          action={<Button variant="secondary" size="xs" onClick={() => setShowAddActivity(true)}>➕ Activité</Button>}>
+          action={isSuperAdmin && <Button variant="secondary" size="xs" onClick={() => setShowAddActivity(true)}>➕ Activité</Button>}>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
@@ -6427,8 +6506,7 @@ const TimesheetPage = () => {
                 {missionsNonFact.length === 0 && !days.some(d => !d.isWeekend && getCongeForDate(d.date)) ? (
                   <tr><td colSpan={9} className="px-4 py-8 text-center text-slate-400">
                     <div>Aucune activité non-facturable</div>
-                    <div className="text-xs mt-2">Créez des activités internes (Formation, Admin, Réunions...)</div>
-                    <Button size="sm" variant="secondary" className="mt-2" onClick={() => setShowAddActivity(true)}>➕ Créer une activité</Button>
+                    <div className="text-xs mt-2">Les activités internes sont créées par l'administrateur</div>
                   </td></tr>
                 ) : missionsNonFact.map(renderMissionRow)}
               </tbody>
