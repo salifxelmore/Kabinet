@@ -3723,7 +3723,7 @@ const CRMPage = () => {
           <Button variant="secondary" size="sm" onClick={exportClients} icon="📥">Export</Button>
           {tab === 'prospects' && <Button size="sm" onClick={openNewProspect} icon="➕">Prospect</Button>}
           {tab === 'clients' && <Button size="sm" onClick={openNewClient} icon="➕">Client</Button>}
-          {tab === 'contacts' && <Button size="sm" onClick={() => openNewContact()} icon="➕">Contact</Button>}
+          {tab === 'contacts' && <Button size="sm" onClick={() => { console.log('Bouton Contact cliqué!'); openNewContact(); }} icon="➕">Contact</Button>}
           {(tab === 'opportunites' || tab === 'pipeline') && <Button size="sm" onClick={openNewOpp} icon="➕">Opportunité</Button>}
         </div>}
       />
@@ -3845,7 +3845,7 @@ const CRMPage = () => {
         )}
 
         {tab === 'contacts' && (
-          <Card>
+          <Card action={<button className="px-4 py-2 bg-blue-500 text-white rounded" onClick={() => { alert('Test!'); openNewContact(); }}>+ Nouveau Contact</button>}>
             <div className="mb-4"><SearchInput value={search} onChange={setSearch} placeholder="Rechercher..." /></div>
             <Table columns={[
               {header: 'Contact', render: r => <div><div className="font-medium">{r.prenom} {r.nom}</div><div className="text-xs text-slate-400">{r.fonction}</div></div>},
