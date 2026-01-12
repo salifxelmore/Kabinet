@@ -5439,7 +5439,8 @@ const TimesheetPage = () => {
       supabase.from('projets').select('*,clients(id,nom)').eq('organisation_id', org.id).in('statut', ['active', 'draft', 'completed']),
       supabase.from('categories_taches').select('*').eq('organisation_id', org.id),
       supabase.from('jours_feries').select('date,nom').eq('organisation_id', org.id),
-      supabase.from('conges').select('*').eq('utilisateur_id', user.id).eq('statut', 'approved'),
+      // Charger les congés approuvés de l'utilisateur (par utilisateur_id OU par collaborateur_id via user_id)
+      supabase.from('conges').select('*').eq('organisation_id', org.id).eq('statut', 'approved'),
       supabase.from('clients').select('id,nom').eq('organisation_id', org.id)
     ]);
     setEntries(t.data || []);
@@ -5461,7 +5462,13 @@ const TimesheetPage = () => {
     
     setCategories(cat.data || []);
     setHolidays(h.data || []); // Garder les données complètes {date, nom}
-    setConges(cg.data || []);
+    // Filtrer les congés pour l'utilisateur courant
+    const tousConges = cg.data || [];
+    console.log('DEBUG Timesheet - Tous congés chargés:', tousConges);
+    console.log('DEBUG Timesheet - user.id:', user.id);
+    const mesConges = tousConges.filter(c => c.utilisateur_id === user.id);
+    console.log('DEBUG Timesheet - Mes congés filtrés:', mesConges);
+    setConges(mesConges);
     setClients(cl.data || []);
     
     // Calculer les heures manquantes YTD (depuis le 1er janvier jusqu'à aujourd'hui)
