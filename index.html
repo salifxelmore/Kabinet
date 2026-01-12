@@ -5463,10 +5463,19 @@ const TimesheetPage = () => {
     setCategories(cat.data || []);
     setHolidays(h.data || []); // Garder les données complètes {date, nom}
     // Filtrer les congés pour l'utilisateur courant
+    // Essayer plusieurs méthodes: utilisateur_id, ou collab.user_id
     const tousConges = cg.data || [];
     console.log('DEBUG Timesheet - Tous congés chargés:', tousConges);
     console.log('DEBUG Timesheet - user.id:', user.id);
-    const mesConges = tousConges.filter(c => c.utilisateur_id === user.id);
+    console.log('DEBUG Timesheet - collab?.user_id:', collab?.user_id);
+    console.log('DEBUG Timesheet - collab?.id:', collab?.id);
+    
+    // Filtrer par utilisateur_id OU par collaborateur dont le user_id correspond
+    const mesConges = tousConges.filter(c => 
+      c.utilisateur_id === user.id || 
+      c.utilisateur_id === collab?.user_id ||
+      c.collaborateur_id === collab?.id
+    );
     console.log('DEBUG Timesheet - Mes congés filtrés:', mesConges);
     setConges(mesConges);
     setClients(cl.data || []);
