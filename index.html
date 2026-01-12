@@ -2062,7 +2062,10 @@ const SuperAdminApp = ({user, onLogout, onSwitchToOrg, hasOrg = true}) => {
 // ========== DASHBOARD PAGE ==========
 const DashboardPage = () => {
   const {org, user, collab, isManager, isAdmin, isAssocie, isSuperAdmin, isCollaborateur, setPage, userDeptId} = useApp();
-  const [stats, setStats] = useState({});
+  const [stats, setStats] = useState({
+    caFactureTTC: 0, facturesTotal: 0, caEncaisse: 0, tauxRecouvrement: 0,
+    tauxCharge: 0, heuresFact: 0, heuresTotal: 0, projetsActifs: 0, projetsTotal: 0
+  });
   const [myStats, setMyStats] = useState({});
   const [loading, setLoading] = useState(true);
   const [chartData, setChartData] = useState({});
@@ -2263,6 +2266,12 @@ const DashboardPage = () => {
         heuresTotal, heuresFact,
         tauxCharge: heuresTotal > 0 ? Math.round((heuresFact / heuresTotal) * 100) : 0,
         caEncaisse, caEnAttente, budgetTotal, caFacture: caFactureTTC, caFactureHT: caFactureHTTotal, resteFacturer,
+        caFactureTTC: allFactures.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0),
+        facturesTotal: allFactures.length,
+        tauxRecouvrement: (() => {
+          const totalFacture = allFactures.reduce((s, f) => s + (parseFloat(f.montant_total) || 0), 0);
+          return totalFacture > 0 ? Math.round((caEncaisse / totalFacture) * 100) : 0;
+        })(),
         collaborateurs: allCollabs.filter(c => c.actif).length,
         facturesEnAttente: allFactures.filter(f => f.statut === 'sent' || f.statut === 'partial').length || 0,
         facturesPaid: allFactures.filter(f => f.statut === 'paid').length || 0
@@ -2910,9 +2919,19 @@ const DashboardPage = () => {
         <div className="card card-animate p-4 bg-gradient-to-br from-blue-500 to-blue-600 text-white">
           <div className="flex items-center justify-between">
             <div className="min-w-0">
-              <div className="text-blue-100 text-sm">CA Encaissé</div>
+              <div className="text-blue-100 text-sm">Total Facturé</div>
+              <div className="text-xl font-bold mt-1 whitespace-nowrap">{fmtMoneyShort(stats.caFactureTTC)} F</div>
+              <div className="text-blue-200 text-xs mt-1">{stats.facturesTotal} factures</div>
+            </div>
+            <div className="text-3xl opacity-80">📄</div>
+          </div>
+        </div>
+        <div className="card card-animate p-4 bg-gradient-to-br from-green-500 to-emerald-500 text-white">
+          <div className="flex items-center justify-between">
+            <div className="min-w-0">
+              <div className="text-green-100 text-sm">Total Encaissé</div>
               <div className="text-xl font-bold mt-1 whitespace-nowrap">{fmtMoneyShort(stats.caEncaisse)} F</div>
-              <div className="text-blue-200 text-xs mt-1">+{stats.facturesPaid} factures payées</div>
+              <div className="text-green-200 text-xs mt-1">Taux recouvrement : {stats.tauxRecouvrement}%</div>
             </div>
             <div className="text-3xl opacity-80">💰</div>
           </div>
@@ -2920,19 +2939,9 @@ const DashboardPage = () => {
         <div className="card card-animate p-4 bg-gradient-to-br from-amber-500 to-orange-500 text-white">
           <div className="flex items-center justify-between">
             <div className="min-w-0">
-              <div className="text-amber-100 text-sm">En attente</div>
-              <div className="text-xl font-bold mt-1 whitespace-nowrap">{fmtMoneyShort(stats.caEnAttente)} F</div>
-              <div className="text-amber-200 text-xs mt-1">{stats.facturesEnAttente} factures</div>
-            </div>
-            <div className="text-3xl opacity-80">⏳</div>
-          </div>
-        </div>
-        <div className="card card-animate p-4 bg-gradient-to-br from-green-500 to-emerald-500 text-white">
-          <div className="flex items-center justify-between">
-            <div className="min-w-0">
-              <div className="text-green-100 text-sm">Taux chargeabilité</div>
+              <div className="text-amber-100 text-sm">Taux chargeabilité</div>
               <div className="text-xl font-bold mt-1">{stats.tauxCharge}%</div>
-              <div className="text-green-200 text-xs mt-1">{fmt(stats.heuresFact)}h / {fmt(stats.heuresTotal)}h</div>
+              <div className="text-amber-200 text-xs mt-1">{fmt(stats.heuresFact)}h / {fmt(stats.heuresTotal)}h</div>
             </div>
             <div className="text-3xl opacity-80">📊</div>
           </div>
