@@ -3322,11 +3322,24 @@ const CRMPage = () => {
   
   // Filtre effectif (UI ou département utilisateur si pas d'accès global)
   const effectiveDeptFilter = hasClientGlobalAccess ? filterDept : (userDeptId || '');
+  
+  // Ref pour éviter les rechargements multiples
+  const isFirstRender = React.useRef(true);
+  const prevFilterDept = React.useRef(filterDept);
 
   useEffect(() => { loadData(); }, []);
   
-  // Recharger quand le filtre change
-  useEffect(() => { if (!loading) loadData(); }, [filterDept, accesGlobalActif]);
+  // Recharger SEULEMENT quand filterDept change (pas accesGlobalActif)
+  useEffect(() => { 
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    if (prevFilterDept.current !== filterDept) {
+      prevFilterDept.current = filterDept;
+      loadData(); 
+    }
+  }, [filterDept]);
   
   // Vérifier périodiquement si l'accès a expiré
   useEffect(() => {
