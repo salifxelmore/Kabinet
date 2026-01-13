@@ -8565,10 +8565,10 @@ const SoustraitancePage = () => {
       
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Total Contrats" value={fmtMoney(totalContrats)} icon="📄" />
-        <StatCard label="Total Payé" value={fmtMoney(totalPaye)} icon="✅" color="green" />
-        <StatCard label="Reste à Payer" value={fmtMoney(totalAPayer)} icon="⏳" color={totalAPayer > 0 ? 'red' : 'green'} />
-        <StatCard label="Prestataires" value={prestataires.length} icon="🏢" />
+        <StatCard title="Total Contrats" value={fmtMoney(totalContrats)} icon="📄" />
+        <StatCard title="Total Payé" value={fmtMoney(totalPaye)} icon="✅" color="green" />
+        <StatCard title="Reste à Payer" value={fmtMoney(totalAPayer)} icon="⏳" color={totalAPayer > 0 ? 'red' : 'green'} />
+        <StatCard title="Prestataires" value={prestataires.length} icon="🏢" />
       </div>
       
       {loading ? <Loader /> : (<>
@@ -8891,10 +8891,10 @@ const IntercoPage = () => {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Total Interco" value={fmtMoney(totalVentes)} icon="🔄" />
-        <StatCard label="Transactions" value={transactions.length} icon="📋" />
-        <StatCard label="Départements" value={depts.length} icon="🏢" />
-        <StatCard label="Missions liées" value={new Set(transactions.map(t => t.projet_id).filter(Boolean)).size} icon="📁" />
+        <StatCard title="Total Interco" value={fmtMoney(totalVentes)} icon="🔄" />
+        <StatCard title="Transactions" value={transactions.length} icon="📋" />
+        <StatCard title="Départements" value={depts.length} icon="🏢" />
+        <StatCard title="Missions liées" value={new Set(transactions.map(t => t.projet_id).filter(Boolean)).size} icon="📁" />
       </div>
 
       {loading ? <Loader /> : (<>
@@ -9938,8 +9938,11 @@ const RapportsPage = () => {
     const totalCA = rentabiliteMissions.reduce((s, rm) => s + rm.caFacture, 0);
     const totalCoutInterne = rentabiliteMissions.reduce((s, rm) => s + rm.coutInterne, 0);
     const totalCoutSoustraitance = rentabiliteMissions.reduce((s, rm) => s + rm.coutSoustraitance, 0);
-    const totalCoutInterco = rentabiliteMissions.reduce((s, rm) => s + rm.coutInterco, 0);
-    const totalMarge = rentabiliteMissions.reduce((s, rm) => s + rm.marge, 0);
+    // Interco : en vue globale = 0 (se compense), en vue département = coût réel
+    const totalCoutInterco = effectiveDeptFilter 
+      ? rentabiliteMissions.reduce((s, rm) => s + rm.coutInterco, 0)
+      : 0; // Se compense en vue globale
+    const totalMarge = totalCA - totalCoutInterne - totalCoutSoustraitance - totalCoutInterco;
     const tauxMargeGlobal = totalCA > 0 ? Math.round((totalMarge / totalCA) * 100) : 0;
 
     setData({
