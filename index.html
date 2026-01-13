@@ -9940,12 +9940,21 @@ const RapportsPage = () => {
     const totalCA = rentabiliteMissions.reduce((s, rm) => s + rm.caFacture, 0);
     const totalCoutInterne = rentabiliteMissions.reduce((s, rm) => s + rm.coutInterne, 0);
     const totalCoutSoustraitance = rentabiliteMissions.reduce((s, rm) => s + rm.coutSoustraitance, 0);
-    // Interco : en vue globale = 0 (se compense), en vue département = coût réel
+    
+    // Interco : calculer directement par dept_acheteur et dept_vendeur
+    // En vue globale = 0 (se compense entre départements)
+    // En vue département = coût réel (achetée) et revenu réel (vendue)
     const totalCoutInterco = effectiveDeptFilter 
-      ? rentabiliteMissions.reduce((s, rm) => s + rm.coutInterco, 0)
+      ? allInterco.filter(ic => ic.dept_acheteur === effectiveDeptFilter).reduce((s, ic) => s + (parseFloat(ic.montant) || 0), 0)
       : 0; // Se compense en vue globale
-    const totalMarge = totalCA - totalCoutInterne - totalCoutSoustraitance - totalCoutInterco;
-    const tauxMargeGlobal = totalCA > 0 ? Math.round((totalMarge / totalCA) * 100) : 0;
+    const totalRevenuInterco = effectiveDeptFilter 
+      ? allInterco.filter(ic => ic.dept_vendeur === effectiveDeptFilter).reduce((s, ic) => s + (parseFloat(ic.montant) || 0), 0)
+      : 0; // Se compense en vue globale
+    
+    // Marge = CA + Revenu Interco - Coûts
+    const totalMarge = totalCA + totalRevenuInterco - totalCoutInterne - totalCoutSoustraitance - totalCoutInterco;
+    const baseCA = totalCA + totalRevenuInterco; // CA total incluant revenu interco
+    const tauxMargeGlobal = baseCA > 0 ? Math.round((totalMarge / baseCA) * 100) : 0;
 
     setData({
       heuresTotal, heuresFact, heuresNonFact,
@@ -9964,7 +9973,7 @@ const RapportsPage = () => {
       // Données de rentabilité
       rentabiliteMissions,
       rentabiliteDepts,
-      totalCA, totalCoutInterne, totalCoutSoustraitance, totalCoutInterco, totalMarge, tauxMargeGlobal
+      totalCA, totalCoutInterne, totalCoutSoustraitance, totalCoutInterco, totalRevenuInterco, totalMarge, tauxMargeGlobal
     });
     setLoading(false);
   };
@@ -10501,7 +10510,7 @@ const RapportsPage = () => {
       {/* ========== ONGLET RENTABILITÉ ========== */}
       {tab === 'rentabilite' && (<>
         {/* KPIs Rentabilité */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
           <div className="card p-4 bg-gradient-to-br from-blue-500 to-blue-600 text-white">
             <div className="text-blue-100 text-sm">CA Facturé</div>
             <div className="text-xl font-bold">{fmtMoney(data.totalCA)}</div>
@@ -10514,9 +10523,13 @@ const RapportsPage = () => {
             <div className="text-purple-100 text-sm">Sous-traitance</div>
             <div className="text-xl font-bold">{fmtMoney(data.totalCoutSoustraitance)}</div>
           </div>
-          <div className="card p-4 bg-gradient-to-br from-indigo-500 to-indigo-600 text-white">
-            <div className="text-indigo-100 text-sm">Interco</div>
+          <div className="card p-4 bg-gradient-to-br from-red-500 to-red-600 text-white">
+            <div className="text-red-100 text-sm">Interco ↓ (achetée)</div>
             <div className="text-xl font-bold">{fmtMoney(data.totalCoutInterco)}</div>
+          </div>
+          <div className="card p-4 bg-gradient-to-br from-teal-500 to-teal-600 text-white">
+            <div className="text-teal-100 text-sm">Interco ↑ (vendue)</div>
+            <div className="text-xl font-bold">{fmtMoney(data.totalRevenuInterco || 0)}</div>
           </div>
           <div className={cn("card p-4 text-white", data.totalMarge >= 0 ? "bg-gradient-to-br from-green-500 to-emerald-500" : "bg-gradient-to-br from-red-500 to-red-600")}>
             <div className="text-green-100 text-sm">Marge Nette ({data.tauxMargeGlobal}%)</div>
@@ -10574,47 +10587,82 @@ const RapportsPage = () => {
           </Card>
 
           {/* Indicateurs de marge */}
-          <Card title="📊 Structure des Coûts">
+          <Card title="📊 Structure des Coûts & Revenus">
             <div className="space-y-6">
-              {/* Graphique en barres horizontal */}
-              <div className="space-y-3">
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>Coût Interne</span>
-                    <span className="font-medium">{data.totalCA > 0 ? Math.round((data.totalCoutInterne / data.totalCA) * 100) : 0}%</span>
+              {/* Base de calcul = CA + Revenu Interco */}
+              {(() => {
+                const baseTotal = data.totalCA + (data.totalRevenuInterco || 0);
+                const totalCouts = data.totalCoutInterne + data.totalCoutSoustraitance + data.totalCoutInterco;
+                return (
+                  <div className="space-y-3">
+                    {/* Revenus */}
+                    <div className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Revenus</div>
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="text-blue-600">CA Facturé</span>
+                        <span className="font-medium">{baseTotal > 0 ? Math.round((data.totalCA / baseTotal) * 100) : 0}%</span>
+                      </div>
+                      <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded-full" style={{width: `${baseTotal > 0 ? Math.min(100, (data.totalCA / baseTotal) * 100) : 0}%`}} />
+                      </div>
+                    </div>
+                    {(data.totalRevenuInterco || 0) > 0 && (
+                      <div>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span className="text-teal-600">Interco ↑ (vendue)</span>
+                          <span className="font-medium text-teal-600">{baseTotal > 0 ? Math.round(((data.totalRevenuInterco || 0) / baseTotal) * 100) : 0}%</span>
+                        </div>
+                        <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-teal-500 rounded-full" style={{width: `${baseTotal > 0 ? Math.min(100, ((data.totalRevenuInterco || 0) / baseTotal) * 100) : 0}%`}} />
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Coûts */}
+                    <div className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2 mt-4">Coûts</div>
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>Coût Interne</span>
+                        <span className="font-medium">{baseTotal > 0 ? Math.round((data.totalCoutInterne / baseTotal) * 100) : 0}%</span>
+                      </div>
+                      <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-orange-500 rounded-full" style={{width: `${baseTotal > 0 ? Math.min(100, (data.totalCoutInterne / baseTotal) * 100) : 0}%`}} />
+                      </div>
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>Sous-traitance</span>
+                        <span className="font-medium">{baseTotal > 0 ? Math.round((data.totalCoutSoustraitance / baseTotal) * 100) : 0}%</span>
+                      </div>
+                      <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-purple-500 rounded-full" style={{width: `${baseTotal > 0 ? Math.min(100, (data.totalCoutSoustraitance / baseTotal) * 100) : 0}%`}} />
+                      </div>
+                    </div>
+                    {data.totalCoutInterco > 0 && (
+                      <div>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span className="text-red-600">Interco ↓ (achetée)</span>
+                          <span className="font-medium text-red-600">{baseTotal > 0 ? Math.round((data.totalCoutInterco / baseTotal) * 100) : 0}%</span>
+                        </div>
+                        <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-red-500 rounded-full" style={{width: `${baseTotal > 0 ? Math.min(100, (data.totalCoutInterco / baseTotal) * 100) : 0}%`}} />
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Marge */}
+                    <div className="border-t pt-3 mt-3">
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="font-bold">Marge Nette</span>
+                        <span className={cn("font-bold", data.tauxMargeGlobal >= 0 ? "text-green-600" : "text-red-600")}>{data.tauxMargeGlobal}%</span>
+                      </div>
+                      <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                        <div className={cn("h-full rounded-full", data.tauxMargeGlobal >= 0 ? "bg-green-500" : "bg-red-500")} style={{width: `${Math.min(100, Math.abs(data.tauxMargeGlobal))}%`}} />
+                      </div>
+                    </div>
                   </div>
-                  <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-orange-500 rounded-full" style={{width: `${data.totalCA > 0 ? Math.min(100, (data.totalCoutInterne / data.totalCA) * 100) : 0}%`}} />
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>Sous-traitance</span>
-                    <span className="font-medium">{data.totalCA > 0 ? Math.round((data.totalCoutSoustraitance / data.totalCA) * 100) : 0}%</span>
-                  </div>
-                  <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-purple-500 rounded-full" style={{width: `${data.totalCA > 0 ? Math.min(100, (data.totalCoutSoustraitance / data.totalCA) * 100) : 0}%`}} />
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>Interco</span>
-                    <span className="font-medium">{data.totalCA > 0 ? Math.round((data.totalCoutInterco / data.totalCA) * 100) : 0}%</span>
-                  </div>
-                  <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-indigo-500 rounded-full" style={{width: `${data.totalCA > 0 ? Math.min(100, (data.totalCoutInterco / data.totalCA) * 100) : 0}%`}} />
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="font-bold">Marge</span>
-                    <span className={cn("font-bold", data.tauxMargeGlobal >= 0 ? "text-green-600" : "text-red-600")}>{data.tauxMargeGlobal}%</span>
-                  </div>
-                  <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
-                    <div className={cn("h-full rounded-full", data.tauxMargeGlobal >= 0 ? "bg-green-500" : "bg-red-500")} style={{width: `${Math.min(100, Math.abs(data.tauxMargeGlobal))}%`}} />
-                  </div>
-                </div>
-              </div>
+                );
+              })()}
 
               {/* Objectifs de marge */}
               <div className="p-4 bg-slate-50 rounded-xl">
