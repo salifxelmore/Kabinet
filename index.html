@@ -4250,20 +4250,35 @@ const MissionsPage = () => {
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    const [m, c, d, a, collabs, grades, f, t, affectations, privs] = await Promise.all([
+    const [m, c, d, a, collabs, grades, f, t, affectations, privs, soustraitance, interco, temps] = await Promise.all([
       supabase.from('projets').select('*,clients(nom),departements:departement_id(nom),responsable:responsable_id(id,nom,prenom)').eq('organisation_id', org.id).order('created_at', {ascending: false}),
       supabase.from('clients').select('id,nom').eq('organisation_id', org.id).eq('est_prospect', false),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id),
       supabase.from('acomptes').select('*').eq('organisation_id', org.id),
-      supabase.from('collaborateurs').select('*,grades:grade_id(nom,niveau)').eq('organisation_id', org.id).eq('actif', true),
+      supabase.from('collaborateurs').select('*,grades:grade_id(nom,niveau,taux_journalier)').eq('organisation_id', org.id).eq('actif', true),
       supabase.from('grades').select('*').eq('organisation_id', org.id),
       supabase.from('factures').select('id,projet_id,montant_ht,montant_total').eq('organisation_id', org.id),
       supabase.from('taches_projet').select('id,projet_id,statut').eq('organisation_id', org.id),
       supabase.from('affectations').select('projet_id').eq('collaborateur_id', collab?.id),
-      supabase.from('privileges_speciaux').select('*').eq('organisation_id', org.id).eq('actif', true)
+      supabase.from('privileges_speciaux').select('*').eq('organisation_id', org.id).eq('actif', true),
+      // Pour le calcul des marges
+      supabase.from('contrats_soustraitance').select('*').eq('organisation_id', org.id),
+      supabase.from('transactions_interco').select('*').eq('organisation_id', org.id),
+      supabase.from('saisies_temps').select('*,utilisateur:utilisateur_id(email)').eq('organisation_id', org.id)
     ]);
     
     setPrivileges(privs.data || []);
+    
+    // Stocker les données pour calcul des marges
+    const allSoustraitance = soustraitance.data || [];
+    const allInterco = interco.data || [];
+    const allTemps = temps.data || [];
+    const allCollabs = collabs.data || [];
+    const diviseur = (org.config_taux_type === 'horaire') ? 1 : 8;
+    
+    // Mapping email -> collaborateur pour le calcul des coûts internes
+    const emailToCollab = {};
+    allCollabs.forEach(col => { if (col.email) emailToCollab[col.email] = col; });
     
     // Récupérer les IDs des missions où je suis staffé
     const missionsStaffees = [...new Set((affectations.data || []).map(a => a.projet_id))];
@@ -4290,15 +4305,59 @@ const MissionsPage = () => {
       missionsData = missionsData.filter(mission => mission.departement_id === userDeptId || !mission.client_id);
     }
     
-    // Enrichir les missions avec les stats de tâches
-    const missionsAvecTaches = missionsData.map(mission => ({
-      ...mission,
-      taches_total: tachesParMission[mission.id]?.total || 0,
-      taches_done: tachesParMission[mission.id]?.done || 0,
-      taches_progress: tachesParMission[mission.id]?.total > 0 
-        ? Math.round((tachesParMission[mission.id].done / tachesParMission[mission.id].total) * 100)
-        : 0
-    }));
+    // Enrichir les missions avec les stats de tâches ET les marges
+    const missionsAvecTaches = missionsData.map(mission => {
+      // Stats tâches
+      const taches_total = tachesParMission[mission.id]?.total || 0;
+      const taches_done = tachesParMission[mission.id]?.done || 0;
+      const taches_progress = taches_total > 0 ? Math.round((taches_done / taches_total) * 100) : 0;
+      
+      // === CALCUL DE LA MARGE ===
+      // 1. CA Facturé HT
+      const caFacture = (f.data || [])
+        .filter(fac => fac.projet_id === mission.id)
+        .reduce((s, fac) => s + (parseFloat(fac.montant_ht) || 0), 0);
+      
+      // 2. Coût Sous-traitance (contrats liés à cette mission)
+      const coutSoustraitance = allSoustraitance
+        .filter(st => st.projet_id === mission.id)
+        .reduce((s, st) => s + (parseFloat(st.montant) || 0), 0);
+      
+      // 3. Coût Interco (intercos où cette mission est achetée)
+      const coutInterco = allInterco
+        .filter(ic => ic.projet_id === mission.id)
+        .reduce((s, ic) => s + (parseFloat(ic.montant) || 0), 0);
+      
+      // 4. Coût Interne (heures × taux horaire des collaborateurs)
+      const tempsMission = allTemps.filter(t => t.projet_id === mission.id);
+      let coutInterne = 0;
+      tempsMission.forEach(t => {
+        const collabEmail = t.utilisateur?.email;
+        const collab = collabEmail ? emailToCollab[collabEmail] : null;
+        const tauxHoraire = collab?.grades?.taux_journalier ? (collab.grades.taux_journalier / diviseur) : 0;
+        coutInterne += (parseFloat(t.heures) || 0) * tauxHoraire;
+      });
+      
+      // 5. Marge = CA - Coûts
+      const coutTotal = coutInterne + coutSoustraitance + coutInterco;
+      const marge = caFacture - coutTotal;
+      const tauxMarge = caFacture > 0 ? Math.round((marge / caFacture) * 100) : 0;
+      
+      return {
+        ...mission,
+        taches_total,
+        taches_done,
+        taches_progress,
+        // Données de marge
+        ca_facture: caFacture,
+        cout_interne: coutInterne,
+        cout_soustraitance: coutSoustraitance,
+        cout_interco: coutInterco,
+        cout_total: coutTotal,
+        marge,
+        taux_marge: tauxMarge
+      };
+    });
     
     setMissions(missionsAvecTaches);
     setClients(c.data || []);
@@ -4637,6 +4696,16 @@ const MissionsPage = () => {
                 <div className="text-xs text-slate-400 mt-1">Reste: {fmtMoney(getMissionResteFacturer(r))}</div>
               </div>
             )},
+            {header: 'Marge', render: r => {
+              if (!r.facturable) return <span className="text-slate-400">-</span>;
+              const margeColor = r.taux_marge >= 30 ? 'green' : r.taux_marge >= 15 ? 'amber' : 'red';
+              return (
+                <div title={`CA: ${fmtMoney(r.ca_facture)}\nCoût interne: ${fmtMoney(r.cout_interne)}\nSous-traitance: ${fmtMoney(r.cout_soustraitance)}\nInterco: ${fmtMoney(r.cout_interco)}`}>
+                  <div className={cn("font-medium", r.marge >= 0 ? "text-green-600" : "text-red-600")}>{fmtMoney(r.marge)}</div>
+                  <Badge color={margeColor}>{r.taux_marge}%</Badge>
+                </div>
+              );
+            }},
             {header: 'Délai', render: r => {
               const d = getDelaiStatus(r);
               if (!d) return '-';
@@ -6093,16 +6162,23 @@ const TimesheetPage = () => {
   const loadData = async () => {
     setLoading(true);
     const end = addDays(weekStart, 6);
-    const [t, m, cat, h, cg, cl] = await Promise.all([
+    const [t, m, cat, h, cg, cl, interco] = await Promise.all([
       supabase.from('saisies_temps').select('*,projets(nom,code,client_id,facturable)').eq('organisation_id', org.id).eq('utilisateur_id', user.id).gte('date', weekStart).lte('date', end),
       supabase.from('projets').select('*,clients(id,nom)').eq('organisation_id', org.id).in('statut', ['active', 'draft', 'completed']),
       supabase.from('categories_taches').select('*').eq('organisation_id', org.id),
       supabase.from('jours_feries').select('date,nom').eq('organisation_id', org.id),
       // Charger les congés approuvés de l'utilisateur (par utilisateur_id OU par collaborateur_id via user_id)
       supabase.from('conges').select('*').eq('organisation_id', org.id).eq('statut', 'approved'),
-      supabase.from('clients').select('id,nom').eq('organisation_id', org.id)
+      supabase.from('clients').select('id,nom').eq('organisation_id', org.id),
+      // Charger les intercos actives où mon département est vendeur
+      supabase.from('transactions_interco').select('*').eq('organisation_id', org.id).eq('statut', 'actif')
     ]);
     setEntries(t.data || []);
+    
+    // Missions avec interco où mon département est vendeur
+    const missionsInterco = (interco.data || [])
+      .filter(ic => ic.dept_vendeur === userDeptId && ic.projet_id)
+      .map(ic => ic.projet_id);
     
     // Filtrer missions selon permissions et statut de blocage
     let filteredMissions = (m.data || []).filter(mission => {
@@ -6111,12 +6187,21 @@ const TimesheetPage = () => {
       return true;
     });
     
-    // Filtrer par département : missions du département OU missions internes (sans client)
+    // Filtrer par département : missions du département OU missions internes (sans client) OU missions avec interco
     if (userDeptId) {
       filteredMissions = filteredMissions.filter(mission => 
-        mission.departement_id === userDeptId || !mission.client_id
+        mission.departement_id === userDeptId || // Mon département
+        !mission.client_id || // Missions internes
+        missionsInterco.includes(mission.id) // Missions avec interco où je suis vendeur
       );
     }
+    
+    // Marquer les missions interco pour affichage
+    filteredMissions = filteredMissions.map(mission => ({
+      ...mission,
+      isInterco: missionsInterco.includes(mission.id) && mission.departement_id !== userDeptId
+    }));
+    
     setMissions(filteredMissions);
     
     setCategories(cat.data || []);
@@ -6319,10 +6404,11 @@ const TimesheetPage = () => {
     };
     
     return (
-      <tr key={m.id} className={cn("border-b border-slate-50", isCompleted && "bg-green-50")}>
+      <tr key={m.id} className={cn("border-b border-slate-50", isCompleted && "bg-green-50", m.isInterco && "bg-purple-50")}>
         <td className="px-4 py-2">
           <div className="flex items-center gap-2">
             <div className="font-medium text-sm">{m.nom}</div>
+            {m.isInterco && <span className="text-[10px] px-1.5 py-0.5 bg-purple-200 text-purple-700 rounded">🔄 Interco</span>}
             {isCompleted && <span className="text-[10px] px-1.5 py-0.5 bg-green-200 text-green-700 rounded">Clôturée</span>}
           </div>
           <div className="text-xs text-slate-400">
@@ -8634,25 +8720,53 @@ const IntercoPage = () => {
   const [transactions, setTransactions] = useState([]);
   const [depts, setDepts] = useState([]);
   const [missions, setMissions] = useState([]);
+  const [collaborateurs, setCollaborateurs] = useState([]);
+  const [grades, setGrades] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState('liste');
 
   useEffect(() => { loadData(); }, []);
   const loadData = async () => {
-    const [t, d, m] = await Promise.all([
+    const [t, d, m, c, g] = await Promise.all([
       supabase.from('transactions_interco').select('*').eq('organisation_id', org.id).order('created_at', {ascending: false}),
       supabase.from('departements').select('*').eq('organisation_id', org.id),
-      supabase.from('projets').select('id,nom,code').eq('organisation_id', org.id)
+      supabase.from('projets').select('id,nom,code,departement_id,clients(nom)').eq('organisation_id', org.id).eq('statut', 'active'),
+      supabase.from('collaborateurs').select('*,grades:grade_id(id,nom,taux_journalier),departements:departement_id(id,nom)').eq('organisation_id', org.id).eq('actif', true),
+      supabase.from('grades').select('*').eq('organisation_id', org.id).order('niveau', {ascending: false})
     ]);
-    setTransactions(t.data || []); setDepts(d.data || []); setMissions(m.data || []); setLoading(false);
+    setTransactions(t.data || []); 
+    setDepts(d.data || []); 
+    setMissions(m.data || []); 
+    setCollaborateurs(c.data || []);
+    setGrades(g.data || []);
+    setLoading(false);
+  };
+
+  // Stats par département
+  const getStatsParDept = (deptId) => {
+    const vendu = transactions.filter(t => t.dept_vendeur === deptId).reduce((s, t) => s + (t.montant || 0), 0);
+    const achete = transactions.filter(t => t.dept_acheteur === deptId).reduce((s, t) => s + (t.montant || 0), 0);
+    return { vendu, achete, solde: vendu - achete };
   };
 
   const openNew = () => { 
     setEditItem(null);
-    setForm({dept_vendeur: '', dept_acheteur: '', projet_id: '', description: '', montant: 0, date: today()}); 
+    setForm({
+      dept_vendeur: '', 
+      dept_acheteur: '', 
+      projet_id: '', 
+      description: '', 
+      montant: 0, 
+      date: today(),
+      mode_calcul: 'manuel', // manuel, taux_grade, taux_dept
+      heures_prevues: 0,
+      collaborateur_id: '', // Pour calcul automatique
+      statut: 'actif'
+    }); 
     setModal(true); 
   };
   
@@ -8664,22 +8778,66 @@ const IntercoPage = () => {
       projet_id: t.projet_id || '',
       description: t.description || '',
       montant: t.montant || 0,
-      date: t.date || today()
+      date: t.date || today(),
+      mode_calcul: t.mode_calcul || 'manuel',
+      heures_prevues: t.heures_prevues || 0,
+      collaborateur_id: t.collaborateur_id || '',
+      statut: t.statut || 'actif'
     });
     setModal(true);
   };
+
+  // Calcul automatique du montant
+  const calculerMontant = () => {
+    if (form.mode_calcul === 'manuel') return;
+    
+    const heures = parseFloat(form.heures_prevues) || 0;
+    if (heures === 0) return;
+
+    let tauxHoraire = 0;
+    const diviseur = (org.config_taux_type === 'horaire') ? 1 : 8;
+    
+    if (form.mode_calcul === 'taux_grade' && form.collaborateur_id) {
+      const collab = collaborateurs.find(c => c.id === form.collaborateur_id);
+      tauxHoraire = (collab?.grades?.taux_journalier || 0) / diviseur;
+    } else if (form.mode_calcul === 'taux_dept' && form.dept_vendeur) {
+      // Moyenne des taux du département vendeur
+      const collabsDept = collaborateurs.filter(c => c.departement_id === form.dept_vendeur);
+      if (collabsDept.length > 0) {
+        const totalTaux = collabsDept.reduce((s, c) => s + (c.grades?.taux_journalier || 0), 0);
+        tauxHoraire = (totalTaux / collabsDept.length) / diviseur;
+      }
+    }
+
+    const montant = Math.round(heures * tauxHoraire);
+    setForm(p => ({...p, montant}));
+  };
+
+  useEffect(() => {
+    if (form.mode_calcul !== 'manuel') {
+      calculerMontant();
+    }
+  }, [form.mode_calcul, form.heures_prevues, form.collaborateur_id, form.dept_vendeur]);
   
   const save = async () => {
     if (!form.dept_vendeur || !form.dept_acheteur) return alert('Départements requis');
+    if (form.dept_vendeur === form.dept_acheteur) return alert('Le vendeur et l\'acheteur doivent être différents');
+    if (!form.projet_id) return alert('Mission requise pour l\'interco');
+    if (!form.montant || form.montant <= 0) return alert('Montant requis');
+    
     setSaving(true);
     try { 
       const data = {
         dept_vendeur: form.dept_vendeur,
         dept_acheteur: form.dept_acheteur,
-        projet_id: form.projet_id || null,
+        projet_id: form.projet_id,
         description: form.description || '',
         montant: parseFloat(form.montant) || 0,
-        date: form.date
+        date: form.date,
+        mode_calcul: form.mode_calcul,
+        heures_prevues: parseFloat(form.heures_prevues) || 0,
+        collaborateur_id: form.collaborateur_id || null,
+        statut: form.statut
       };
       
       let result;
@@ -8697,60 +8855,214 @@ const IntercoPage = () => {
   };
   
   const deleteTransaction = async (t) => {
-    if (!confirm('Supprimer cette transaction ?')) return;
+    if (!confirm('Supprimer cette transaction interco ?')) return;
     await supabase.from('transactions_interco').delete().eq('id', t.id);
     loadData();
   };
 
   const totalVentes = transactions.reduce((s, t) => s + (t.montant || 0), 0);
 
+  // Collaborateurs du département vendeur sélectionné
+  const collabsVendeur = form.dept_vendeur ? collaborateurs.filter(c => c.departement_id === form.dept_vendeur) : [];
+
+  // Missions du département acheteur (celles sur lesquelles l'interco s'applique)
+  const missionsAcheteur = form.dept_acheteur ? missions.filter(m => m.departement_id === form.dept_acheteur) : missions;
+
   return (
     <div>
-      <PageHeader title="Ventes/Achats Interco" subtitle={`${transactions.length} transactions • Total: ${fmtMoney(totalVentes)}`} 
+      <PageHeader title="Interco (Inter-Départements)" subtitle={`${transactions.length} transactions • Total: ${fmtMoney(totalVentes)}`}
+        tabs={[
+          {key: 'liste', label: '📋 Transactions', count: transactions.length},
+          {key: 'balance', label: '⚖️ Balance'}
+        ]}
+        activeTab={tab} onTabChange={setTab}
         action={<div className="flex gap-2">
           <Button variant="secondary" size="sm" onClick={() => exportToExcel(transactions, [
             {header: 'Vendeur', getValue: r => depts.find(d => d.id === r.dept_vendeur)?.nom || ''},
             {header: 'Acheteur', getValue: r => depts.find(d => d.id === r.dept_acheteur)?.nom || ''},
+            {header: 'Mission', getValue: r => missions.find(m => m.id === r.projet_id)?.code || ''},
             {header: 'Description', key: 'description'},
+            {header: 'Heures', key: 'heures_prevues'},
             {header: 'Montant', key: 'montant'},
             {header: 'Date', key: 'date'}
           ], 'interco')}>📥 Export</Button>
-          <Button onClick={openNew} icon="➕">Transaction</Button>
+          <Button onClick={openNew} icon="➕">Interco</Button>
         </div>} 
       />
-      {loading ? <Loader /> : (
-        <Card>
-          <Table columns={[
-            {header: 'Vendeur', render: r => <Badge color="green">{depts.find(d => d.id === r.dept_vendeur)?.nom || '-'}</Badge>},
-            {header: 'Acheteur', render: r => <Badge color="blue">{depts.find(d => d.id === r.dept_acheteur)?.nom || '-'}</Badge>},
-            {header: 'Mission', render: r => {
-              const m = missions.find(x => x.id === r.projet_id);
-              return m ? <span className="text-sm">{m.code}</span> : '-';
-            }},
-            {header: 'Description', key: 'description'},
-            {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant)}</span>},
-            {header: 'Date', render: r => fmtDate(r.date)}
-          ]} data={transactions} actions={r => (
-            <div className="flex gap-1">
-              <Button variant="ghost" size="xs" onClick={() => openEdit(r)}>✏️</Button>
-              <Button variant="ghost" size="xs" onClick={() => deleteTransaction(r)}>🗑️</Button>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <StatCard label="Total Interco" value={fmtMoney(totalVentes)} icon="🔄" />
+        <StatCard label="Transactions" value={transactions.length} icon="📋" />
+        <StatCard label="Départements" value={depts.length} icon="🏢" />
+        <StatCard label="Missions liées" value={new Set(transactions.map(t => t.projet_id).filter(Boolean)).size} icon="📁" />
+      </div>
+
+      {loading ? <Loader /> : (<>
+        {/* Onglet Liste */}
+        {tab === 'liste' && (
+          <Card>
+            <Table columns={[
+              {header: 'Mission', render: r => {
+                const m = missions.find(x => x.id === r.projet_id);
+                return m ? <div><div className="font-medium">{m.code}</div><div className="text-xs text-slate-400">{m.clients?.nom || 'Interne'}</div></div> : '-';
+              }},
+              {header: 'Vendeur → Acheteur', render: r => (
+                <div className="flex items-center gap-2">
+                  <Badge color="green">{depts.find(d => d.id === r.dept_vendeur)?.nom || '-'}</Badge>
+                  <span>→</span>
+                  <Badge color="blue">{depts.find(d => d.id === r.dept_acheteur)?.nom || '-'}</Badge>
+                </div>
+              )},
+              {header: 'Description', render: r => <span className="text-sm">{r.description || '-'}</span>},
+              {header: 'Heures', render: r => r.heures_prevues ? <span>{r.heures_prevues}h</span> : '-'},
+              {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant)}</span>},
+              {header: 'Statut', render: r => <Badge color={r.statut === 'actif' ? 'green' : 'gray'}>{r.statut === 'actif' ? 'Actif' : 'Terminé'}</Badge>},
+              {header: 'Date', render: r => fmtDate(r.date)}
+            ]} data={transactions} actions={r => (
+              <div className="flex gap-1">
+                <Button variant="ghost" size="xs" onClick={() => openEdit(r)}>✏️</Button>
+                <Button variant="ghost" size="xs" onClick={() => deleteTransaction(r)}>🗑️</Button>
+              </div>
+            )} empty="Aucune transaction interco" />
+          </Card>
+        )}
+
+        {/* Onglet Balance */}
+        {tab === 'balance' && (
+          <Card title="Balance Interco par Département">
+            <div className="space-y-4">
+              {depts.map(d => {
+                const stats = getStatsParDept(d.id);
+                return (
+                  <div key={d.id} className="p-4 bg-slate-50 rounded-xl">
+                    <div className="flex justify-between items-center mb-3">
+                      <span className="font-bold text-lg">{d.nom}</span>
+                      <Badge color={stats.solde >= 0 ? 'green' : 'red'}>
+                        Solde: {stats.solde >= 0 ? '+' : ''}{fmtMoney(stats.solde)}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="text-center p-3 bg-green-50 rounded-lg">
+                        <div className="text-xs text-green-600">Vendu (Revenu)</div>
+                        <div className="font-bold text-green-700">{fmtMoney(stats.vendu)}</div>
+                      </div>
+                      <div className="text-center p-3 bg-blue-50 rounded-lg">
+                        <div className="text-xs text-blue-600">Acheté (Coût)</div>
+                        <div className="font-bold text-blue-700">{fmtMoney(stats.achete)}</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          )} empty="Aucune transaction interco" />
-        </Card>
-      )}
-      <Modal isOpen={modal} onClose={() => setModal(false)} title={editItem ? 'Modifier transaction' : 'Nouvelle transaction interco'}>
+          </Card>
+        )}
+      </>)}
+
+      {/* Modal Interco */}
+      <Modal isOpen={modal} onClose={() => setModal(false)} title={editItem ? 'Modifier transaction interco' : 'Nouvelle transaction interco'} size="lg">
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <Select label="Département vendeur" value={form.dept_vendeur} onChange={v => setForm(p => ({...p, dept_vendeur: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" required />
-            <Select label="Département acheteur" value={form.dept_acheteur} onChange={v => setForm(p => ({...p, dept_acheteur: v}))} options={depts.map(d => ({value: d.id, label: d.nom}))} placeholder="Sélectionner" required />
+          {/* Explication */}
+          <div className="p-3 bg-blue-50 rounded-lg text-blue-700 text-sm">
+            💡 <strong>Interco :</strong> Le département <strong>vendeur</strong> fournit des ressources au département <strong>acheteur</strong> pour une mission. 
+            Les collaborateurs du vendeur pourront saisir du temps sur cette mission.
           </div>
-          <Select label="Mission concernée" value={form.projet_id} onChange={v => setForm(p => ({...p, projet_id: v}))} options={missions.map(m => ({value: m.id, label: m.code + ' - ' + m.nom}))} placeholder="Sélectionner (optionnel)" />
-          <Input label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} placeholder="Ex: Heures de conseil, Formation..." />
+
+          {/* Départements */}
           <div className="grid grid-cols-2 gap-4">
-            <Input label="Montant (FCFA)" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} />
-            <Input label="Date" type="date" value={form.date} onChange={v => setForm(p => ({...p, date: v}))} />
+            <Select 
+              label="Département vendeur (fournit les ressources)" 
+              value={form.dept_vendeur} 
+              onChange={v => setForm(p => ({...p, dept_vendeur: v, collaborateur_id: ''}))} 
+              options={depts.filter(d => d.id !== form.dept_acheteur).map(d => ({value: d.id, label: d.nom}))} 
+              placeholder="Sélectionner" 
+              required 
+            />
+            <Select 
+              label="Département acheteur (propriétaire mission)" 
+              value={form.dept_acheteur} 
+              onChange={v => setForm(p => ({...p, dept_acheteur: v, projet_id: ''}))} 
+              options={depts.filter(d => d.id !== form.dept_vendeur).map(d => ({value: d.id, label: d.nom}))} 
+              placeholder="Sélectionner" 
+              required 
+            />
           </div>
-          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button><Button onClick={save} loading={saving} className="flex-1">{editItem ? 'Modifier' : 'Créer'}</Button></div>
+
+          {/* Mission */}
+          <Select 
+            label="Mission concernée" 
+            value={form.projet_id} 
+            onChange={v => setForm(p => ({...p, projet_id: v}))} 
+            options={missionsAcheteur.map(m => ({value: m.id, label: m.code + ' - ' + m.nom + (m.clients?.nom ? ' (' + m.clients.nom + ')' : '')}))} 
+            placeholder="Sélectionner la mission" 
+            required 
+          />
+
+          {/* Mode de calcul */}
+          <div className="p-4 bg-slate-50 rounded-xl space-y-4">
+            <Select 
+              label="Mode de calcul du montant" 
+              value={form.mode_calcul} 
+              onChange={v => setForm(p => ({...p, mode_calcul: v}))} 
+              options={[
+                {value: 'manuel', label: '✏️ Montant négocié (manuel)'},
+                {value: 'taux_grade', label: '👤 Basé sur le taux du collaborateur'},
+                {value: 'taux_dept', label: '🏢 Basé sur le taux moyen du département'}
+              ]} 
+            />
+
+            {form.mode_calcul !== 'manuel' && (
+              <div className="grid grid-cols-2 gap-4">
+                <Input 
+                  label="Heures prévues" 
+                  type="number" 
+                  value={form.heures_prevues} 
+                  onChange={v => setForm(p => ({...p, heures_prevues: v}))} 
+                  placeholder="Ex: 40"
+                />
+                {form.mode_calcul === 'taux_grade' && (
+                  <Select 
+                    label="Collaborateur référent" 
+                    value={form.collaborateur_id} 
+                    onChange={v => setForm(p => ({...p, collaborateur_id: v}))} 
+                    options={collabsVendeur.map(c => ({
+                      value: c.id, 
+                      label: `${c.prenom} ${c.nom} (${c.grades?.nom || '-'} - ${fmtMoney(c.grades?.taux_journalier || 0)}/j)`
+                    }))} 
+                    placeholder="Sélectionner"
+                    disabled={!form.dept_vendeur}
+                  />
+                )}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-4">
+              <Input 
+                label={form.mode_calcul === 'manuel' ? "Montant négocié (FCFA)" : "Montant calculé (FCFA)"} 
+                type="number" 
+                value={form.montant} 
+                onChange={v => setForm(p => ({...p, montant: v}))} 
+                required
+                disabled={form.mode_calcul !== 'manuel'}
+              />
+              <Input label="Date" type="date" value={form.date} onChange={v => setForm(p => ({...p, date: v}))} />
+            </div>
+          </div>
+
+          <Input label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} placeholder="Ex: Expertise fiscale sur mission audit, Support technique..." />
+          
+          <Select 
+            label="Statut" 
+            value={form.statut} 
+            onChange={v => setForm(p => ({...p, statut: v}))} 
+            options={[{value: 'actif', label: 'Actif'}, {value: 'termine', label: 'Terminé'}]} 
+          />
+
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => setModal(false)} className="flex-1">Annuler</Button>
+            <Button onClick={save} loading={saving} className="flex-1">{editItem ? 'Modifier' : 'Créer'}</Button>
+          </div>
         </div>
       </Modal>
     </div>
@@ -9296,7 +9608,7 @@ const RapportsPage = () => {
     setLoading(true);
     const {start, end} = getPeriodDates();
     
-    const [temps, factures, collabs, missions, clients, conges, affectations, departements, utilisateurs] = await Promise.all([
+    const [temps, factures, collabs, missions, clients, conges, affectations, departements, utilisateurs, soustraitance, interco] = await Promise.all([
       supabase.from('saisies_temps').select('*').eq('organisation_id', org.id),
       supabase.from('factures').select('*').eq('organisation_id', org.id),
       supabase.from('collaborateurs').select('*,grades:grade_id(nom,taux_journalier),departements:departement_id(nom)').eq('organisation_id', org.id).eq('actif', true),
@@ -9305,7 +9617,9 @@ const RapportsPage = () => {
       supabase.from('conges').select('*').eq('organisation_id', org.id).eq('statut', 'approved'),
       supabase.from('affectations').select('*').eq('organisation_id', org.id),
       supabase.from('departements').select('*').eq('organisation_id', org.id),
-      supabase.from('utilisateurs').select('id,auth_id,email').eq('organisation_id', org.id)
+      supabase.from('utilisateurs').select('id,auth_id,email').eq('organisation_id', org.id),
+      supabase.from('contrats_soustraitance').select('*').eq('organisation_id', org.id),
+      supabase.from('transactions_interco').select('*').eq('organisation_id', org.id)
     ]);
 
     let allFactures = factures.data || [];
@@ -9314,6 +9628,8 @@ const RapportsPage = () => {
     let m = missions.data || [];
     let allClients = clients.data || [];
     const allUsers = utilisateurs.data || [];
+    const allSoustraitance = soustraitance.data || [];
+    const allInterco = interco.data || [];
     
     // ===== FILTRAGE PAR DÉPARTEMENT =====
     if (effectiveDeptFilter) {
@@ -9537,6 +9853,96 @@ const RapportsPage = () => {
     }).reduce((s, t) => s + (parseFloat(t.heures) || 0), 0);
     const heuresRestantes = Math.max(0, budgetHeuresTotal - heuresConsommeesActives);
 
+    // ===== CALCUL DE RENTABILITÉ =====
+    const diviseur = (org.config_taux_type === 'horaire') ? 1 : 8;
+    
+    // Mapping email -> collaborateur pour coûts internes
+    const emailToCollab = {};
+    (collabs.data || []).forEach(col => { if (col.email) emailToCollab[col.email] = col; });
+    
+    // Rentabilité par mission
+    const rentabiliteMissions = m.filter(mission => mission.facturable !== false && mission.client_id).map(mission => {
+      // CA Facturé HT
+      const caFacture = allFactures.filter(f => f.projet_id === mission.id).reduce((s, f) => s + (parseFloat(f.montant_ht) || 0), 0);
+      
+      // Coût Sous-traitance
+      const coutSoustraitance = allSoustraitance.filter(st => st.projet_id === mission.id).reduce((s, st) => s + (parseFloat(st.montant) || 0), 0);
+      
+      // Coût Interco (achetée)
+      const coutInterco = allInterco.filter(ic => ic.projet_id === mission.id).reduce((s, ic) => s + (parseFloat(ic.montant) || 0), 0);
+      
+      // Coût Interne
+      const tempsMission = allTemps.filter(t => t.projet_id === mission.id);
+      let coutInterne = 0;
+      tempsMission.forEach(t => {
+        const user = allUsers.find(u => u.id === t.utilisateur_id);
+        const collab = user ? emailToCollab[user.email] : null;
+        const tauxHoraire = collab?.grades?.taux_journalier ? (collab.grades.taux_journalier / diviseur) : 0;
+        coutInterne += (parseFloat(t.heures) || 0) * tauxHoraire;
+      });
+      
+      const coutTotal = coutInterne + coutSoustraitance + coutInterco;
+      const marge = caFacture - coutTotal;
+      const tauxMarge = caFacture > 0 ? Math.round((marge / caFacture) * 100) : 0;
+      
+      return {
+        id: mission.id,
+        code: mission.code,
+        nom: mission.nom,
+        client: mission.clients?.nom || '-',
+        departement_id: mission.departement_id,
+        caFacture,
+        coutInterne,
+        coutSoustraitance,
+        coutInterco,
+        coutTotal,
+        marge,
+        tauxMarge
+      };
+    }).sort((a, b) => b.marge - a.marge);
+    
+    // Rentabilité par département
+    const rentabiliteDepts = (departements.data || []).map(d => {
+      const missionsDept = rentabiliteMissions.filter(rm => rm.departement_id === d.id);
+      
+      const caFacture = missionsDept.reduce((s, rm) => s + rm.caFacture, 0);
+      const coutInterne = missionsDept.reduce((s, rm) => s + rm.coutInterne, 0);
+      const coutSoustraitance = missionsDept.reduce((s, rm) => s + rm.coutSoustraitance, 0);
+      const coutIntercoAchete = missionsDept.reduce((s, rm) => s + rm.coutInterco, 0);
+      
+      // Interco vendue (revenu)
+      const intercoVendue = allInterco.filter(ic => ic.dept_vendeur === d.id).reduce((s, ic) => s + (parseFloat(ic.montant) || 0), 0);
+      
+      const coutTotal = coutInterne + coutSoustraitance + coutIntercoAchete;
+      const margeOperationnelle = caFacture - coutTotal;
+      const margeNette = margeOperationnelle + intercoVendue;
+      const tauxMargeOp = caFacture > 0 ? Math.round((margeOperationnelle / caFacture) * 100) : 0;
+      const tauxMargeNette = (caFacture + intercoVendue) > 0 ? Math.round((margeNette / (caFacture + intercoVendue)) * 100) : 0;
+      
+      return {
+        id: d.id,
+        nom: d.nom,
+        nbMissions: missionsDept.length,
+        caFacture,
+        coutInterne,
+        coutSoustraitance,
+        coutIntercoAchete,
+        intercoVendue,
+        margeOperationnelle,
+        margeNette,
+        tauxMargeOp,
+        tauxMargeNette
+      };
+    }).sort((a, b) => b.margeNette - a.margeNette);
+    
+    // Totaux globaux de rentabilité
+    const totalCA = rentabiliteMissions.reduce((s, rm) => s + rm.caFacture, 0);
+    const totalCoutInterne = rentabiliteMissions.reduce((s, rm) => s + rm.coutInterne, 0);
+    const totalCoutSoustraitance = rentabiliteMissions.reduce((s, rm) => s + rm.coutSoustraitance, 0);
+    const totalCoutInterco = rentabiliteMissions.reduce((s, rm) => s + rm.coutInterco, 0);
+    const totalMarge = rentabiliteMissions.reduce((s, rm) => s + rm.marge, 0);
+    const tauxMargeGlobal = totalCA > 0 ? Math.round((totalMarge / totalCA) * 100) : 0;
+
     setData({
       heuresTotal, heuresFact, heuresNonFact,
       tauxCharge: heuresTotal > 0 ? Math.round((heuresFact / heuresTotal) * 100) : 0,
@@ -9550,7 +9956,11 @@ const RapportsPage = () => {
       caParMois, heuresParMois, collabPerf, deptPerf, missionsByStatus,
       joursTravailles, productiviteMoyenne, caMoyenMission,
       nbFactures: fPeriod.length,
-      heuresRestantes, budgetHeuresTotal
+      heuresRestantes, budgetHeuresTotal,
+      // Données de rentabilité
+      rentabiliteMissions,
+      rentabiliteDepts,
+      totalCA, totalCoutInterne, totalCoutSoustraitance, totalCoutInterco, totalMarge, tauxMargeGlobal
     });
     setLoading(false);
   };
@@ -9566,6 +9976,7 @@ const RapportsPage = () => {
           {key: 'global', label: '🏠 Synthèse'},
           {key: 'temps', label: '⏱️ Temps'},
           {key: 'finance', label: '💰 Finance'},
+          {key: 'rentabilite', label: '📈 Rentabilité'},
           {key: 'equipe', label: '👥 Équipe'},
           {key: 'clients', label: '🏢 Clients'}
         ]}
@@ -10081,6 +10492,191 @@ const RapportsPage = () => {
             ) : <EmptyState icon="👥" title="Pas de données" />}
           </Card>
         </div>
+      </>)}
+
+      {/* ========== ONGLET RENTABILITÉ ========== */}
+      {tab === 'rentabilite' && (<>
+        {/* KPIs Rentabilité */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+          <div className="card p-4 bg-gradient-to-br from-blue-500 to-blue-600 text-white">
+            <div className="text-blue-100 text-sm">CA Facturé</div>
+            <div className="text-xl font-bold">{fmtMoney(data.totalCA)}</div>
+          </div>
+          <div className="card p-4 bg-gradient-to-br from-orange-500 to-red-500 text-white">
+            <div className="text-orange-100 text-sm">Coût Interne</div>
+            <div className="text-xl font-bold">{fmtMoney(data.totalCoutInterne)}</div>
+          </div>
+          <div className="card p-4 bg-gradient-to-br from-purple-500 to-purple-600 text-white">
+            <div className="text-purple-100 text-sm">Sous-traitance</div>
+            <div className="text-xl font-bold">{fmtMoney(data.totalCoutSoustraitance)}</div>
+          </div>
+          <div className="card p-4 bg-gradient-to-br from-indigo-500 to-indigo-600 text-white">
+            <div className="text-indigo-100 text-sm">Interco</div>
+            <div className="text-xl font-bold">{fmtMoney(data.totalCoutInterco)}</div>
+          </div>
+          <div className={cn("card p-4 text-white", data.totalMarge >= 0 ? "bg-gradient-to-br from-green-500 to-emerald-500" : "bg-gradient-to-br from-red-500 to-red-600")}>
+            <div className="text-green-100 text-sm">Marge Nette ({data.tauxMargeGlobal}%)</div>
+            <div className="text-xl font-bold">{fmtMoney(data.totalMarge)}</div>
+          </div>
+        </div>
+
+        <div className="grid lg:grid-cols-2 gap-6 mb-6">
+          {/* Rentabilité par département */}
+          <Card title="🏢 Rentabilité par Département">
+            {data.rentabiliteDepts?.length > 0 ? (
+              <div className="space-y-4">
+                {data.rentabiliteDepts.map(d => (
+                  <div key={d.id} className="p-4 bg-slate-50 rounded-xl">
+                    <div className="flex justify-between items-center mb-3">
+                      <div>
+                        <div className="font-bold">{d.nom}</div>
+                        <div className="text-xs text-slate-500">{d.nbMissions} mission{d.nbMissions > 1 ? 's' : ''}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className={cn("font-bold text-lg", d.margeNette >= 0 ? "text-green-600" : "text-red-600")}>
+                          {fmtMoney(d.margeNette)}
+                        </div>
+                        <Badge color={d.tauxMargeNette >= 30 ? 'green' : d.tauxMargeNette >= 15 ? 'amber' : 'red'}>
+                          {d.tauxMargeNette}% marge
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-5 gap-2 text-xs">
+                      <div className="text-center p-2 bg-blue-50 rounded">
+                        <div className="text-blue-600">CA</div>
+                        <div className="font-bold">{fmtMoneyShort(d.caFacture)}</div>
+                      </div>
+                      <div className="text-center p-2 bg-orange-50 rounded">
+                        <div className="text-orange-600">Interne</div>
+                        <div className="font-bold">{fmtMoneyShort(d.coutInterne)}</div>
+                      </div>
+                      <div className="text-center p-2 bg-purple-50 rounded">
+                        <div className="text-purple-600">S/trait.</div>
+                        <div className="font-bold">{fmtMoneyShort(d.coutSoustraitance)}</div>
+                      </div>
+                      <div className="text-center p-2 bg-red-50 rounded">
+                        <div className="text-red-600">Interco ↓</div>
+                        <div className="font-bold">{fmtMoneyShort(d.coutIntercoAchete)}</div>
+                      </div>
+                      <div className="text-center p-2 bg-green-50 rounded">
+                        <div className="text-green-600">Interco ↑</div>
+                        <div className="font-bold">{fmtMoneyShort(d.intercoVendue)}</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : <EmptyState icon="🏢" title="Aucun département" />}
+          </Card>
+
+          {/* Indicateurs de marge */}
+          <Card title="📊 Structure des Coûts">
+            <div className="space-y-6">
+              {/* Graphique en barres horizontal */}
+              <div className="space-y-3">
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span>Coût Interne</span>
+                    <span className="font-medium">{data.totalCA > 0 ? Math.round((data.totalCoutInterne / data.totalCA) * 100) : 0}%</span>
+                  </div>
+                  <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-orange-500 rounded-full" style={{width: `${data.totalCA > 0 ? Math.min(100, (data.totalCoutInterne / data.totalCA) * 100) : 0}%`}} />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span>Sous-traitance</span>
+                    <span className="font-medium">{data.totalCA > 0 ? Math.round((data.totalCoutSoustraitance / data.totalCA) * 100) : 0}%</span>
+                  </div>
+                  <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-purple-500 rounded-full" style={{width: `${data.totalCA > 0 ? Math.min(100, (data.totalCoutSoustraitance / data.totalCA) * 100) : 0}%`}} />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span>Interco</span>
+                    <span className="font-medium">{data.totalCA > 0 ? Math.round((data.totalCoutInterco / data.totalCA) * 100) : 0}%</span>
+                  </div>
+                  <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-indigo-500 rounded-full" style={{width: `${data.totalCA > 0 ? Math.min(100, (data.totalCoutInterco / data.totalCA) * 100) : 0}%`}} />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="font-bold">Marge</span>
+                    <span className={cn("font-bold", data.tauxMargeGlobal >= 0 ? "text-green-600" : "text-red-600")}>{data.tauxMargeGlobal}%</span>
+                  </div>
+                  <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                    <div className={cn("h-full rounded-full", data.tauxMargeGlobal >= 0 ? "bg-green-500" : "bg-red-500")} style={{width: `${Math.min(100, Math.abs(data.tauxMargeGlobal))}%`}} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Objectifs de marge */}
+              <div className="p-4 bg-slate-50 rounded-xl">
+                <div className="text-sm font-medium mb-3">🎯 Objectifs de Marge</div>
+                <div className="grid grid-cols-3 gap-4 text-center">
+                  <div className={cn("p-3 rounded-lg", data.tauxMargeGlobal >= 30 ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500")}>
+                    <div className="text-lg font-bold">30%</div>
+                    <div className="text-xs">Excellent</div>
+                    {data.tauxMargeGlobal >= 30 && <span>✓</span>}
+                  </div>
+                  <div className={cn("p-3 rounded-lg", data.tauxMargeGlobal >= 20 && data.tauxMargeGlobal < 30 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500")}>
+                    <div className="text-lg font-bold">20%</div>
+                    <div className="text-xs">Bon</div>
+                    {data.tauxMargeGlobal >= 20 && data.tauxMargeGlobal < 30 && <span>✓</span>}
+                  </div>
+                  <div className={cn("p-3 rounded-lg", data.tauxMargeGlobal < 20 ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-500")}>
+                    <div className="text-lg font-bold">&lt;20%</div>
+                    <div className="text-xs">À améliorer</div>
+                    {data.tauxMargeGlobal < 20 && <span>⚠️</span>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        {/* Top Missions par Marge */}
+        <Card title="📁 Rentabilité par Mission" className="mb-6">
+          {data.rentabiliteMissions?.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left">
+                    <th className="px-3 py-2">Mission</th>
+                    <th className="px-3 py-2">Client</th>
+                    <th className="px-3 py-2 text-right">CA Facturé</th>
+                    <th className="px-3 py-2 text-right">Coût Interne</th>
+                    <th className="px-3 py-2 text-right">S/Traitance</th>
+                    <th className="px-3 py-2 text-right">Interco</th>
+                    <th className="px-3 py-2 text-right">Marge</th>
+                    <th className="px-3 py-2 text-center">Taux</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rentabiliteMissions.slice(0, 15).map((m, i) => (
+                    <tr key={m.id} className={cn("border-b border-slate-50", i % 2 === 0 && "bg-slate-25")}>
+                      <td className="px-3 py-2">
+                        <div className="font-medium">{m.code}</div>
+                        <div className="text-xs text-slate-400 truncate max-w-[200px]">{m.nom}</div>
+                      </td>
+                      <td className="px-3 py-2 text-slate-600">{m.client}</td>
+                      <td className="px-3 py-2 text-right font-medium">{fmtMoney(m.caFacture)}</td>
+                      <td className="px-3 py-2 text-right text-orange-600">{fmtMoney(m.coutInterne)}</td>
+                      <td className="px-3 py-2 text-right text-purple-600">{m.coutSoustraitance > 0 ? fmtMoney(m.coutSoustraitance) : '-'}</td>
+                      <td className="px-3 py-2 text-right text-indigo-600">{m.coutInterco > 0 ? fmtMoney(m.coutInterco) : '-'}</td>
+                      <td className={cn("px-3 py-2 text-right font-bold", m.marge >= 0 ? "text-green-600" : "text-red-600")}>{fmtMoney(m.marge)}</td>
+                      <td className="px-3 py-2 text-center">
+                        <Badge color={m.tauxMarge >= 30 ? 'green' : m.tauxMarge >= 15 ? 'amber' : 'red'}>{m.tauxMarge}%</Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <EmptyState icon="📁" title="Aucune mission facturable" />}
+        </Card>
       </>)}
 
       {/* ========== ONGLET ÉQUIPE ========== */}
