@@ -4473,7 +4473,7 @@ const MissionsPage = () => {
     
     let confirmMsg = `Supprimer la mission "${m.nom}" ?`;
     if (hasTemps) {
-      confirmMsg = `⚠️ ATTENTION: Cette mission a ${temps.length} saisie(s) de temps.\n\nSupprimer la mission "${m.nom}" ?\n\nToutes les heures et factures liées seront supprimées.`;
+      confirmMsg = `⚠️ ATTENTION: Cette mission a ${temps.length} saisie(s) de temps.\n\nSupprimer la mission "${m.nom}" ?\n\nToutes les heures, factures et contrats liés seront supprimés.`;
     }
     
     if (!confirm(confirmMsg)) return;
@@ -4482,6 +4482,8 @@ const MissionsPage = () => {
     await supabase.from('saisies_temps').delete().eq('projet_id', m.id);
     await supabase.from('acomptes').delete().eq('projet_id', m.id);
     await supabase.from('factures').delete().eq('projet_id', m.id);
+    await supabase.from('contrats_soustraitance').delete().eq('projet_id', m.id);
+    await supabase.from('transactions_interco').delete().eq('projet_id', m.id);
     // Supprimer la mission
     await supabase.from('projets').delete().eq('id', m.id);
     
@@ -6172,7 +6174,23 @@ const TimesheetPage = () => {
       // Charger les intercos actives où mon département est vendeur
       supabase.from('transactions_interco').select('*').eq('organisation_id', org.id).eq('statut', 'actif')
     ]);
-    setEntries(t.data || []);
+    
+    // Nettoyage des entrées orphelines (missions supprimées)
+    const allMissionIds = (m.data || []).map(mission => mission.id);
+    const entriesData = t.data || [];
+    const orphanEntries = entriesData.filter(e => e.projet_id && !allMissionIds.includes(e.projet_id));
+    
+    if (orphanEntries.length > 0) {
+      console.log(`Nettoyage de ${orphanEntries.length} entrée(s) orpheline(s)...`);
+      // Supprimer les entrées orphelines
+      const orphanIds = orphanEntries.map(e => e.id);
+      await supabase.from('saisies_temps').delete().in('id', orphanIds);
+      // Filtrer les entrées valides
+      const validEntries = entriesData.filter(e => !e.projet_id || allMissionIds.includes(e.projet_id));
+      setEntries(validEntries);
+    } else {
+      setEntries(entriesData);
+    }
     
     // Missions avec interco où mon département est vendeur
     const missionsInterco = (interco.data || [])
@@ -6237,16 +6255,31 @@ const TimesheetPage = () => {
       return;
     }
     
-    // Récupérer toutes les saisies de l'année
+    // Récupérer toutes les saisies de l'année (avec projet_id pour nettoyage)
     const {data: allYtdEntries} = await supabase.from('saisies_temps')
-      .select('date, heures')
+      .select('id, date, heures, projet_id')
       .eq('utilisateur_id', user.id)
       .gte('date', formatDateLocal(ytdStart))
       .lte('date', formatDateLocal(ytdEnd));
     
+    // Récupérer tous les projets existants pour nettoyer les orphelins
+    const {data: allProjets} = await supabase.from('projets').select('id').eq('organisation_id', org.id);
+    const allProjetIds = (allProjets || []).map(p => p.id);
+    
+    // Nettoyer les entrées orphelines de l'année
+    const orphanYtdEntries = (allYtdEntries || []).filter(e => e.projet_id && !allProjetIds.includes(e.projet_id));
+    if (orphanYtdEntries.length > 0) {
+      console.log(`Nettoyage YTD de ${orphanYtdEntries.length} entrée(s) orpheline(s)...`);
+      const orphanIds = orphanYtdEntries.map(e => e.id);
+      await supabase.from('saisies_temps').delete().in('id', orphanIds);
+    }
+    
+    // Filtrer pour ne garder que les entrées valides
+    const validYtdEntries = (allYtdEntries || []).filter(e => !e.projet_id || allProjetIds.includes(e.projet_id));
+    
     // Calculer les heures par jour
     const heuresParJourYtd = {};
-    (allYtdEntries || []).forEach(e => {
+    validYtdEntries.forEach(e => {
       if (!heuresParJourYtd[e.date]) heuresParJourYtd[e.date] = 0;
       heuresParJourYtd[e.date] += parseFloat(e.heures) || 0;
     });
