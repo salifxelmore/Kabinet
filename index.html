@@ -8365,21 +8365,42 @@ const SoustraitancePage = () => {
   const [prestataires, setPrestataires] = useState([]);
   const [missions, setMissions] = useState([]);
   const [contrats, setContrats] = useState([]);
+  const [paiements, setPaiements] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('presta');
+  const [tab, setTab] = useState('contrats');
   const [modal, setModal] = useState(null);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [selectedContrat, setSelectedContrat] = useState(null);
 
   useEffect(() => { loadData(); }, []);
   const loadData = async () => {
-    const [p, m, c] = await Promise.all([
+    const [p, m, c, pay] = await Promise.all([
       supabase.from('prestataires').select('*').eq('organisation_id', org.id).order('nom'),
-      supabase.from('projets').select('id,nom,code').eq('organisation_id', org.id),
-      supabase.from('contrats_soustraitance').select('*,prestataires(nom),projets(nom,code)').eq('organisation_id', org.id)
+      supabase.from('projets').select('id,nom,code,client_id,clients(nom)').eq('organisation_id', org.id),
+      supabase.from('contrats_soustraitance').select('*,prestataires(nom,rib),projets(nom,code,clients(nom))').eq('organisation_id', org.id).order('created_at', {ascending: false}),
+      supabase.from('paiements_soustraitance').select('*,contrats_soustraitance(id,prestataires(nom))').eq('organisation_id', org.id).order('date_paiement', {ascending: false})
     ]);
-    setPrestataires(p.data || []); setMissions(m.data || []); setContrats(c.data || []); setLoading(false);
+    setPrestataires(p.data || []); 
+    setMissions(m.data || []); 
+    setContrats(c.data || []); 
+    setPaiements(pay.data || []);
+    setLoading(false);
+  };
+
+  // Stats
+  const totalContrats = contrats.reduce((s, c) => s + (parseFloat(c.montant) || 0), 0);
+  const totalPaye = paiements.reduce((s, p) => s + (parseFloat(p.montant) || 0), 0);
+  const totalAPayer = totalContrats - totalPaye;
+  
+  // Calcul du montant payé par contrat
+  const getMontantPaye = (contratId) => paiements.filter(p => p.contrat_id === contratId).reduce((s, p) => s + (parseFloat(p.montant) || 0), 0);
+  const getStatutPaiement = (contrat) => {
+    const paye = getMontantPaye(contrat.id);
+    if (paye === 0) return {label: 'À payer', color: 'red'};
+    if (paye < contrat.montant) return {label: 'Partiel', color: 'amber'};
+    return {label: 'Payé', color: 'green'};
   };
 
   // Prestataire CRUD
@@ -8399,46 +8420,134 @@ const SoustraitancePage = () => {
 
   // Contrat CRUD
   const openNewContrat = () => { setEditItem(null); setForm({prestataire_id: '', projet_id: '', montant: 0, date_debut: today(), date_fin: '', description: '', statut: 'actif'}); setModal('contrat'); };
+  const openEditContrat = (c) => { setEditItem(c); setForm({...c}); setModal('contrat'); };
   const saveContrat = async () => {
     if (!form.prestataire_id) return alert('Prestataire requis');
+    if (!form.montant || form.montant <= 0) return alert('Montant requis');
     setSaving(true);
-    try { await supabase.from('contrats_soustraitance').insert([{...form, organisation_id: org.id}]); setModal(null); loadData(); }
-    catch(e) { alert(e.message); }
+    try { 
+      if (editItem?.id) {
+        await supabase.from('contrats_soustraitance').update({
+          prestataire_id: form.prestataire_id, projet_id: form.projet_id || null,
+          montant: parseFloat(form.montant), date_debut: form.date_debut,
+          date_fin: form.date_fin || null, description: form.description, statut: form.statut
+        }).eq('id', editItem.id);
+      } else {
+        await supabase.from('contrats_soustraitance').insert([{...form, montant: parseFloat(form.montant), organisation_id: org.id}]); 
+      }
+      setModal(null); loadData(); 
+    } catch(e) { alert(e.message); }
     setSaving(false);
+  };
+  const deleteContrat = async (c) => { 
+    if (!confirm(`Supprimer ce contrat ?\n\nTous les paiements associés seront aussi supprimés.`)) return; 
+    await supabase.from('paiements_soustraitance').delete().eq('contrat_id', c.id);
+    await supabase.from('contrats_soustraitance').delete().eq('id', c.id); 
+    loadData(); 
+  };
+
+  // Paiement CRUD
+  const openNewPaiement = (contrat) => { 
+    const resteAPayer = contrat.montant - getMontantPaye(contrat.id);
+    setSelectedContrat(contrat);
+    setEditItem(null); 
+    setForm({contrat_id: contrat.id, montant: resteAPayer, date_paiement: today(), mode_paiement: 'virement', reference: '', commentaire: ''}); 
+    setModal('paiement'); 
+  };
+  const savePaiement = async () => {
+    if (!form.montant || form.montant <= 0) return alert('Montant requis');
+    if (!form.date_paiement) return alert('Date requise');
+    setSaving(true);
+    try { 
+      await supabase.from('paiements_soustraitance').insert([{...form, montant: parseFloat(form.montant), organisation_id: org.id}]); 
+      setModal(null); setSelectedContrat(null); loadData(); 
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+  const deletePaiement = async (p) => { 
+    if (!confirm(`Supprimer ce paiement de ${fmtMoney(p.montant)} ?`)) return; 
+    await supabase.from('paiements_soustraitance').delete().eq('id', p.id); 
+    loadData(); 
   };
 
   return (
     <div>
-      <PageHeader title="Sous-traitance" subtitle={prestataires.length + ' prestataires'}
-        tabs={[{key: 'presta', label: 'Prestataires', count: prestataires.length}, {key: 'contrats', label: 'Contrats', count: contrats.length}]}
+      <PageHeader title="Sous-traitance" subtitle={`${prestataires.length} prestataires • ${contrats.length} contrats`}
+        tabs={[{key: 'contrats', label: '📄 Contrats', count: contrats.length}, {key: 'paiements', label: '💸 Paiements', count: paiements.length}, {key: 'presta', label: '🏢 Prestataires', count: prestataires.length}]}
         activeTab={tab} onTabChange={setTab}
-        action={tab === 'presta' ? <Button onClick={openNewPresta} icon="➕">Prestataire</Button> : <Button onClick={openNewContrat} icon="➕">Contrat</Button>}
+        action={tab === 'presta' ? <Button onClick={openNewPresta} icon="➕">Prestataire</Button> : tab === 'contrats' ? <Button onClick={openNewContrat} icon="➕">Contrat</Button> : null}
       />
+      
+      {/* KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <StatCard label="Total Contrats" value={fmtMoney(totalContrats)} icon="📄" />
+        <StatCard label="Total Payé" value={fmtMoney(totalPaye)} icon="✅" color="green" />
+        <StatCard label="Reste à Payer" value={fmtMoney(totalAPayer)} icon="⏳" color={totalAPayer > 0 ? 'red' : 'green'} />
+        <StatCard label="Prestataires" value={prestataires.length} icon="🏢" />
+      </div>
+      
       {loading ? <Loader /> : (<>
+        {/* Onglet Contrats */}
+        {tab === 'contrats' && (
+          <Card>
+            <Table columns={[
+              {header: 'Prestataire', render: r => <div><div className="font-medium">{r.prestataires?.nom || '-'}</div>{r.prestataires?.rib && <div className="text-xs text-slate-400">RIB: ...{r.prestataires.rib.slice(-8)}</div>}</div>},
+              {header: 'Mission', render: r => r.projets ? <div><div>{r.projets.code}</div><div className="text-xs text-slate-400">{r.projets.clients?.nom || 'Interne'}</div></div> : <span className="text-slate-400">-</span>},
+              {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant)}</span>},
+              {header: 'Payé', render: r => {
+                const paye = getMontantPaye(r.id);
+                return <div><div className="font-medium">{fmtMoney(paye)}</div><ProgressBar value={paye} max={r.montant} color={paye >= r.montant ? 'green' : 'amber'} size="sm" showLabel={false} /></div>;
+              }},
+              {header: 'Reste', render: r => {
+                const reste = r.montant - getMontantPaye(r.id);
+                return <span className={cn("font-medium", reste > 0 ? "text-red-600" : "text-green-600")}>{fmtMoney(reste)}</span>;
+              }},
+              {header: 'Statut', render: r => { const s = getStatutPaiement(r); return <Badge color={s.color}>{s.label}</Badge>; }},
+              {header: 'Période', render: r => <span className="text-xs">{fmtDate(r.date_debut)} → {r.date_fin ? fmtDate(r.date_fin) : '...'}</span>}
+            ]} data={contrats} actions={r => (
+              <div className="flex gap-1">
+                {r.montant > getMontantPaye(r.id) && <Button variant="primary" size="xs" onClick={() => openNewPaiement(r)} title="Payer">💰</Button>}
+                <Button variant="ghost" size="xs" onClick={() => openEditContrat(r)}>✏️</Button>
+                <Button variant="ghost" size="xs" onClick={() => deleteContrat(r)}>🗑️</Button>
+              </div>
+            )} />
+          </Card>
+        )}
+        
+        {/* Onglet Paiements */}
+        {tab === 'paiements' && (
+          <Card>
+            {paiements.length === 0 ? (
+              <div className="text-center py-12 text-slate-400"><div className="text-4xl mb-4">💸</div><p>Aucun paiement</p><p className="text-sm mt-2">Allez dans Contrats pour payer</p></div>
+            ) : (
+              <Table columns={[
+                {header: 'Date', render: r => fmtDate(r.date_paiement)},
+                {header: 'Prestataire', render: r => r.contrats_soustraitance?.prestataires?.nom || '-'},
+                {header: 'Montant', render: r => <span className="font-bold text-green-600">{fmtMoney(r.montant)}</span>},
+                {header: 'Mode', render: r => <Badge color="blue">{r.mode_paiement === 'virement' ? 'Virement' : r.mode_paiement === 'cheque' ? 'Chèque' : r.mode_paiement === 'especes' ? 'Espèces' : r.mode_paiement}</Badge>},
+                {header: 'Référence', render: r => r.reference || '-'},
+                {header: 'Commentaire', render: r => r.commentaire || '-'}
+              ]} data={paiements} actions={r => <Button variant="ghost" size="xs" onClick={() => deletePaiement(r)}>🗑️</Button>} />
+            )}
+          </Card>
+        )}
+        
+        {/* Onglet Prestataires */}
         {tab === 'presta' && (
           <Card>
             <Table columns={[
               {header: 'Prestataire', render: r => <div><div className="font-medium">{r.prenom ? r.prenom + ' ' : ''}{r.nom}</div><div className="text-xs text-slate-400">{r.code} • {r.type === 'entreprise' ? 'Entreprise' : 'Indépendant'}</div></div>},
               {header: 'Spécialité', key: 'specialite'},
               {header: 'Contact', render: r => <div><div>{r.email}</div><div className="text-xs text-slate-400">{r.telephone}</div></div>},
-              {header: 'RIB', render: r => r.rib ? <span className="text-xs font-mono">{r.rib}</span> : '-'}
+              {header: 'RIB', render: r => r.rib ? <span className="text-xs font-mono bg-slate-100 px-2 py-1 rounded">{r.rib}</span> : '-'},
+              {header: 'Contrats', render: r => {
+                const nb = contrats.filter(c => c.prestataire_id === r.id).length;
+                const total = contrats.filter(c => c.prestataire_id === r.id).reduce((s, c) => s + (parseFloat(c.montant) || 0), 0);
+                return <div><div>{nb} contrat{nb > 1 ? 's' : ''}</div><div className="text-xs text-slate-400">{fmtMoney(total)}</div></div>;
+              }}
             ]} data={prestataires} actions={r => (
-              <div className="flex gap-1">
-                <Button variant="ghost" size="xs" onClick={() => openEditPresta(r)}>✏️</Button>
-                <Button variant="ghost" size="xs" onClick={() => deletePresta(r)}>🗑️</Button>
-              </div>
+              <div className="flex gap-1"><Button variant="ghost" size="xs" onClick={() => openEditPresta(r)}>✏️</Button><Button variant="ghost" size="xs" onClick={() => deletePresta(r)}>🗑️</Button></div>
             )} />
-          </Card>
-        )}
-        {tab === 'contrats' && (
-          <Card>
-            <Table columns={[
-              {header: 'Prestataire', render: r => r.prestataires?.nom || '-'},
-              {header: 'Mission', render: r => r.projets ? r.projets.code + ' - ' + r.projets.nom : '-'},
-              {header: 'Montant', render: r => <span className="font-bold">{fmtMoney(r.montant)}</span>},
-              {header: 'Période', render: r => <span>{fmtDate(r.date_debut)} → {fmtDate(r.date_fin)}</span>},
-              {header: 'Statut', render: r => <Badge color={r.statut === 'actif' ? 'green' : 'gray'}>{r.statut}</Badge>}
-            ]} data={contrats} />
           </Card>
         )}
       </>)}
@@ -8467,12 +8576,12 @@ const SoustraitancePage = () => {
       </Modal>
 
       {/* Modal Contrat */}
-      <Modal isOpen={modal === 'contrat'} onClose={() => setModal(null)} title="Nouveau contrat" size="md">
+      <Modal isOpen={modal === 'contrat'} onClose={() => setModal(null)} title={editItem ? 'Modifier contrat' : 'Nouveau contrat'} size="md">
         <div className="space-y-4">
           <Select label="Prestataire" value={form.prestataire_id} onChange={v => setForm(p => ({...p, prestataire_id: v}))} options={prestataires.map(p => ({value: p.id, label: p.nom}))} placeholder="Sélectionner" required />
-          <Select label="Mission" value={form.projet_id} onChange={v => setForm(p => ({...p, projet_id: v}))} options={missions.map(m => ({value: m.id, label: m.code + ' - ' + m.nom}))} placeholder="Sélectionner (optionnel)" />
+          <Select label="Mission liée (optionnel)" value={form.projet_id} onChange={v => setForm(p => ({...p, projet_id: v}))} options={[{value: '', label: 'Aucune'}, ...missions.filter(m => m.client_id).map(m => ({value: m.id, label: m.code + ' - ' + m.nom}))]} />
           <div className="grid grid-cols-2 gap-4">
-            <Input label="Montant" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} />
+            <Input label="Montant HT" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} required />
             <Select label="Statut" value={form.statut} onChange={v => setForm(p => ({...p, statut: v}))} options={[{value: 'actif', label: 'Actif'}, {value: 'termine', label: 'Terminé'}, {value: 'annule', label: 'Annulé'}]} />
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -8480,7 +8589,39 @@ const SoustraitancePage = () => {
             <Input label="Date fin" type="date" value={form.date_fin} onChange={v => setForm(p => ({...p, date_fin: v}))} />
           </div>
           <TextArea label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} rows={2} />
-          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveContrat} loading={saving} className="flex-1">Créer</Button></div>
+          <div className="flex gap-3 pt-4"><Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button><Button onClick={saveContrat} loading={saving} className="flex-1">{editItem ? 'Modifier' : 'Créer'}</Button></div>
+        </div>
+      </Modal>
+
+      {/* Modal Paiement */}
+      <Modal isOpen={modal === 'paiement'} onClose={() => {setModal(null); setSelectedContrat(null);}} title="Enregistrer un paiement" size="md">
+        <div className="space-y-4">
+          {selectedContrat && (
+            <div className="p-4 bg-slate-50 rounded-xl">
+              <div className="flex justify-between items-center mb-2">
+                <span className="font-medium">{selectedContrat.prestataires?.nom}</span>
+                <span className="text-sm text-slate-500">{selectedContrat.projets?.code || 'Sans mission'}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div><div className="text-xs text-slate-500">Contrat</div><div className="font-bold">{fmtMoney(selectedContrat.montant)}</div></div>
+                <div><div className="text-xs text-slate-500">Payé</div><div className="font-bold text-green-600">{fmtMoney(getMontantPaye(selectedContrat.id))}</div></div>
+                <div><div className="text-xs text-slate-500">Reste</div><div className="font-bold text-red-600">{fmtMoney(selectedContrat.montant - getMontantPaye(selectedContrat.id))}</div></div>
+              </div>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-4">
+            <Input label="Montant" type="number" value={form.montant} onChange={v => setForm(p => ({...p, montant: v}))} required />
+            <Input label="Date paiement" type="date" value={form.date_paiement} onChange={v => setForm(p => ({...p, date_paiement: v}))} required />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Select label="Mode de paiement" value={form.mode_paiement} onChange={v => setForm(p => ({...p, mode_paiement: v}))} options={[{value: 'virement', label: 'Virement'}, {value: 'cheque', label: 'Chèque'}, {value: 'especes', label: 'Espèces'}, {value: 'mobile', label: 'Mobile Money'}]} />
+            <Input label="Référence" value={form.reference} onChange={v => setForm(p => ({...p, reference: v}))} placeholder="N° virement..." />
+          </div>
+          <TextArea label="Commentaire" value={form.commentaire} onChange={v => setForm(p => ({...p, commentaire: v}))} rows={2} />
+          <div className="flex gap-3 pt-4">
+            <Button variant="secondary" onClick={() => {setModal(null); setSelectedContrat(null);}} className="flex-1">Annuler</Button>
+            <Button onClick={savePaiement} loading={saving} className="flex-1">💰 Payer</Button>
+          </div>
         </div>
       </Modal>
     </div>
