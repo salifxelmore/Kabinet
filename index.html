@@ -4362,7 +4362,9 @@ const MissionsPage = () => {
   };
 
   const save = async () => {
-    if (!form.nom || !form.client_id) return alert('Client et nom requis');
+    // Client requis seulement si facturable
+    if (!form.nom) return alert('Nom requis');
+    if (form.facturable !== false && !form.client_id) return alert('Client requis pour une mission facturable');
     setSaving(true);
     try {
       // Pour les nouvelles missions créées par non-SuperAdmin, forcer pending_validation
