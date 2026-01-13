@@ -9171,6 +9171,7 @@ const RapportsPage = () => {
     let allTemps = temps.data || [];
     let allCollabs = collabs.data || [];
     let m = missions.data || [];
+    let allClients = clients.data || [];
     const allUsers = utilisateurs.data || [];
     
     // ===== FILTRAGE PAR DÉPARTEMENT =====
@@ -9180,6 +9181,9 @@ const RapportsPage = () => {
       
       // Filtrer les missions : département OU missions internes (sans client = globales)
       m = m.filter(p => p.departement_id === effectiveDeptFilter || !p.client_id);
+      
+      // Filtrer les clients par département
+      allClients = allClients.filter(c => c.departement_id === effectiveDeptFilter);
       
       // Obtenir les user_ids des collaborateurs du département
       const deptCollabEmails = allCollabs.map(c => c.email).filter(Boolean);
@@ -9275,7 +9279,7 @@ const RapportsPage = () => {
       }
     });
     const topClients = Object.entries(clientsCA)
-      .map(([id, ca]) => ({id, ca, nom: clients.data?.find(c => c.id === id)?.nom || 'Inconnu'}))
+      .map(([id, ca]) => ({id, ca, nom: allClients.find(c => c.id === id)?.nom || 'Inconnu'}))
       .sort((a, b) => b.ca - a.ca)
       .slice(0, 10);
 
@@ -9399,7 +9403,8 @@ const RapportsPage = () => {
       rentabilite: budgetTotal > 0 ? Math.round((caEncaisse / budgetTotal) * 100) : 0,
       missionsActives, totalMissions: m.length,
       nbCollabs: allCollabs.length || 0,
-      nbClients: clients.data?.length || 0,
+      nbClients: allClients.length || 0,
+      allClients,
       topClients, topMissions, joursConges, tauxMoyen,
       caParMois, heuresParMois, collabPerf, deptPerf, missionsByStatus,
       joursTravailles, productiviteMoyenne, caMoyenMission,
