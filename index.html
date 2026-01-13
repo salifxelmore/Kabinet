@@ -4365,7 +4365,6 @@ const MissionsPage = () => {
     setAcomptes(a.data || []);
     setFactures(f.data || []);
     // Filtrer les collaborateurs avec grade >= Manager (niveau >= 3)
-    const allCollabs = collabs.data || [];
     const mgrs = allCollabs.filter(c => c.grades?.niveau >= 3);
     setManagers(mgrs);
     setLoading(false);
