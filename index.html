@@ -5676,6 +5676,7 @@ const StaffingPage = () => {
   const [filterDept, setFilterDept] = useState(''); // Filtre département
   const [missionDetail, setMissionDetail] = useState(null); // Modal détails mission
   const [congesApprouves, setCongesApprouves] = useState([]); // Congés validés
+  const [holidays, setHolidays] = useState([]); // Jours fériés
   
   // Permissions: Manager+ peut modifier, Junior/Senior lecture seule
   const canEdit = isManager && !isCollaborateur;
@@ -5694,17 +5695,19 @@ const StaffingPage = () => {
   }, [userDeptId, canChooseDept, isJuniorSenior]);
 
   const loadData = async () => {
-    const [a, c, m, d, conges] = await Promise.all([
+    const [a, c, m, d, conges, h] = await Promise.all([
       supabase.from('affectations').select('*,collaborateurs(nom,prenom,departement_id),projets(id,nom,code,description,date_debut,date_fin_prevue,statut,budget_heures,budget_montant,clients(nom),responsable:responsable_id(id,nom,prenom))').eq('organisation_id', org.id),
       supabase.from('collaborateurs').select('*,grades:grade_id(nom,niveau),departements:departement_id(nom)').eq('organisation_id', org.id).eq('actif', true).order('nom'),
       supabase.from('projets').select('id,nom,code,description,date_debut,date_fin_prevue,statut,budget_heures,clients(nom)').eq('organisation_id', org.id).eq('statut', 'active'),
       supabase.from('departements').select('id,nom').eq('organisation_id', org.id).order('nom'),
-      supabase.from('conges').select('*').eq('organisation_id', org.id).eq('statut', 'approved')
+      supabase.from('conges').select('*').eq('organisation_id', org.id).eq('statut', 'approved'),
+      supabase.from('jours_feries').select('date,nom').eq('organisation_id', org.id)
     ]);
     setAffectations(a.data || []);
     setAllCollaborateurs(c.data || []);
     setMissions(m.data || []);
     setDepts(d.data || []);
+    setHolidays(h.data || []);
     
     // Mapper les congés avec collaborateur_id
     // Les congés ont utilisateur_id, on trouve le collaborateur via son user_id
@@ -5868,7 +5871,16 @@ const StaffingPage = () => {
               <thead>
                 <tr className="border-b">
                   <th className="px-4 py-3 text-left w-48">Collaborateur</th>
-                  {days.map(d => <th key={d.date} className="px-2 py-3 text-center w-32">{d.label}<br/><span className="text-xs text-slate-400">{d.date.split('-')[2]}</span></th>)}
+                  {days.map(d => {
+                    const holiday = holidays.find(h => h.date === d.date);
+                    return (
+                      <th key={d.date} className={cn("px-2 py-3 text-center w-32", holiday && "bg-red-50")} title={holiday?.nom}>
+                        {d.label}<br/>
+                        <span className="text-xs text-slate-400">{d.date.split('-')[2]}</span>
+                        {holiday && <span className="block text-xs">🎌</span>}
+                      </th>
+                    );
+                  })}
                   <th className="px-4 py-3 text-center w-24">Charge</th>
                 </tr>
               </thead>
@@ -5892,6 +5904,8 @@ const StaffingPage = () => {
                       </td>
                       {days.map(d => {
                         const aff = getAffectation(c.id, d.date);
+                        // Vérifier si c'est un jour férié
+                        const holiday = holidays.find(h => h.date === d.date);
                         // Vérifier si le collab est en congé ce jour-là (utiliser le mapping)
                         const conge = congesApprouves.find(cg => {
                           if (cg.collaborateur_id_mapped !== c.id) return false;
@@ -5899,8 +5913,15 @@ const StaffingPage = () => {
                         });
                         
                         return (
-                          <td key={d.date} className="px-1 py-2 text-center">
-                            {conge ? (
+                          <td key={d.date} className={cn("px-1 py-2 text-center", holiday && "bg-red-50")}>
+                            {holiday ? (
+                              // Jour férié - pas de staffing possible
+                              <div className="bg-red-100 text-red-700 rounded-lg p-2 text-xs" title={holiday.nom}>
+                                <div className="font-medium">🎌 Férié</div>
+                                <div className="text-red-600 font-bold">-</div>
+                                <div className="text-[9px] text-red-500 truncate">{holiday.nom}</div>
+                              </div>
+                            ) : conge ? (
                               // Afficher congé comme 8h non facturable
                               <div className="bg-amber-100 text-amber-700 rounded-lg p-2 text-xs" title={`${conge.type_conge === 'conge_paye' ? 'Congé payé' : conge.type_conge === 'maladie' ? 'Arrêt maladie' : 'Absence'} - Non facturable`}>
                                 <div className="font-medium">🏖️ {conge.type_conge === 'conge_paye' ? 'Congé' : conge.type_conge === 'maladie' ? 'Maladie' : 'Abs.'}</div>
