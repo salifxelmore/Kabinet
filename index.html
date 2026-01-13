@@ -10559,62 +10559,14 @@ const RapportsPage = () => {
 
       {/* ========== ONGLET RENTABILITÉ ========== */}
       {tab === 'rentabilite' && (<>
-        {/* KPIs Rentabilité - Design amélioré */}
+        {/* KPIs Rentabilité - Même style que Finance */}
         <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
-          <div className="card p-5 bg-white border-l-4 border-blue-500 hover:shadow-lg transition-shadow">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center text-2xl">💰</div>
-              <div>
-                <div className="text-slate-500 text-xs font-medium uppercase tracking-wide">CA Facturé</div>
-                <div className="text-xl font-bold text-slate-800">{fmtMoney(data.totalCA)}</div>
-              </div>
-            </div>
-          </div>
-          <div className="card p-5 bg-white border-l-4 border-orange-500 hover:shadow-lg transition-shadow">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-orange-100 flex items-center justify-center text-2xl">👥</div>
-              <div>
-                <div className="text-slate-500 text-xs font-medium uppercase tracking-wide">Coût Interne</div>
-                <div className="text-xl font-bold text-slate-800">{fmtMoney(data.totalCoutInterne)}</div>
-              </div>
-            </div>
-          </div>
-          <div className="card p-5 bg-white border-l-4 border-purple-500 hover:shadow-lg transition-shadow">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center text-2xl">🤝</div>
-              <div>
-                <div className="text-slate-500 text-xs font-medium uppercase tracking-wide">Sous-traitance</div>
-                <div className="text-xl font-bold text-slate-800">{fmtMoney(data.totalCoutSoustraitance)}</div>
-              </div>
-            </div>
-          </div>
-          <div className="card p-5 bg-white border-l-4 border-red-500 hover:shadow-lg transition-shadow">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center text-2xl">📤</div>
-              <div>
-                <div className="text-slate-500 text-xs font-medium uppercase tracking-wide">Interco ↓</div>
-                <div className="text-xl font-bold text-slate-800">{fmtMoney(data.totalCoutInterco)}</div>
-              </div>
-            </div>
-          </div>
-          <div className="card p-5 bg-white border-l-4 border-teal-500 hover:shadow-lg transition-shadow">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-teal-100 flex items-center justify-center text-2xl">📥</div>
-              <div>
-                <div className="text-slate-500 text-xs font-medium uppercase tracking-wide">Interco ↑</div>
-                <div className="text-xl font-bold text-slate-800">{fmtMoney(data.totalRevenuInterco || 0)}</div>
-              </div>
-            </div>
-          </div>
-          <div className={cn("card p-5 border-l-4 hover:shadow-lg transition-shadow", data.totalMarge >= 0 ? "bg-green-50 border-green-500" : "bg-red-50 border-red-500")}>
-            <div className="flex items-center gap-3">
-              <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center text-2xl", data.totalMarge >= 0 ? "bg-green-100" : "bg-red-100")}>📊</div>
-              <div>
-                <div className="text-slate-500 text-xs font-medium uppercase tracking-wide">Marge ({data.tauxMargeGlobal}%)</div>
-                <div className={cn("text-xl font-bold", data.totalMarge >= 0 ? "text-green-600" : "text-red-600")}>{fmtMoney(data.totalMarge)}</div>
-              </div>
-            </div>
-          </div>
+          <StatCard title="CA Facturé" value={fmtMoneyShort(data.totalCA) + ' F'} icon="💰" color="blue" />
+          <StatCard title="Coût Interne" value={fmtMoneyShort(data.totalCoutInterne) + ' F'} icon="👥" color="amber" />
+          <StatCard title="Sous-traitance" value={fmtMoneyShort(data.totalCoutSoustraitance) + ' F'} icon="🤝" color="purple" />
+          <StatCard title="Interco ↓" value={fmtMoneyShort(data.totalCoutInterco) + ' F'} subtitle="Achetée" icon="📤" color="red" />
+          <StatCard title="Interco ↑" value={fmtMoneyShort(data.totalRevenuInterco || 0) + ' F'} subtitle="Vendue" icon="📥" color="cyan" />
+          <StatCard title="Marge Nette" value={fmtMoneyShort(data.totalMarge) + ' F'} subtitle={`Taux : ${data.tauxMargeGlobal}%`} icon="📊" color={data.totalMarge >= 0 ? 'green' : 'red'} />
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6 mb-6">
