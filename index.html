@@ -4443,6 +4443,19 @@ const MissionsPage = () => {
     loadData();
   };
 
+  // Réouvrir une mission clôturée (pour corrections)
+  const reopenMission = async (m) => {
+    if (!confirm(`🔄 Réouvrir la mission "${m.nom}" ?\n\nCette action passera le statut de "Clôturée" à "En cours" et débloquera la saisie pour permettre les corrections.`)) {
+      return;
+    }
+    
+    await supabase.from('projets').update({ 
+      statut: 'active', 
+      saisie_bloquee: false 
+    }).eq('id', m.id);
+    loadData();
+  };
+
   const addAcompte = async () => {
     const missionAcomptes = acomptes.filter(a => a.projet_id === editItem.id);
     const totalAcomptes = missionAcomptes.reduce((s, a) => s + (a.montant || 0), 0);
@@ -4650,14 +4663,24 @@ const MissionsPage = () => {
                   <Button variant="ghost" size="xs" onClick={() => openAcomptes(r)} title="Acomptes">💰</Button>
                   <Button variant="ghost" size="xs" onClick={() => openEdit(r)} title="Modifier">✏️</Button>
                   {r.statut === 'completed' && (
-                    <Button 
-                      variant="ghost" 
-                      size="xs" 
-                      onClick={() => toggleSaisieBloquee(r)} 
-                      title={r.saisie_bloquee ? "Débloquer la saisie" : "Bloquer la saisie"}
-                    >
-                      {r.saisie_bloquee ? '🔓' : '🔒'}
-                    </Button>
+                    <>
+                      <Button 
+                        variant="ghost" 
+                        size="xs" 
+                        onClick={() => reopenMission(r)} 
+                        title="Réouvrir la mission (pour corrections)"
+                      >
+                        🔄
+                      </Button>
+                      <Button 
+                        variant="ghost" 
+                        size="xs" 
+                        onClick={() => toggleSaisieBloquee(r)} 
+                        title={r.saisie_bloquee ? "Débloquer la saisie" : "Bloquer la saisie"}
+                      >
+                        {r.saisie_bloquee ? '🔓' : '🔒'}
+                      </Button>
+                    </>
                   )}
                   <Button variant="ghost" size="xs" onClick={() => deleteMission(r)} title="Supprimer">🗑️</Button>
                 </>
@@ -6259,6 +6282,21 @@ const TimesheetPage = () => {
   const renderMissionRow = (m) => {
     const total = entries.filter(e => e.projet_id === m.id).reduce((s, e) => s + (e.heures || 0), 0);
     const isCompleted = m.statut === 'completed';
+    
+    // Vérifier si la saisie est autorisée pour cette mission à cette date
+    const isMissionDateDisabled = (date) => {
+      // Mission clôturée avec saisie bloquée
+      if (isCompleted && m.saisie_bloquee) return 'closed';
+      
+      // Si la mission a une date de début, vérifier qu'on est après
+      if (m.date_debut && date < m.date_debut) return 'not_started';
+      
+      // Si la mission a une date de fin ET est clôturée, vérifier qu'on est avant
+      if (m.date_fin_prevue && isCompleted && date > m.date_fin_prevue) return 'ended';
+      
+      return false;
+    };
+    
     return (
       <tr key={m.id} className={cn("border-b border-slate-50", isCompleted && "bg-green-50")}>
         <td className="px-4 py-2">
@@ -6266,20 +6304,36 @@ const TimesheetPage = () => {
             <div className="font-medium text-sm">{m.nom}</div>
             {isCompleted && <span className="text-[10px] px-1.5 py-0.5 bg-green-200 text-green-700 rounded">Clôturée</span>}
           </div>
-          <div className="text-xs text-slate-400">{m.code} • {m.clients?.nom || 'Interne'}</div>
+          <div className="text-xs text-slate-400">
+            {m.code} • {m.clients?.nom || 'Interne'}
+            {m.date_debut && <span className="ml-1">• Du {fmtDate(m.date_debut)}</span>}
+            {m.date_fin_prevue && <span> au {fmtDate(m.date_fin_prevue)}</span>}
+          </div>
         </td>
         {days.map((d, dayIndex) => {
           const disabled = isDateDisabled(d.date, dayIndex);
+          const missionDisabled = isMissionDateDisabled(d.date);
           const conge = getCongeForDate(d.date);
           const entry = getEntry(m.id, d.date);
           const heuresJour = getHeuresParJour(d.date);
           const depassement = heuresJour > 8;
+          
+          // Titre pour le tooltip
+          const getDisabledTitle = () => {
+            if (disabled === 'holiday') return getHolidayName(d.date);
+            if (disabled === 'weekend') return 'Weekend';
+            if (missionDisabled === 'not_started') return `Mission pas encore démarrée (début: ${fmtDate(m.date_debut)})`;
+            if (missionDisabled === 'ended') return `Mission terminée (fin: ${fmtDate(m.date_fin_prevue)})`;
+            if (missionDisabled === 'closed') return 'Mission clôturée - saisie bloquée';
+            return '';
+          };
+          
           return (
-            <td key={d.date} className={cn('px-1 py-2 text-center', disabled === 'weekend' && 'cell-weekend', disabled === 'holiday' && 'cell-holiday', conge && 'bg-amber-50', depassement && !disabled && !conge && 'bg-red-50')}>
+            <td key={d.date} className={cn('px-1 py-2 text-center', disabled === 'weekend' && 'cell-weekend', disabled === 'holiday' && 'cell-holiday', conge && 'bg-amber-50', missionDisabled && 'bg-slate-100', depassement && !disabled && !conge && !missionDisabled && 'bg-red-50')}>
               {disabled ? (
                 <div 
                   className="w-14 h-10 flex items-center justify-center text-xs text-slate-400"
-                  title={disabled === 'holiday' ? getHolidayName(d.date) : 'Weekend'}
+                  title={getDisabledTitle()}
                 >
                   {disabled === 'holiday' ? '🎌' : '-'}
                 </div>
@@ -6289,6 +6343,13 @@ const TimesheetPage = () => {
                   title={`${conge.type_conge === 'conge_paye' ? 'Congé payé' : conge.type_conge === 'maladie' ? 'Arrêt maladie' : 'Absence'} - Pas de saisie`}
                 >
                   🏖️
+                </div>
+              ) : missionDisabled ? (
+                <div 
+                  className="w-14 h-10 flex items-center justify-center text-xs text-slate-400 cursor-not-allowed"
+                  title={getDisabledTitle()}
+                >
+                  {missionDisabled === 'not_started' ? '⏳' : missionDisabled === 'closed' ? '🔒' : '✓'}
                 </div>
               ) : (
                 <div className="relative group">
