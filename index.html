@@ -1581,6 +1581,14 @@ async function initOrgData(orgId) {
   for (const date of DEFAULT_HOLIDAYS) {
     await supabase.from('jours_feries').insert([{date, nom: 'Férié', organisation_id: orgId}]);
   }
+  
+  // Missions internes par défaut (non-facturables, sans client)
+  await supabase.from('projets').insert([
+    {code: 'FORMATION', nom: 'Formation', facturable: false, statut: 'active', organisation_id: orgId},
+    {code: 'REUNION', nom: 'Réunion interne', facturable: false, statut: 'active', organisation_id: orgId},
+    {code: 'ADMIN', nom: 'Administratif', facturable: false, statut: 'active', organisation_id: orgId},
+    {code: 'COMMERCIAL', nom: 'Commercial / Prospection', facturable: false, statut: 'active', organisation_id: orgId}
+  ]);
 }
 // ========== MAIN APP ==========
 const MainApp = ({user, onLogout}) => {
@@ -4668,9 +4676,15 @@ const MissionsPage = () => {
       {/* MODAL MISSION */}
       <Modal isOpen={modal === 'mission'} onClose={() => setModal(null)} title={editItem ? 'Modifier mission' : 'Nouvelle mission'} size="lg">
         <div className="space-y-4">
+          <Checkbox label="Mission facturable" checked={form.facturable !== false} onChange={v => setForm(p => ({...p, facturable: v, client_id: v ? p.client_id : ''}))} />
+          {form.facturable === false && (
+            <div className="p-3 bg-purple-50 rounded-lg text-purple-700 text-sm">
+              💡 <strong>Mission interne :</strong> Cette mission sera disponible pour la saisie de temps non-facturable (Formation, Réunion, Admin...)
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <Input label="Code" value={form.code} onChange={v => setForm(p => ({...p, code: v}))} />
-            <Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder="Sélectionner" required />
+            <Select label="Client" value={form.client_id} onChange={v => setForm(p => ({...p, client_id: v}))} options={clients.map(c => ({value: c.id, label: c.nom}))} placeholder={form.facturable === false ? "Aucun (mission interne)" : "Sélectionner"} required={form.facturable !== false} disabled={form.facturable === false} />
           </div>
           <Input label="Nom de la mission" value={form.nom} onChange={v => setForm(p => ({...p, nom: v}))} required />
           <div className="grid grid-cols-2 gap-4">
@@ -4699,7 +4713,6 @@ const MissionsPage = () => {
             <Input label="Date fin prévue" type="date" value={form.date_fin_prevue} onChange={v => setForm(p => ({...p, date_fin_prevue: v}))} />
           </div>
           <TextArea label="Description" value={form.description} onChange={v => setForm(p => ({...p, description: v}))} rows={3} />
-          <Checkbox label="Mission facturable" checked={form.facturable} onChange={v => setForm(p => ({...p, facturable: v}))} />
           <div className="flex gap-3 pt-4">
             <Button variant="secondary" onClick={() => setModal(null)} className="flex-1">Annuler</Button>
             <Button onClick={save} loading={saving} className="flex-1">Enregistrer</Button>
@@ -6593,6 +6606,38 @@ const TimesheetPage = () => {
                 </tr>
               </thead>
               <tbody>
+                {/* Ligne Jours fériés si applicable */}
+                {(() => {
+                  const holidaysDays = days.filter(d => !d.isWeekend && holidays.some(h => h.date === d.date));
+                  if (holidaysDays.length === 0) return null;
+                  const totalHolidays = holidaysDays.length * 8;
+                  return (
+                    <tr className="border-b border-slate-50 bg-red-50">
+                      <td className="px-4 py-2">
+                        <div className="font-medium text-sm text-red-700">🎌 Jours fériés</div>
+                        <div className="text-xs text-red-500">Non travaillé - Auto-rempli</div>
+                      </td>
+                      {days.map((d, dayIndex) => {
+                        const holiday = holidays.find(h => h.date === d.date);
+                        const disabled = d.isWeekend;
+                        return (
+                          <td key={d.date} className={cn('px-1 py-2 text-center', disabled && 'cell-weekend')}>
+                            {disabled ? (
+                              <div className="w-14 h-10 flex items-center justify-center text-xs text-slate-400">-</div>
+                            ) : holiday ? (
+                              <div className="w-14 h-10 flex items-center justify-center" title={holiday.nom}>
+                                <span className="bg-red-200 text-red-800 px-2 py-1 rounded font-bold text-sm">8h</span>
+                              </div>
+                            ) : (
+                              <div className="w-14 h-10 flex items-center justify-center text-xs text-slate-300">-</div>
+                            )}
+                          </td>
+                        );
+                      })}
+                      <td className="px-4 py-2 text-right font-bold text-red-700">{totalHolidays}h</td>
+                    </tr>
+                  );
+                })()}
                 {/* Ligne Congés si applicable */}
                 {(() => {
                   const congesDays = days.filter(d => !d.isWeekend && getCongeForDate(d.date));
