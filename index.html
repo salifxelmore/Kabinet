@@ -9907,9 +9907,11 @@ const RapportsPage = () => {
       const caFacture = missionsDept.reduce((s, rm) => s + rm.caFacture, 0);
       const coutInterne = missionsDept.reduce((s, rm) => s + rm.coutInterne, 0);
       const coutSoustraitance = missionsDept.reduce((s, rm) => s + rm.coutSoustraitance, 0);
-      const coutIntercoAchete = missionsDept.reduce((s, rm) => s + rm.coutInterco, 0);
       
-      // Interco vendue (revenu)
+      // Interco achetée (coût) - où ce département est ACHETEUR
+      const coutIntercoAchete = allInterco.filter(ic => ic.dept_acheteur === d.id).reduce((s, ic) => s + (parseFloat(ic.montant) || 0), 0);
+      
+      // Interco vendue (revenu) - où ce département est VENDEUR
       const intercoVendue = allInterco.filter(ic => ic.dept_vendeur === d.id).reduce((s, ic) => s + (parseFloat(ic.montant) || 0), 0);
       
       const coutTotal = coutInterne + coutSoustraitance + coutIntercoAchete;
