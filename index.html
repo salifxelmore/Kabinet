@@ -9853,7 +9853,7 @@ const RapportsPage = () => {
     const heuresRestantes = Math.max(0, budgetHeuresTotal - heuresConsommeesActives);
 
     // ===== CALCUL DE RENTABILITÉ =====
-    const diviseur = (org.config_taux_type === 'horaire') ? 1 : 8;
+    // (diviseur déjà déclaré plus haut)
     
     // Mapping email -> collaborateur pour coûts internes
     const emailToCollab = {};
