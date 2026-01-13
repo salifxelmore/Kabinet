@@ -9942,16 +9942,16 @@ const RapportsPage = () => {
     const totalCoutSoustraitance = rentabiliteMissions.reduce((s, rm) => s + rm.coutSoustraitance, 0);
     
     // Interco : calculer directement par dept_acheteur et dept_vendeur
-    // En vue globale = 0 (se compense entre départements)
-    // En vue département = coût réel (achetée) et revenu réel (vendue)
+    // En vue globale : afficher les montants (ils sont égaux, se compensent dans la marge)
+    // En vue département : coût réel (achetée) et revenu réel (vendue)
     const totalCoutInterco = effectiveDeptFilter 
       ? allInterco.filter(ic => ic.dept_acheteur === effectiveDeptFilter).reduce((s, ic) => s + (parseFloat(ic.montant) || 0), 0)
-      : 0; // Se compense en vue globale
+      : allInterco.reduce((s, ic) => s + (parseFloat(ic.montant) || 0), 0); // Total en vue globale
     const totalRevenuInterco = effectiveDeptFilter 
       ? allInterco.filter(ic => ic.dept_vendeur === effectiveDeptFilter).reduce((s, ic) => s + (parseFloat(ic.montant) || 0), 0)
-      : 0; // Se compense en vue globale
+      : allInterco.reduce((s, ic) => s + (parseFloat(ic.montant) || 0), 0); // Total en vue globale (même montant)
     
-    // Marge = CA + Revenu Interco - Coûts
+    // Marge = CA + Revenu Interco - Coûts (en vue globale, interco s'annule automatiquement)
     const totalMarge = totalCA + totalRevenuInterco - totalCoutInterne - totalCoutSoustraitance - totalCoutInterco;
     const baseCA = totalCA + totalRevenuInterco; // CA total incluant revenu interco
     const tauxMargeGlobal = baseCA > 0 ? Math.round((totalMarge / baseCA) * 100) : 0;
